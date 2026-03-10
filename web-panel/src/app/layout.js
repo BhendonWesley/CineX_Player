@@ -1,6 +1,6 @@
 'use client'
 
-// CineX Web Panel - v1.0.2 - Identity Verified
+// CineX Web Panel - v1.0.4 - Build Trigger
 import './globals.css'
 import Sidebar from '@/components/Sidebar'
 import { usePathname } from 'next/navigation'
