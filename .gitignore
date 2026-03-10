@@ -1,0 +1,15 @@
+# Android
+**/build/
+*.iml
+.gradle
+local.properties
+.idea
+.DS_Store
+
+# JetPack Compose
+**/generated/
+
+# Binaries
+*.apk
+*.aar
+*.jar
