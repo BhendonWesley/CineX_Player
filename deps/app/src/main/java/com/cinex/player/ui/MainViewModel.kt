@@ -232,21 +232,20 @@ class MainViewModel @Inject constructor(
             }
 
             try {
-                val mac = _accountInfo.value?.macAddress ?: run {
-                    _errorMessage.value = "MAC não disponível. Reinicie o app."
-                    _isLoading.value = false
-                    rotateJob.cancel()
-                    return@launch
+                // Gerar MAC diretamente em vez de depender do accountInfo
+                val androidId = Settings.Secure.getString(app.contentResolver, Settings.Secure.ANDROID_ID) ?: "000000000000"
+                val mac = androidId.chunked(2).take(6).joinToString(":").uppercase()
+
+                // Buscar a configuração de playlist do painel web (em IO thread)
+                val apiUrl = "$PANEL_BASE_URL/api/device/${mac}"
+                val (responseCode, body) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val request = okhttp3.Request.Builder().url(apiUrl).get().build()
+                    val response = okHttpClient.newCall(request).execute()
+                    Pair(response.code, response.body?.string() ?: "")
                 }
 
-                // Buscar a configuração de playlist do painel web
-                val apiUrl = "$PANEL_BASE_URL/api/device/${mac}"
-                val request = okhttp3.Request.Builder().url(apiUrl).get().build()
-                val response = okHttpClient.newCall(request).execute()
-                val body = response.body?.string() ?: ""
-
-                if (!response.isSuccessful || body.contains("not_found")) {
-                    _errorMessage.value = "Dispositivo não cadastrado no painel. Contate seu revendedor."
+                if (responseCode != 200 || body.contains("not_found")) {
+                    _errorMessage.value = "Dispositivo não cadastrado no painel. Contate seu revendedor.\nMAC: $mac"
                     _isLoading.value = false
                     rotateJob.cancel()
                     return@launch
@@ -266,7 +265,6 @@ class MainViewModel @Inject constructor(
                             rotateJob.cancel()
                             return@launch
                         }
-                        // Adicionar e sincronizar a playlist M3U
                         repository.addPlaylist("CineX Panel", url)
                         val result = repository.syncPlaylist(url) { l, m, s, _ ->
                             _liveProgress.value = l
