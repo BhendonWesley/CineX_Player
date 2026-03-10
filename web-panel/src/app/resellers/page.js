@@ -1,5 +1,7 @@
 'use client'
 
+'use client'
+
 import { useState, useEffect, useCallback } from 'react'
 import { Users, UserPlus, Shield, Activity, RefreshCw } from 'lucide-react'
 import { fetchResellersAction } from './actions'
@@ -9,7 +11,7 @@ export default function ResellersPage() {
     const [loading, setLoading] = useState(true)
 
     const loadData = useCallback(async () => {
-        setLoading(true)
+        // We initialize loading to true in the state, so we only need to set it to false when done
         const result = await fetchResellersAction()
         if (result.success) {
             setResellers(result.resellers)
