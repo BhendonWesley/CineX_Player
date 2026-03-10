@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { LayoutDashboard, Smartphone, LogOut } from 'lucide-react'
+import Image from 'next/image'
 
 export default function Sidebar() {
     const pathname = usePathname()
@@ -32,13 +33,8 @@ export default function Sidebar() {
             top: 0
         }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '48px', padding: '0 12px' }}>
-                <div style={{
-                    width: '32px', height: '32px', background: 'var(--primary-red)',
-                    borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center'
-                }}>
-                    <span style={{ fontWeight: '900', fontSize: '18px' }}>X</span>
-                </div>
-                <h2 className="glow-text" style={{ fontSize: '24px' }}>CineX</h2>
+                <Image src="/logo_cinex.png" alt="CineX" width={44} height={44} style={{ objectFit: 'contain' }} />
+                <h2 style={{ fontSize: '22px', fontWeight: '700', color: '#FFFFFF' }}>CineX</h2>
             </div>
 
             <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
