@@ -9,67 +9,58 @@ export async function checkResellerAccess(username, password) {
     const API_URL = `${ADM_BASE_URL}/sys/api.php`;
 
     try {
-        // 1. Iniciar sessão para obter o Cookie (PHPSESSID)
-        const initResponse = await fetch(ADM_BASE_URL);
-        const setCookie = initResponse.headers.get('set-cookie');
-        const phpSessId = setCookie ? setCookie.split(';')[0] : '';
-
-        // 2. Tentar o Login via API do painel
-        // O painel usa action=login&username=...&password=...
+        // 1. Tentar login direto na API do painel (mesmo endpoint que os revendedores usam)
         const formData = new URLSearchParams();
         formData.append('action', 'login');
         formData.append('username', username);
         formData.append('password', password);
+        formData.append('recaptcha', '');
 
         const loginResponse = await fetch(API_URL, {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+                'Content-Type': 'application/x-www-form-urlencoded',
                 'X-Requested-With': 'XMLHttpRequest',
-                'Cookie': phpSessId
             },
             body: formData.toString(),
         });
 
         const loginResult = await loginResponse.json();
 
-        // No sistema CineX TV, se o login for bem-ucedido, ele retorna um status positivo
-        // ou redireciona. Vamos checar se o loginResult indica sucesso.
-        // Baseado na análise, se não houver erro no JSON, prosseguimos para validar o Dashboard.
-
-        if (loginResult.status === 'success' || loginResult.link) {
-            // 3. Validação Final: Tentar acessar o Dashboard para confirmar que é uma Revenda
-            const dashboardResponse = await fetch(`${ADM_BASE_URL}/dashboard`, {
-                headers: { 'Cookie': phpSessId }
-            });
-            const dashboardHtml = await dashboardResponse.text();
-
-            // Checamos se o HTML contém elementos de um painel logado
-            if (dashboardHtml.includes('Dashboard') || dashboardHtml.includes(username)) {
-                return {
-                    authorized: true,
-                    profile: {
-                        username,
-                        role: 'reseller',
-                        name: username.toUpperCase()
-                    }
-                };
-            }
+        // A API retorna { success: true } quando as credenciais são válidas
+        if (loginResult.success === true) {
+            return {
+                authorized: true,
+                profile: {
+                    username,
+                    role: 'reseller',
+                    name: username.toUpperCase()
+                }
+            };
         }
+
+        // Mensagens de erro específicas do painel
+        const errorMessages = {
+            'invalid_user_or_pass': 'Usuário ou senha incorretos.',
+            'blocked': 'Sua conta está bloqueada. Contate o administrador.',
+            'insufficient_permission': 'Você não tem permissão para acessar este painel.',
+            'empty_user_or_pass': 'Preencha todos os campos.',
+        };
 
         return {
             authorized: false,
-            message: 'Credenciais inválidas ou conta não autorizada como Revendedor CineX.'
+            message: errorMessages[loginResult.message] || 'Credenciais inválidas ou conta não autorizada como Revendedor CineX.'
         };
 
     } catch (error) {
         console.error('Erro na Bridge ADM:', error);
         return {
             authorized: false,
-            message: 'Falha na conexão com o sistema CineX TV. Verifique seu servidor.'
+            message: 'Falha na conexão com o sistema CineX TV. Tente novamente.'
         };
     }
 }
+
 
 /**
  * Busca a lista de revendedores diretamente do painel ADM
