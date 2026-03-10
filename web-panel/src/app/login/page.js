@@ -4,7 +4,6 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Lock, User, Loader2, Shield, Smartphone, Zap } from 'lucide-react'
 import { loginAction } from './actions'
-import Image from 'next/image'
 
 export default function LoginPage() {
     const [username, setUsername] = useState('')
@@ -88,12 +87,11 @@ export default function LoginPage() {
                         marginBottom: '32px',
                         filter: 'drop-shadow(0 0 40px rgba(178,30,43,0.4))',
                     }}>
-                        <Image
+                        <img
                             src="/logo_cinex.png"
                             alt="CineX Logo"
                             width={220}
                             height={220}
-                            priority
                             style={{ objectFit: 'contain' }}
                         />
                     </div>
