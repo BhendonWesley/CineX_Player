@@ -1,3 +1,5 @@
+'use client'
+
 import { useState, useEffect, useCallback } from 'react'
 import { Users, UserPlus, Shield, Activity, RefreshCw } from 'lucide-react'
 import { fetchResellersAction } from './actions'
