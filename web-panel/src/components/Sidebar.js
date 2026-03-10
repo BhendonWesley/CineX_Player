@@ -32,9 +32,8 @@ export default function Sidebar() {
             left: 0,
             top: 0
         }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '48px', padding: '0 12px' }}>
-                <Image src="/logo_cinex.png" alt="CineX" width={44} height={44} style={{ objectFit: 'contain' }} />
-                <h2 style={{ fontSize: '22px', fontWeight: '700', color: '#FFFFFF' }}>CineX</h2>
+            <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '48px', padding: '0 12px' }}>
+                <Image src="/logo_cinex.png" alt="CineX" width={80} height={80} style={{ objectFit: 'contain' }} />
             </div>
 
             <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
