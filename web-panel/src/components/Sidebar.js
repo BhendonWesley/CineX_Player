@@ -1,18 +1,22 @@
 'use client'
 
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
-import { LayoutDashboard, Smartphone, Users, Settings, LogOut } from 'lucide-react'
+import { usePathname, useRouter } from 'next/navigation'
+import { LayoutDashboard, Smartphone, LogOut } from 'lucide-react'
 
 export default function Sidebar() {
     const pathname = usePathname()
+    const router = useRouter()
 
     const menuItems = [
         { name: 'Dashboard', icon: <LayoutDashboard size={20} />, path: '/' },
         { name: 'Dispositivos', icon: <Smartphone size={20} />, path: '/devices' },
-        { name: 'Revendedores', icon: <Users size={20} />, path: '/resellers' },
-        { name: 'Configurações', icon: <Settings size={20} />, path: '/settings' },
     ]
+
+    const handleLogout = async () => {
+        await fetch('/api/logout', { method: 'POST' })
+        router.push('/login')
+    }
 
     return (
         <aside style={{
@@ -59,7 +63,7 @@ export default function Sidebar() {
                 })}
             </nav>
 
-            <button style={{
+            <button onClick={handleLogout} style={{
                 display: 'flex', alignItems: 'center', gap: '12px', padding: '12px 16px',
                 color: 'var(--highlight-red)', background: 'transparent', border: 'none', cursor: 'pointer',
                 marginTop: 'auto', borderRadius: '12px'

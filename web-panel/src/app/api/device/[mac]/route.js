@@ -1,21 +1,34 @@
 import { NextResponse } from 'next/server'
+import { supabase } from '@/lib/supabase'
 
+// API pública que o app Android consulta para buscar a playlist pelo MAC
 export async function GET(request, { params }) {
-    const mac = params.mac
+    const { mac } = await params
 
-    // This would query Supabase for the playlist associated with the MAC
-    // For the demo/build check, we return a mock response
-
-    const mockPlaylist = {
-        mac: mac,
-        sync_status: 'success',
-        playlist: {
-            type: 'xtream',
-            host: 'http://cinex.example.com',
-            user: 'user_demo',
-            pass: 'pass_demo'
-        }
+    if (!mac) {
+        return NextResponse.json({ error: 'MAC address required' }, { status: 400 })
     }
 
-    return NextResponse.json(mockPlaylist)
+    const { data: device, error } = await supabase
+        .from('devices')
+        .select('*')
+        .eq('mac_address', mac.toUpperCase())
+        .single()
+
+    if (error || !device) {
+        return NextResponse.json({
+            mac: mac,
+            sync_status: 'not_found',
+            message: 'Dispositivo não cadastrado. Contate seu revendedor.'
+        }, { status: 404 })
+    }
+
+    return NextResponse.json({
+        mac: device.mac_address,
+        sync_status: 'success',
+        playlist: {
+            type: device.playlist_type,
+            ...(device.playlist_config || {})
+        }
+    })
 }
