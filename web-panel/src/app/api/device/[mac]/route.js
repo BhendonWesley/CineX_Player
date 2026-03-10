@@ -9,10 +9,16 @@ export async function GET(request, { params }) {
         return NextResponse.json({ error: 'MAC address required' }, { status: 400 })
     }
 
+    // Normalizar MAC: remover separadores e converter para uppercase
+    const macClean = mac.replace(/[:\-\.]/g, '').toUpperCase()
+    const macWithColons = macClean.match(/.{1,2}/g)?.join(':') || macClean
+
+    // Buscar por ambos os formatos (com e sem separadores)
     const { data: device, error } = await supabase
         .from('devices')
         .select('*')
-        .eq('mac_address', mac.toUpperCase())
+        .or(`mac_address.eq.${macClean},mac_address.eq.${macWithColons},mac_address.eq.${mac.toUpperCase()}`)
+        .limit(1)
         .single()
 
     if (error || !device) {
