@@ -212,6 +212,111 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    companion object {
+        private const val PANEL_BASE_URL = "https://cinex-player.vercel.app"
+    }
+
+    fun syncFromPanel() {
+        viewModelScope.launch {
+            _isLoading.value = true
+            _errorMessage.value = null
+            _syncStatus.value = "Conectando ao painel CineX..."
+
+            val rotateJob = launch {
+                var phraseIndex = 0
+                while (_isLoading.value) {
+                    _syncStatus.value = phrases[phraseIndex]
+                    phraseIndex = (phraseIndex + 1) % phrases.size
+                    kotlinx.coroutines.delay(3000)
+                }
+            }
+
+            try {
+                val mac = _accountInfo.value?.macAddress ?: run {
+                    _errorMessage.value = "MAC não disponível. Reinicie o app."
+                    _isLoading.value = false
+                    rotateJob.cancel()
+                    return@launch
+                }
+
+                // Buscar a configuração de playlist do painel web
+                val apiUrl = "$PANEL_BASE_URL/api/device/${mac}"
+                val request = okhttp3.Request.Builder().url(apiUrl).get().build()
+                val response = okHttpClient.newCall(request).execute()
+                val body = response.body?.string() ?: ""
+
+                if (!response.isSuccessful || body.contains("not_found")) {
+                    _errorMessage.value = "Dispositivo não cadastrado no painel. Contate seu revendedor."
+                    _isLoading.value = false
+                    rotateJob.cancel()
+                    return@launch
+                }
+
+                // Parsear JSON de resposta
+                val json = org.json.JSONObject(body)
+                val playlist = json.getJSONObject("playlist")
+                val type = playlist.getString("type")
+
+                when (type) {
+                    "m3u" -> {
+                        val url = playlist.getString("url")
+                        if (url.isBlank()) {
+                            _errorMessage.value = "URL da lista M3U não configurada no painel."
+                            _isLoading.value = false
+                            rotateJob.cancel()
+                            return@launch
+                        }
+                        // Adicionar e sincronizar a playlist M3U
+                        repository.addPlaylist("CineX Panel", url)
+                        val result = repository.syncPlaylist(url) { l, m, s, _ ->
+                            _liveProgress.value = l
+                            _movieProgress.value = m
+                            _seriesProgress.value = s
+                        }
+                        result.onSuccess {
+                            _syncStatus.value = "Lista carregada com sucesso!"
+                            loadFeaturedMovies()
+                        }.onFailure {
+                            _errorMessage.value = it.message ?: "Erro ao carregar lista M3U"
+                        }
+                    }
+                    "xtream" -> {
+                        val dns = playlist.getString("dns")
+                        val user = playlist.getString("user")
+                        val pass = playlist.getString("pass")
+                        if (dns.isBlank() || user.isBlank() || pass.isBlank()) {
+                            _errorMessage.value = "Credenciais Xtream não configuradas no painel."
+                            _isLoading.value = false
+                            rotateJob.cancel()
+                            return@launch
+                        }
+                        val xtreamUrl = "$dns/get.php?username=$user&password=$pass&type=m3u_plus"
+                        repository.addPlaylist("CineX Panel (Xtream)", xtreamUrl)
+                        val result = repository.syncPlaylist(xtreamUrl) { l, m, s, _ ->
+                            _liveProgress.value = l
+                            _movieProgress.value = m
+                            _seriesProgress.value = s
+                        }
+                        result.onSuccess {
+                            _syncStatus.value = "Lista Xtream carregada com sucesso!"
+                            loadFeaturedMovies()
+                        }.onFailure {
+                            _errorMessage.value = it.message ?: "Erro ao carregar lista Xtream"
+                        }
+                    }
+                    else -> {
+                        _errorMessage.value = "Tipo de lista não reconhecido: $type"
+                    }
+                }
+            } catch (e: Exception) {
+                _errorMessage.value = "Erro de conexão com o painel: ${e.message}"
+            } finally {
+                rotateJob.cancel()
+                _isLoading.value = false
+            }
+        }
+    }
+
     private val _searchQuery = MutableStateFlow("")
     val searchQuery = _searchQuery.asStateFlow()
 

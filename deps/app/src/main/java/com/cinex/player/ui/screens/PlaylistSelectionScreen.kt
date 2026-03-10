@@ -78,7 +78,7 @@ fun PlaylistSelectionScreen(
 
             // Novo Action Card: Sincronizar Conteúdo
             SyncActionCard(
-                onClick = { viewModel.selectPlaylist(playlists.firstOrNull() ?: return@SyncActionCard) },
+                onClick = { viewModel.syncFromPanel() },
                 isLoading = isLoading
             )
 
