@@ -16,7 +16,7 @@ export default function Sidebar() {
 
     const handleLogout = async () => {
         await fetch('/api/logout', { method: 'POST' })
-        router.push('/login')
+        window.location.href = '/login'
     }
 
     return (

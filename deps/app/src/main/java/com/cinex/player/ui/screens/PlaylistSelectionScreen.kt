@@ -11,6 +11,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -85,7 +86,7 @@ fun PlaylistSelectionScreen(
 
             // Novo Action Card: Sincronizar Conteúdo
             SyncActionCard(
-                onClick = { viewModel.refreshPlaylist() },
+                onClick = { viewModel.selectPlaylist(playlists.firstOrNull() ?: return@SyncActionCard) },
                 isLoading = isLoading
             )
 
@@ -216,6 +217,7 @@ fun PlaylistSelectionScreen(
             Text("v5.0", color = CineX_TextMuted, modifier = Modifier.align(Alignment.End))
         }
     }
+}
 
 @Composable
 fun SyncActionCard(
