@@ -213,7 +213,7 @@ class MainViewModel @Inject constructor(
     }
 
     companion object {
-        private const val PANEL_BASE_URL = "https://cinex-player.vercel.app"
+        private const val PANEL_BASE_URL = "https://cine-x-player.vercel.app"
     }
 
     fun syncFromPanel() {
