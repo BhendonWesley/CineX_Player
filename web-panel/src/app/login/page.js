@@ -178,7 +178,8 @@ export default function LoginPage() {
                             justifyContent: 'center',
                             boxShadow: '0 4px 20px rgba(178,30,43,0.4)',
                         }}>
-                            <Image
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
                                 src="/logo_cinex.png"
                                 alt="CineX"
                                 width={48}
