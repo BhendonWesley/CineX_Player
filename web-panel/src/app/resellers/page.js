@@ -1,6 +1,4 @@
-'use client'
-
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Users, UserPlus, Shield, Activity, RefreshCw } from 'lucide-react'
 import { fetchResellersAction } from './actions'
 
@@ -8,17 +6,18 @@ export default function ResellersPage() {
     const [resellers, setResellers] = useState([])
     const [loading, setLoading] = useState(true)
 
-    useEffect(() => {
-        const loadData = async () => {
-            setLoading(true)
-            const result = await fetchResellersAction()
-            if (result.success) {
-                setResellers(result.resellers)
-            }
-            setLoading(false)
+    const loadData = useCallback(async () => {
+        setLoading(true)
+        const result = await fetchResellersAction()
+        if (result.success) {
+            setResellers(result.resellers)
         }
-        loadData()
+        setLoading(false)
     }, [])
+
+    useEffect(() => {
+        loadData()
+    }, [loadData])
 
     return (
         <div style={{ padding: '40px' }}>
