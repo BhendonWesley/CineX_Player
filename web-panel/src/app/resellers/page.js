@@ -8,16 +8,15 @@ export default function ResellersPage() {
     const [resellers, setResellers] = useState([])
     const [loading, setLoading] = useState(true)
 
-    const loadData = async () => {
-        setLoading(true)
-        const result = await fetchResellersAction()
-        if (result.success) {
-            setResellers(result.resellers)
-        }
-        setLoading(false)
-    }
-
     useEffect(() => {
+        const loadData = async () => {
+            setLoading(true)
+            const result = await fetchResellersAction()
+            if (result.success) {
+                setResellers(result.resellers)
+            }
+            setLoading(false)
+        }
         loadData()
     }, [])
 
