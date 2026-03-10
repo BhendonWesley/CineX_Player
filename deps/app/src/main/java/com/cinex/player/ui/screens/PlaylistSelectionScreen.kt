@@ -59,22 +59,14 @@ fun PlaylistSelectionScreen(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // Logo com Glow
-                Box(contentAlignment = Alignment.Center) {
-                    Box(
-                        modifier = Modifier
-                            .size(54.dp)
-                            .background(CineX_DeepRed.copy(alpha = 0.3f), CircleShape)
-                            .blur(16.dp)
-                    )
-                    Image(
-                        painter = painterResource(id = com.cinex.player.R.drawable.logo_cinex),
-                        contentDescription = null,
-                        modifier = Modifier.size(52.dp)
-                    )
-                }
+                Image(
+                    painter = painterResource(id = com.cinex.player.R.drawable.logo_cinex),
+                    contentDescription = null,
+                    modifier = Modifier.size(52.dp)
+                )
                 Spacer(modifier = Modifier.width(16.dp))
                 Text(
-                    text = "CineX",
+                    text = "Player",
                     color = CineX_TextPrimary,
                     fontSize = 32.sp,
                     fontWeight = FontWeight.ExtraBold,
@@ -185,15 +177,11 @@ fun PlaylistSelectionScreen(
             Text(
                 text = accountInfo?.macAddress ?: "79:77:0C:0E:46:38", 
                 color = CineX_LightGold, 
-                fontSize = 26.sp, 
+                fontSize = 18.sp, 
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                modifier = Modifier.shadow(
-                    elevation = 6.dp,
-                    ambientColor = CineX_PremiumGold,
-                    spotColor = CineX_PremiumGold
-                )
+                maxLines = 1
             )
 
             Spacer(modifier = Modifier.height(48.dp))
