@@ -504,8 +504,22 @@ class MainViewModel @Inject constructor(
     }
 
     fun swapServer() {
-        _currentPlaylist.value = null
-        _isLoading.value = false
-        _errorMessage.value = null
+        val currentUrl = _currentPlaylist.value?.url
+        val currentModel = _currentPlaylist.value
+
+        viewModelScope.launch(Dispatchers.IO) {
+            if (currentUrl != null) {
+                repository.clearChannels(currentUrl)
+            }
+            if (currentModel != null) {
+                repository.deletePlaylist(currentModel)
+            }
+            
+            withContext(Dispatchers.Main) {
+                _currentPlaylist.value = null
+                _isLoading.value = false
+                _errorMessage.value = null
+            }
+        }
     }
 }

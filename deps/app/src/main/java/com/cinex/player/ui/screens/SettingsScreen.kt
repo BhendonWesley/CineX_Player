@@ -56,7 +56,7 @@ fun SettingsScreen(
         ) {
             viewModel.updateParentalControl(!isParentalControlEnabled)
         },
-        SettingItem("Troca De Servidor", Icons.Default.SwapHoriz) {
+        SettingItem("Apagar Lista Atual", Icons.Default.Delete) {
             viewModel.swapServer()
             onServerSwap()
         },
