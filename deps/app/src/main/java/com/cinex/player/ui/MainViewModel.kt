@@ -273,6 +273,9 @@ class MainViewModel @Inject constructor(
                         }
                         result.onSuccess {
                             _syncStatus.value = "Lista carregada com sucesso!"
+                            _currentPlaylist.value = com.cinex.player.data.model.Playlist(
+                                name = "CineX Panel", url = url, lastUsed = System.currentTimeMillis()
+                            )
                             loadFeaturedMovies()
                         }.onFailure {
                             _errorMessage.value = it.message ?: "Erro ao carregar lista M3U"
@@ -297,6 +300,9 @@ class MainViewModel @Inject constructor(
                         }
                         result.onSuccess {
                             _syncStatus.value = "Lista Xtream carregada com sucesso!"
+                            _currentPlaylist.value = com.cinex.player.data.model.Playlist(
+                                name = "CineX Panel (Xtream)", url = xtreamUrl, lastUsed = System.currentTimeMillis()
+                            )
                             loadFeaturedMovies()
                         }.onFailure {
                             _errorMessage.value = it.message ?: "Erro ao carregar lista Xtream"

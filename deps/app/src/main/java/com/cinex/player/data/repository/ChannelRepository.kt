@@ -195,12 +195,16 @@ class ChannelRepository @Inject constructor(
                 channelDao.clearByPlaylist(url)
                 categoryDao.clearByPlaylist(url) // Novo
 
-                // Extrai categorias do M3U
-                val m3uCategories = parsedChannels.map { it.groupTitle }.distinct().mapIndexed { index, catName ->
+                // Extrai categorias do M3U — detecta tipo baseado no conteúdo
+                val channelsByGroup = parsedChannels.groupBy { it.groupTitle }
+                val m3uCategories = channelsByGroup.entries.mapIndexed { index, (catName, channels) ->
+                    // Determina o tipo da categoria baseado na maioria dos canais
+                    val type = channels.groupBy { it.category }
+                        .maxByOrNull { it.value.size }?.key ?: "LIVE_TV"
                     com.cinex.player.data.model.Category(
-                        id = catName, // No M3U o nome é o ID
+                        id = catName,
                         name = catName,
-                        type = "LIVE_TV",
+                        type = type,
                         playlistUrl = url,
                         orderIndex = index
                     )
