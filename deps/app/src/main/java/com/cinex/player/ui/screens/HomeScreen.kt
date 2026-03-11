@@ -123,7 +123,7 @@ fun HomeScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Network Connected",
+                        text = "Rede Conectada",
                         color = CineX_TextMuted,
                         fontSize = 12.sp
                     )
@@ -159,7 +159,7 @@ private fun HeroBackdrop(
     modifier: Modifier = Modifier
 ) {
     val validMovies = remember(movies) {
-        movies.filter { !it.bannerUrl.isNullOrEmpty() }.take(8)
+        movies.take(8)
     }
 
     if (validMovies.isEmpty()) {
@@ -196,13 +196,28 @@ private fun HeroBackdrop(
         userScrollEnabled = false
     ) { page ->
         val movie = validMovies[page]
+        val imageUrl = movie.bannerUrl?.takeIf { it.isNotEmpty() }
+            ?: movie.logoUrl?.takeIf { it.isNotEmpty() }
         Box(modifier = Modifier.fillMaxSize()) {
-            AsyncImage(
-                model = movie.bannerUrl,
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
-            )
+            if (imageUrl != null) {
+                AsyncImage(
+                    model = imageUrl,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+            } else {
+                Box(
+                    modifier = Modifier.fillMaxSize().background(
+                        Brush.radialGradient(
+                            colors = listOf(
+                                CineX_DeepRed.copy(alpha = 0.2f),
+                                CineX_BackgroundBlue
+                            )
+                        )
+                    )
+                )
+            }
 
             // Dark gradient overlays for readability
             // Left gradient (for text)
@@ -264,7 +279,7 @@ private fun HeroMovieInfo(
     modifier: Modifier = Modifier
 ) {
     val validMovies = remember(movies) {
-        movies.filter { !it.bannerUrl.isNullOrEmpty() }.take(8)
+        movies.take(8)
     }
 
     if (validMovies.isEmpty()) {
@@ -278,7 +293,7 @@ private fun HeroMovieInfo(
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = "Sincronize para ver conteúdos em destaque",
+                    text = "Sincronize sua lista para ver conteúdos em destaque",
                     color = CineX_TextMuted,
                     fontSize = 14.sp
                 )
@@ -519,8 +534,8 @@ private fun NavigationCardsRow(
     ) {
         NavCard(
             icon = Icons.Default.LiveTv,
-            subtitle = "WATCH NOW",
-            label = "Live TV",
+            subtitle = "AO VIVO",
+            label = "TV ao Vivo",
             isActive = true,
             onClick = { onNavigate(1) },
             modifier = Modifier.weight(1f)
@@ -528,21 +543,21 @@ private fun NavigationCardsRow(
         NavCard(
             icon = Icons.Default.Movie,
             subtitle = "CINEMA",
-            label = "Movies",
+            label = "Filmes",
             onClick = { onNavigate(2) },
             modifier = Modifier.weight(1f)
         )
         NavCard(
             icon = Icons.Default.Tv,
-            subtitle = "BINGE",
-            label = "Series",
+            subtitle = "MARATONA",
+            label = "Séries",
             onClick = { onNavigate(3) },
             modifier = Modifier.weight(1f)
         )
         NavCard(
             icon = Icons.Default.Person,
-            subtitle = "PROFILE",
-            label = "Account",
+            subtitle = "PERFIL",
+            label = "Conta",
             onClick = onAccountClick,
             modifier = Modifier.weight(1f)
         )

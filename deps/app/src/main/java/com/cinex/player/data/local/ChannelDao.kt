@@ -35,7 +35,7 @@ interface ChannelDao {
     @Query("SELECT * FROM channels WHERE categoryId = :categoryId AND category = 'SERIES' AND playlistUrl = :url GROUP BY seriesName ORDER BY orderIndex ASC")
     fun getUniqueSeriesByCategoryId(categoryId: String, url: String): PagingSource<Int, Channel>
 
-    @Query("SELECT * FROM channels WHERE category IN ('MOVIE', 'SERIES') AND logoUrl IS NOT NULL AND logoUrl != '' AND playlistUrl = :url ORDER BY id DESC LIMIT 20")
+    @Query("SELECT * FROM channels WHERE category IN ('MOVIE', 'SERIES') AND playlistUrl = :url ORDER BY CASE WHEN bannerUrl IS NOT NULL AND bannerUrl != '' THEN 0 WHEN logoUrl IS NOT NULL AND logoUrl != '' THEN 1 ELSE 2 END, id DESC LIMIT 20")
     suspend fun getFeaturedContent(url: String): List<Channel>
 
     // Retorna todos os episódios de uma série específica, ordenados
