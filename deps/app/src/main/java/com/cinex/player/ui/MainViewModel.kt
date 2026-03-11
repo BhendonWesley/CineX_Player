@@ -13,6 +13,8 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import androidx.media3.exoplayer.ExoPlayer
 import com.cinex.player.data.network.XtreamCodesApi
 import okhttp3.OkHttpClient // Novo
@@ -508,6 +510,18 @@ class MainViewModel @Inject constructor(
         val currentModel = _currentPlaylist.value
 
         viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // Tenta apagar o dispositivo do painel web também
+                val androidId = Settings.Secure.getString(app.contentResolver, Settings.Secure.ANDROID_ID) ?: "000000000000"
+                val mac = androidId.chunked(2).take(6).joinToString(":").uppercase()
+                val apiUrl = "$PANEL_BASE_URL/api/device/${mac}"
+
+                val request = okhttp3.Request.Builder().url(apiUrl).delete().build()
+                okHttpClient.newCall(request).execute()
+            } catch (e: Exception) {
+                e.printStackTrace() // Ignora o erro para que o app apague localmente mesmo offline
+            }
+
             if (currentUrl != null) {
                 repository.clearChannels(currentUrl)
             }
