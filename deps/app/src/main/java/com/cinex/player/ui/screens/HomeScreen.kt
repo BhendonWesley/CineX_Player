@@ -3,6 +3,7 @@ package com.cinex.player.ui.screens
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -43,6 +44,7 @@ import java.util.Locale
 //  CineX Home Screen — Netflix/TV-Style Landscape Interface
 // ══════════════════════════════════════════════════════════════
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(
     featuredMovies: List<Channel>,
@@ -150,6 +152,7 @@ fun HomeScreen(
 //  HERO BACKDROP — Full-Screen Auto-Rotating Backdrop
 // ══════════════════════════════════════════════════════════════
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HeroBackdrop(
     movies: List<Channel>,
@@ -254,6 +257,7 @@ private fun HeroBackdrop(
 //  HERO MOVIE INFO — Left-Aligned Title + Synopsis + Metadata
 // ══════════════════════════════════════════════════════════════
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HeroMovieInfo(
     movies: List<Channel>,
