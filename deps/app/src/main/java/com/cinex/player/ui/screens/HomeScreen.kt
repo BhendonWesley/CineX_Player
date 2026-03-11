@@ -484,7 +484,7 @@ private fun HeaderBar(
 }
 
 // ══════════════════════════════════════════════════════════════
-//  NAVIGATION CARDS — Horizontal Row (3 Cards)
+//  NAVIGATION CARDS — Compact Glass Row (3 Cards)
 // ══════════════════════════════════════════════════════════════
 
 @Composable
@@ -493,24 +493,25 @@ private fun NavigationCardsRow(
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(16.dp)
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
         NavCard(
             icon = Icons.Default.LiveTv,
-            label = "TV",
+            label = "TV AO VIVO",
             isActive = true,
             onClick = { onNavigate(1) },
             modifier = Modifier.weight(1f)
         )
         NavCard(
             icon = Icons.Default.Movie,
-            label = "Filmes",
+            label = "FILMES",
             onClick = { onNavigate(2) },
             modifier = Modifier.weight(1f)
         )
         NavCard(
             icon = Icons.Default.Tv,
-            label = "Séries",
+            label = "SÉRIES",
             onClick = { onNavigate(3) },
             modifier = Modifier.weight(1f)
         )
@@ -525,83 +526,59 @@ private fun NavCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val borderColor by animateColorAsState(
-        targetValue = if (isActive) CineX_PremiumGold.copy(alpha = 0.7f) else Color.White.copy(alpha = 0.06f),
-        animationSpec = tween(300),
-        label = "border"
-    )
-
-    Box(modifier = modifier.height(140.dp)) {
-        // Glow behind active card
-        if (isActive) {
+    Box(
+        modifier = modifier
+            .height(100.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(
+                color = if (isActive) Color.White.copy(alpha = 0.10f)
+                else Color.White.copy(alpha = 0.05f)
+            )
+            .border(
+                width = if (isActive) 1.5.dp else 0.5.dp,
+                color = if (isActive) Color.White.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.08f),
+                shape = RoundedCornerShape(14.dp)
+            )
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+            modifier = Modifier.padding(8.dp)
+        ) {
+            // Icon inside glass square
             Box(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .padding(4.dp)
-                    .blur(20.dp)
-                    .background(CineX_DeepRed.copy(alpha = 0.2f), RoundedCornerShape(16.dp))
-            )
-        }
-
-        Card(
-            modifier = Modifier
-                .fillMaxSize()
-                .clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) { onClick() },
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = CineX_SecondaryBackground.copy(alpha = if (isActive) 0.8f else 0.5f)
-            ),
-            border = androidx.compose.foundation.BorderStroke(
-                width = if (isActive) 1.5.dp else 0.5.dp,
-                color = borderColor
-            )
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
+                    .size(48.dp)
                     .background(
-                        Brush.verticalGradient(
-                            colors = listOf(
-                                Color.White.copy(alpha = 0.03f),
-                                Color.Transparent
-                            )
-                        )
-                    )
-                    .padding(16.dp),
-                verticalArrangement = Arrangement.SpaceBetween
+                        color = if (isActive) Color.White.copy(alpha = 0.12f)
+                        else Color.White.copy(alpha = 0.05f),
+                        shape = RoundedCornerShape(12.dp)
+                    ),
+                contentAlignment = Alignment.Center
             ) {
-                // Icon
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .background(
-                            if (isActive) CineX_DeepRed.copy(alpha = 0.2f)
-                            else Color.White.copy(alpha = 0.05f),
-                            RoundedCornerShape(12.dp)
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = label,
-                        tint = if (isActive) CineX_HighlightRed else Color.White.copy(alpha = 0.6f),
-                        modifier = Modifier.size(24.dp)
-                    )
-                }
-
-                // Text — label only, no subtitle
-                Column {
-                    Text(
-                        text = label,
-                        color = if (isActive) Color.White else CineX_TextSecondary,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
+                Icon(
+                    imageVector = icon,
+                    contentDescription = label,
+                    tint = Color.White,
+                    modifier = Modifier.size(28.dp)
+                )
             }
+            Spacer(modifier = Modifier.height(8.dp))
+            // Label — centered, uppercase, bold
+            Text(
+                text = label,
+                color = Color.White,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                letterSpacing = 1.sp,
+                textAlign = TextAlign.Center,
+                maxLines = 1
+            )
         }
     }
 }

@@ -177,9 +177,8 @@ export default function LoginPage() {
                         return (
                             <div key={ci} className={`pc ${col.speed}`} style={{ paddingTop: col.offset }}>
                                 {doubled.map((src, i) => (
-                                    // eslint-disable-next-line @next/next/no-img-element
                                     <img key={`${ci}-${i}`} src={src} alt="" className="pp"
-                                        loading={i < 5 ? 'eager' : 'lazy'} decoding="async"
+                                        decoding="async"
                                         onError={e => { e.target.setAttribute('data-e','1'); e.target.style.display='none' }}
                                     />
                                 ))}
@@ -212,6 +211,12 @@ export default function LoginPage() {
                         <div className="cp"><Smartphone size={13} style={{ color:'#D8A63A', flexShrink:0 }} /><span>Dispositivos via MAC</span></div>
                         <div className="cp"><Zap size={13} style={{ color:'#D8A63A', flexShrink:0 }} /><span>M3U e Xtream</span></div>
                         <div className="cp"><Shield size={13} style={{ color:'#D8A63A', flexShrink:0 }} /><span>Sync CineX Player</span></div>
+                    </div>
+
+                    <div style={{ textAlign:'center', marginBottom:'16px' }}>
+                        <p style={{ fontSize:'12px', color:'#fff', fontWeight:'500', background:'rgba(216,166,58,.1)', padding:'8px 12px', borderRadius:'8px', border:'1px solid rgba(216,166,58,.2)' }}>
+                            Use o mesmo acesso do painel CineX para entrar no painel de controle
+                        </p>
                     </div>
 
                     <form onSubmit={handleLogin} style={{ display:'flex', flexDirection:'column', gap:'12px' }}>

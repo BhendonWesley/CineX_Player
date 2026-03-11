@@ -46,7 +46,10 @@ fun SettingsScreen(
     val isParentalControlEnabled by viewModel.isParentalControlEnabled.collectAsState()
 
     val settingsItems = listOf(
-        SettingItem("Adicionar lista", Icons.AutoMirrored.Filled.PlaylistAdd) { /* Open Dialog or Nav */ },
+        SettingItem("Adicionar lista", Icons.AutoMirrored.Filled.PlaylistAdd) {
+            viewModel.swapServer()
+            onServerSwap()
+        },
         SettingItem(
             if (isParentalControlEnabled) "Desativar Controle dos Pais" else "Ativar Controle dos Pais",
             if (isParentalControlEnabled) Icons.Default.LockOpen else Icons.Default.Lock

@@ -504,9 +504,29 @@ class MainViewModel @Inject constructor(
     }
 
     fun swapServer() {
-        viewModelScope.launch {
-            _isLoading.value = false
-            _errorMessage.value = null
-        }
+        _currentPlaylist.value = null
+        _isLoading.value = false
+        _errorMessage.value = null
+    }
+
+    // ── Settings update functions ──
+    fun updateLiveTvVisibility(hidden: Boolean) {
+        _isLiveTvHidden.value = hidden
+    }
+
+    fun updateMoviesVisibility(hidden: Boolean) {
+        _isMoviesHidden.value = hidden
+    }
+
+    fun updateSeriesVisibility(hidden: Boolean) {
+        _isSeriesHidden.value = hidden
+    }
+
+    fun updateTimeFormat(is24Hour: Boolean) {
+        _is24HourFormat.value = is24Hour
+    }
+
+    fun updateParentalControl(enabled: Boolean) {
+        _isParentalControlEnabled.value = enabled
     }
 }
