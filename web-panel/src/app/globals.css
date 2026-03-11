@@ -123,3 +123,65 @@ h4 {
 .animate-fade {
   animation: fadeIn 0.5s ease forwards;
 }
+
+/* ═══ POSTER WALL ANIMATIONS ═══ */
+@keyframes posterScrollSlow {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-50%); }
+}
+@keyframes posterScrollMedium {
+  0% { transform: translateY(-50%); }
+  100% { transform: translateY(0); }
+}
+@keyframes posterScrollFast {
+  0% { transform: translateY(0); }
+  100% { transform: translateY(-50%); }
+}
+
+.poster-col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.poster-col-slow { animation: posterScrollSlow 60s linear infinite; }
+.poster-col-medium { animation: posterScrollMedium 45s linear infinite; }
+.poster-col-fast { animation: posterScrollFast 35s linear infinite; }
+
+.poster-img {
+  border-radius: 10px;
+  object-fit: cover;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  transition: transform 0.4s ease, opacity 0.4s ease;
+}
+.poster-img:hover {
+  transform: scale(1.05);
+  opacity: 1 !important;
+}
+
+.poster-large { width: 220px; height: 330px; opacity: 0.85; }
+.poster-medium { width: 160px; height: 240px; opacity: 0.6; }
+.poster-small { width: 110px; height: 165px; opacity: 0.4; filter: blur(1px); }
+
+/* Login input focus animation */
+.login-input:focus {
+  border-color: rgba(216,166,58,0.5) !important;
+  box-shadow: 0 0 24px rgba(216,166,58,0.1);
+}
+
+/* Button glow hover */
+.btn-login:hover:not(:disabled) {
+  box-shadow: 0 0 30px rgba(178,30,43,0.5), 0 4px 20px rgba(178,30,43,0.3);
+  transform: translateY(-1px);
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+/* Spin animation for loader */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+.animate-spin { animation: spin 1s linear infinite; }
