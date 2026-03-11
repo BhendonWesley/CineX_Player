@@ -169,7 +169,8 @@ fun MainScreen(
                         onSettingsClick = { isSettingsOpen = true },
                         onServerSwap = { isServerSwapOpen = true },
                         onRefresh = { viewModel.refreshPlaylist() },
-                        accountInfo = accountInfo
+                        accountInfo = accountInfo,
+                        macAddress = accountInfo?.macAddress ?: ""
                     )
                     1 -> LiveTvScreen(
                         viewModel = viewModel,

@@ -53,18 +53,10 @@ fun HomeScreen(
     onServerSwap: () -> Unit,
     onRefresh: () -> Unit,
     accountInfo: com.cinex.player.ui.AccountInfo?,
+    macAddress: String = "",
     modifier: Modifier = Modifier
 ) {
     var showAccountDialog by remember { mutableStateOf(false) }
-
-    // Clock
-    var currentTime by remember { mutableStateOf("") }
-    LaunchedEffect(Unit) {
-        while (true) {
-            currentTime = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-            delay(30_000)
-        }
-    }
 
     Box(
         modifier = modifier
@@ -88,7 +80,8 @@ fun HomeScreen(
             HeaderBar(
                 onSettingsClick = onSettingsClick,
                 onRefresh = onRefresh,
-                onServerSwap = onServerSwap
+                onServerSwap = onServerSwap,
+                onAccountClick = { showAccountDialog = true }
             )
 
             // ── CENTER: MOVIE INFO (left-aligned) ──
@@ -100,39 +93,24 @@ fun HomeScreen(
                     .padding(vertical = 16.dp)
             )
 
-            // ── BOTTOM: NAVIGATION CARDS ROW ──
-            Column {
+            // ── BOTTOM: NAVIGATION CARDS + MAC ──
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 NavigationCardsRow(
-                    onNavigate = onNavigate,
-                    onAccountClick = { showAccountDialog = true }
+                    onNavigate = onNavigate
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Status Bar
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF4CAF50))
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
+                // MAC Address — bottom center
+                if (macAddress.isNotEmpty()) {
                     Text(
-                        text = "Rede Conectada",
-                        color = CineX_TextMuted,
-                        fontSize = 12.sp
-                    )
-                    Spacer(modifier = Modifier.width(16.dp))
-                    Text(
-                        text = currentTime,
-                        color = CineX_PremiumGold,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold
+                        text = macAddress,
+                        color = CineX_TextMuted.copy(alpha = 0.6f),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        letterSpacing = 1.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
                     )
                 }
             }
@@ -463,35 +441,21 @@ private fun MetadataPill(text: String, highlight: Boolean = false) {
 private fun HeaderBar(
     onSettingsClick: () -> Unit,
     onRefresh: () -> Unit,
-    onServerSwap: () -> Unit
+    onServerSwap: () -> Unit,
+    onAccountClick: () -> Unit
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        // Logo
+        // Logo only — no text
         Row(verticalAlignment = Alignment.CenterVertically) {
             Image(
                 painter = painterResource(id = com.cinex.player.R.drawable.logo_cinex),
                 contentDescription = "CineX",
-                modifier = Modifier.height(36.dp),
+                modifier = Modifier.height(42.dp),
                 contentScale = ContentScale.Fit
-            )
-            Spacer(modifier = Modifier.width(12.dp))
-            Text(
-                text = "CINE",
-                color = Color.White,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.ExtraBold,
-                letterSpacing = 2.sp
-            )
-            Text(
-                text = "X",
-                color = CineX_DeepRed,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.ExtraBold,
-                letterSpacing = 2.sp
             )
         }
 
@@ -510,7 +474,7 @@ private fun HeaderBar(
                     .clip(CircleShape)
                     .background(CineX_PremiumGold.copy(alpha = 0.3f))
                     .border(1.5.dp, CineX_PremiumGold.copy(alpha = 0.5f), CircleShape)
-                    .clickable { onServerSwap() },
+                    .clickable { onAccountClick() },
                 contentAlignment = Alignment.Center
             ) {
                 Icon(Icons.Default.Person, "Perfil", tint = CineX_LightGold, modifier = Modifier.size(20.dp))
@@ -520,13 +484,12 @@ private fun HeaderBar(
 }
 
 // ══════════════════════════════════════════════════════════════
-//  NAVIGATION CARDS — Horizontal Row (4 Cards)
+//  NAVIGATION CARDS — Horizontal Row (3 Cards)
 // ══════════════════════════════════════════════════════════════
 
 @Composable
 private fun NavigationCardsRow(
-    onNavigate: (Int) -> Unit,
-    onAccountClick: () -> Unit
+    onNavigate: (Int) -> Unit
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -534,31 +497,21 @@ private fun NavigationCardsRow(
     ) {
         NavCard(
             icon = Icons.Default.LiveTv,
-            subtitle = "AO VIVO",
-            label = "TV ao Vivo",
+            label = "TV",
             isActive = true,
             onClick = { onNavigate(1) },
             modifier = Modifier.weight(1f)
         )
         NavCard(
             icon = Icons.Default.Movie,
-            subtitle = "CINEMA",
             label = "Filmes",
             onClick = { onNavigate(2) },
             modifier = Modifier.weight(1f)
         )
         NavCard(
             icon = Icons.Default.Tv,
-            subtitle = "MARATONA",
             label = "Séries",
             onClick = { onNavigate(3) },
-            modifier = Modifier.weight(1f)
-        )
-        NavCard(
-            icon = Icons.Default.Person,
-            subtitle = "PERFIL",
-            label = "Conta",
-            onClick = onAccountClick,
             modifier = Modifier.weight(1f)
         )
     }
@@ -567,7 +520,6 @@ private fun NavigationCardsRow(
 @Composable
 private fun NavCard(
     icon: ImageVector,
-    subtitle: String,
     label: String,
     isActive: Boolean = false,
     onClick: () -> Unit,
@@ -640,15 +592,8 @@ private fun NavCard(
                     )
                 }
 
-                // Text
+                // Text — label only, no subtitle
                 Column {
-                    Text(
-                        text = subtitle,
-                        color = CineX_TextMuted,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        letterSpacing = 1.5.sp
-                    )
                     Text(
                         text = label,
                         color = if (isActive) Color.White else CineX_TextSecondary,

@@ -11,6 +11,19 @@ export default function DevicesPage() {
     const [submitting, setSubmitting] = useState(false)
     const [error, setError] = useState('')
     const [playlistType, setPlaylistType] = useState('xtream')
+    const [macInput, setMacInput] = useState('')
+    const [deleting, setDeleting] = useState(null)
+
+    // Auto-format MAC: uppercase, hex only, ":" separator
+    const formatMac = (value) => {
+        const hex = value.replace(/[^a-fA-F0-9]/g, '').toUpperCase().slice(0, 12)
+        const parts = hex.match(/.{1,2}/g) || []
+        return parts.join(':')
+    }
+
+    const handleMacChange = (e) => {
+        setMacInput(formatMac(e.target.value))
+    }
 
     const loadDevices = useCallback(async () => {
         const result = await getDevices()
@@ -32,11 +45,13 @@ export default function DevicesPage() {
 
         const formData = new FormData(e.target)
         formData.set('playlist_type', playlistType)
+        formData.set('mac', macInput) // Use formatted MAC
 
         const result = await addDevice(formData)
         if (result.success) {
             setIsAdding(false)
             setPlaylistType('xtream')
+            setMacInput('')
             loadDevices()
         } else {
             setError(result.message)
@@ -46,7 +61,12 @@ export default function DevicesPage() {
 
     const handleDelete = async (id) => {
         if (!confirm('Tem certeza que deseja remover este dispositivo?')) return
-        await deleteDevice(id)
+        setDeleting(id)
+        const result = await deleteDevice(id)
+        if (!result.success) {
+            alert(result.message || 'Erro ao remover dispositivo.')
+        }
+        setDeleting(null)
         loadDevices()
     }
 
@@ -120,7 +140,20 @@ export default function DevicesPage() {
                                     </td>
                                     <td style={{ padding: '16px 24px' }}>
                                         <div style={{ display: 'flex', gap: '12px' }}>
-                                            <Trash2 size={18} style={{ cursor: 'pointer', color: 'var(--primary-red)' }} onClick={() => handleDelete(device.id)} />
+                                            <button
+                                                onClick={() => handleDelete(device.id)}
+                                                disabled={deleting === device.id}
+                                                style={{
+                                                    background: 'none', border: 'none', cursor: deleting === device.id ? 'wait' : 'pointer',
+                                                    padding: '6px', borderRadius: '6px', display: 'flex', alignItems: 'center',
+                                                }}
+                                                title="Remover dispositivo"
+                                            >
+                                                {deleting === device.id
+                                                    ? <Loader2 size={18} style={{ color: 'var(--primary-red)', animation: 'spin 1s linear infinite' }} />
+                                                    : <Trash2 size={18} style={{ color: 'var(--primary-red)' }} />
+                                                }
+                                            </button>
                                         </div>
                                     </td>
                                 </tr>
@@ -139,7 +172,7 @@ export default function DevicesPage() {
                     <form onSubmit={handleAdd} className="premium-card animate-fade" style={{ width: '550px', padding: '32px' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '24px' }}>
                             <h3 className="glow-text">Novo Dispositivo</h3>
-                            <X style={{ cursor: 'pointer' }} onClick={() => { setIsAdding(false); setError('') }} />
+                            <X style={{ cursor: 'pointer' }} onClick={() => { setIsAdding(false); setError(''); setMacInput('') }} />
                         </div>
 
                         {error && (
@@ -159,7 +192,12 @@ export default function DevicesPage() {
                             </div>
                             <div>
                                 <label style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '8px', display: 'block' }}>Endereço MAC do Cliente</label>
-                                <input name="mac" className="input-field" placeholder="00:1A:2B:3C:4D:5E" required />
+                                <input name="mac" className="input-field" placeholder="00:1A:2B:3C:4D:5E" required
+                                    value={macInput}
+                                    onChange={handleMacChange}
+                                    maxLength={17}
+                                    style={{ textTransform: 'uppercase', fontFamily: 'monospace', letterSpacing: '1px' }}
+                                />
                             </div>
 
                             {/* Playlist Type Selector */}
