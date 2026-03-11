@@ -657,21 +657,4 @@ class ChannelRepository @Inject constructor(
     suspend fun clearHistory() {
         channelDao.resetAllResumePositions()
     }
-
-    suspend fun clearChannels(url: String) {
-        channelDao.clearByPlaylist(url)
-        categoryDao.clearByPlaylist(url)
-    }
-
-    suspend fun deletePlaylist(playlist: com.cinex.player.data.model.Playlist) {
-        playlistDao.deletePlaylist(playlist)
-    }
-
-    suspend fun updateFavorite(channelId: Int, isFav: Boolean) {
-        channelDao.updateFavorite(channelId, isFav)
-    }
-
-    suspend fun updateResumePosition(channelId: Int, position: Long, duration: Long) {
-        channelDao.updateResumePosition(channelId, position, duration)
-    }
 }
