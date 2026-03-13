@@ -245,7 +245,7 @@ export default function LoginPage() {
                                     <div className="p-group">
                                         {col.posters.map((src, i) => (
                                             src ? (
-                                                <img key={`orig-${ci}-${i}`} src={src} alt="" className="pp" decoding="async" onError={e => { e.target.style.opacity = '0.05' }} />
+                                                <Image key={`orig-${ci}-${i}`} src={src} alt="" width={150} height={225} className="pp" priority={ci < 4} />
                                             ) : (
                                                 <div key={`orig-empty-${ci}-${i}`} className="pp" />
                                             )
@@ -256,7 +256,7 @@ export default function LoginPage() {
                                     <div className="p-group">
                                         {col.posters.map((src, i) => (
                                             src ? (
-                                                <img key={`clone-${ci}-${i}`} src={src} alt="" className="pp" decoding="async" onError={e => { e.target.style.opacity = '0.05' }} />
+                                                <Image key={`clone-${ci}-${i}`} src={src} alt="" width={150} height={225} className="pp" />
                                             ) : (
                                                 <div key={`clone-empty-${ci}-${i}`} className="pp" />
                                             )

@@ -1,3 +1,8 @@
+'use client'
+
+import Link from 'next/link'
+import { usePathname, useRouter } from 'next/navigation'
+import { LayoutDashboard, Smartphone, LogOut } from 'lucide-react'
 import Image from 'next/image'
 
 export default function Sidebar({ isOpen, onClose }) {
