@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import Image from 'next/image'
 import { Lock, User, Loader2, Shield, Smartphone, Zap, Eye, EyeOff } from 'lucide-react'
 import { loginAction } from './actions'
 
@@ -275,8 +276,7 @@ export default function LoginPage() {
                 <div className="cc">
                     <div style={{ textAlign:'center', marginBottom:'6px' }}>
                         <div style={{ margin:'0 auto 12px', display:'flex', alignItems:'center', justifyContent:'center' }}>
-                            {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src="/cinex-logo-final.png" alt="CineX" width={80} height={80} style={{ objectFit:'contain', filter:'drop-shadow(0 4px 12px rgba(178,30,43,0.3))' }} />
+                            <Image src="/cinex-logo-final.png" alt="CineX" width={80} height={80} style={{ objectFit:'contain', filter:'drop-shadow(0 4px 12px rgba(178,30,43,0.3))' }} />
                         </div>
                         <h1 style={{ fontSize:'24px', fontWeight:'800', color:'#B21E2B', marginBottom:'2px', letterSpacing:'-0.5px' }}>
                             CENTRAL DE CONTROLE

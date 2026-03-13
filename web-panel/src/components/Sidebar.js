@@ -1,8 +1,4 @@
-'use client'
-
-import Link from 'next/link'
-import { usePathname, useRouter } from 'next/navigation'
-import { LayoutDashboard, Smartphone, LogOut } from 'lucide-react'
+import Image from 'next/image'
 
 export default function Sidebar({ isOpen, onClose }) {
     const pathname = usePathname()
@@ -75,7 +71,7 @@ export default function Sidebar({ isOpen, onClose }) {
                 `}</style>
 
                 <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '48px', padding: '0 12px', position: 'relative' }}>
-                    <img src="/cinex-logo-final.png?v=3" alt="CineX" width={80} height={80} style={{ objectFit: 'contain' }} />
+                    <Image src="/cinex-logo-final.png" alt="CineX" width={80} height={80} style={{ objectFit: 'contain' }} />
                 </div>
 
                 <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>

@@ -1,6 +1,7 @@
 'use client'
 
 import { Menu } from 'lucide-react'
+import Image from 'next/image'
 
 export default function MobileHeader({ onMenuClick }) {
     return (
@@ -24,7 +25,7 @@ export default function MobileHeader({ onMenuClick }) {
             `}</style>
             
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <img src="/cinex-logo-final.png?v=3" alt="CineX" width={32} height={32} style={{ objectFit: 'contain' }} />
+                <Image src="/cinex-logo-final.png" alt="CineX" width={32} height={32} style={{ objectFit: 'contain' }} />
                 <span style={{ fontWeight: '700', fontSize: '13px', color: 'var(--premium-gold)', letterSpacing: '0.5px' }}>PAINEL DE CONTROLE</span>
             </div>
 
