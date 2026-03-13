@@ -161,19 +161,28 @@ export default function LoginPage() {
     }))
 
     const handleLogin = async (e) => {
-        e.preventDefault()
+        if (e) e.preventDefault()
+        if (loading) return
+
         setLoading(true)
         setError('')
-        const fd = new FormData()
-        fd.append('username', username)
-        fd.append('password', password)
+        
         try {
+            const fd = new FormData()
+            fd.append('username', username)
+            fd.append('password', password)
+
             const r = await loginAction(fd)
-            if (r.success) router.push('/')
-            else setError(r.message)
-        } catch {
-            setError('Falha na comunicação com o servidor.')
-        } finally {
+            
+            // Se o loginAction chegar aqui sem disparar o redirect, significa que houve erro
+            if (r && !r.success) {
+                setError(r.message || 'Credenciais inválidas.')
+                setLoading(false)
+            }
+        } catch (err) {
+            // Se for erro de redirecionamento do Next.js, não tratamos como erro
+            // No client-side, r.success geralmente não será verdade se houve redirect
+            // Mas o Next.js intercepta e faz o redirect automaticamente.
             setLoading(false)
         }
     }
@@ -216,7 +225,7 @@ export default function LoginPage() {
                 .cb:hover:not(:disabled){box-shadow:0 0 32px rgba(226,58,58,.5);transform:translateY(-1px)}
                 .cb:disabled{opacity:.55;cursor:not-allowed}
 
-                .cp{display:flex;align-items:center;justify-content:center;gap:8px;padding:6px 12px;background:rgba(255,255,255,.03);border:1px solid rgba(216,166,58,.08);border-radius:8px;font-size:11px;color:#8a91a3}
+                .cp{display:flex;align-items:center;justify-content:center;gap:8px;padding:6px 12px;background:rgba(255,255,255,.03);border:1px solid rgba(178,30,43,.2);border-radius:8px;font-size:11px;color:#8a91a3}
 
                 @keyframes spin{to{transform:rotate(360deg)}}
                 .spin{animation:spin 1s linear infinite}
@@ -280,7 +289,7 @@ export default function LoginPage() {
                     <div className="dv" />
 
                     <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', marginBottom:'16px' }}>
-                        <div className="cp"><Smartphone size={13} style={{ color:'#D8A63A', flexShrink:0 }} /><span>Dispositivos via MAC</span></div>
+                        <div className="cp"><Smartphone size={13} style={{ color:'#D8A63A', flexShrink:0 }} /><span>Ativação via MAC</span></div>
                         <div className="cp"><Zap size={13} style={{ color:'#D8A63A', flexShrink:0 }} /><span>M3U e Xtream</span></div>
                         <div className="cp" style={{ gridColumn: '1 / -1' }}><Shield size={13} style={{ color:'#D8A63A', flexShrink:0 }} /><span>Sincronize com o CineX Player</span></div>
                     </div>
@@ -320,10 +329,10 @@ export default function LoginPage() {
                             </button>
                         </div>
                         <button type="submit" disabled={loading} className="cb" style={{ marginTop:'2px' }}>
-                            {loading ? <Loader2 className="spin" size={20} /> : 'Entrar no Painel'}
+                            {loading ? <Loader2 className="spin" size={20} /> : 'ENTRAR'}
                         </button>
                         
-                        <p style={{ textAlign: 'center', fontSize: '12px', color: '#9CA3AF', marginTop: '12px', lineHeight: '1.5', whiteSpace: 'nowrap' }}>
+                        <p style={{ textAlign: 'center', fontSize: '12px', color: '#9CA3AF', marginTop: '12px', lineHeight: '1.5' }}>
                             Use o mesmo usuário e senha do Painel de Revendedor CineX.
                         </p>
                     </form>

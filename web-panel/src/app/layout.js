@@ -1,19 +1,28 @@
 'use client'
 
-// CineX Web Panel - v1.0.4 - Build Trigger
 import './globals.css'
 import Sidebar from '@/components/Sidebar'
+import MobileHeader from '@/components/MobileHeader'
 import { usePathname } from 'next/navigation'
+import { useState } from 'react'
 
 export default function RootLayout({ children }) {
   const pathname = usePathname()
   const isLoginPage = pathname === '/login'
+  const [isSidebarOpen, setSidebarOpen] = useState(false)
 
   return (
     <html lang="pt-BR">
       <body>
-        {!isLoginPage && <Sidebar />}
-        <main style={{ marginLeft: !isLoginPage ? '280px' : '0', transition: 'margin 0.3s ease' }}>
+        {!isLoginPage && (
+          <>
+            <MobileHeader onMenuClick={() => setSidebarOpen(true)} />
+            <Sidebar isOpen={isSidebarOpen} onClose={() => setSidebarOpen(false)} />
+          </>
+        )}
+        <main 
+          className={!isLoginPage ? "main-content" : ""}
+        >
           {children}
         </main>
       </body>

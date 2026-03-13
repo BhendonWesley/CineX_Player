@@ -9,11 +9,19 @@ export default function HomePage() {
   const [loading, setLoading] = useState(true)
 
   const loadDashboard = useCallback(async () => {
-    const result = await getDashboardData()
-    if (result.success) {
-      setData(result)
+    try {
+      setLoading(true)
+      const result = await getDashboardData()
+      if (result && result.success) {
+        setData(result)
+      } else {
+        console.warn('Dashboard result unsuccessful', result)
+      }
+    } catch (err) {
+      console.error('Failed to load dashboard:', err)
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }, [])
 
   useEffect(() => {
@@ -36,8 +44,8 @@ export default function HomePage() {
   ]
 
   return (
-    <div style={{ padding: '40px' }}>
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px' }}>
+    <div style={{ padding: '0' }} className="main-container">
+      <header className="dashboard-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px' }}>
         <div>
           <h1 className="glow-text">Dashboard</h1>
           <p style={{ color: 'var(--text-secondary)' }}>Painel do Revendedor CineX</p>
@@ -48,59 +56,62 @@ export default function HomePage() {
         </div>
       </header>
 
-      {/* Welcome Card */}
-      <div className="premium-card animate-fade" style={{ padding: '32px', marginBottom: '32px', borderLeft: '4px solid var(--primary-red)' }}>
-        <h2 style={{ fontSize: '22px', marginBottom: '8px' }}>
-          Olá, <span style={{ color: 'var(--premium-gold)' }}>{data?.username || 'Revendedor'}</span>! 👋
-        </h2>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
-          Este painel foi criado para que você possa gerenciar seus dispositivos e enviar listas IPTV diretamente para o aplicativo <strong>CineX Player</strong> dos seus clientes.
-        </p>
-      </div>
-
-      {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px', marginBottom: '40px' }}>
-        {stats.map((stat, i) => (
-          <div key={i} className="premium-card animate-fade" style={{ padding: '24px', animationDelay: `${i * 0.1}s` }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-              {stat.icon}
-              <p style={{ color: '#ffffff', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '1px' }}>{stat.label}</p>
-            </div>
-            <h2 style={{ fontSize: '32px', color: '#ffffff' }}>{stat.value}</h2>
-          </div>
-        ))}
-      </div>
-
-      {/* Recent Devices */}
-      <div className="premium-card animate-fade" style={{ padding: '32px', animationDelay: '0.3s' }}>
-        <h3 style={{ marginBottom: '24px' }}>Dispositivos Recentes</h3>
-        {data?.recentDevices && data.recentDevices.length > 0 ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            {data.recentDevices.map((device, i) => (
-              <div key={i} style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                paddingBottom: '16px',
-                borderBottom: '1px solid var(--glass-border)'
-              }}>
-                <div>
-                  <p style={{ fontWeight: '600' }}>{device.name}</p>
-                  <code style={{ fontSize: '12px', color: 'var(--premium-gold)' }}>{device.mac_address}</code>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <p style={{ color: device.status === 'Ativo' ? '#44ff44' : '#ff4444', fontSize: '12px', fontWeight: 'bold' }}>
-                    ● {device.status || 'Ativo'}
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : (
-          <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '40px' }}>
-            Nenhum dispositivo cadastrado ainda. Vá em Dispositivos para adicionar.
+      {/* Dashboard Content Wrapper with ordering logic in CSS */}
+      <div className="dashboard-content">
+        {/* Welcome Card */}
+        <div className="premium-card animate-fade" style={{ padding: '32px', borderLeft: '4px solid var(--primary-red)', order: 0 }}>
+          <h2 style={{ fontSize: '22px', marginBottom: '8px' }}>
+            Olá, <span style={{ color: 'var(--premium-gold)' }}>{data?.username || 'Revendedor'}</span>! 👋
+          </h2>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
+            Este painel foi criado para que você possa gerenciar seus dispositivos e enviar listas IPTV diretamente para o aplicativo <strong>CineX Player</strong> dos seus clientes.
           </p>
-        )}
+        </div>
+
+        {/* Recent Devices (First on mobile via order) */}
+        <div className="recent-container premium-card animate-fade" style={{ padding: '32px', animationDelay: '0.3s' }}>
+          <h3 style={{ marginBottom: '24px' }}>Dispositivos Recentes</h3>
+          {data?.recentDevices && data.recentDevices.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {data.recentDevices.map((device, i) => (
+                <div key={i} style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  paddingBottom: '16px',
+                  borderBottom: '1px solid var(--glass-border)'
+                }}>
+                  <div>
+                    <p style={{ fontWeight: '600' }}>{device.name}</p>
+                    <code style={{ fontSize: '12px', color: 'var(--premium-gold)' }}>{device.mac_address}</code>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <p style={{ color: device.status === 'Ativo' ? '#44ff44' : '#ff4444', fontSize: '12px', fontWeight: 'bold' }}>
+                      ● {device.status || 'Ativo'}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '40px' }}>
+              Nenhum dispositivo cadastrado ainda. Vá em Dispositivos para adicionar.
+            </p>
+          )}
+        </div>
+
+        {/* Stats (Second on mobile via order) */}
+        <div className="stats-container dashboard-grid" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '24px' }}>
+          {stats.map((stat, i) => (
+            <div key={i} className="premium-card animate-fade" style={{ padding: '24px', animationDelay: `${i * 0.1}s` }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                {stat.icon}
+                <p style={{ color: '#ffffff', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '1px' }}>{stat.label}</p>
+              </div>
+              <h2 style={{ fontSize: '32px', color: '#ffffff' }}>{stat.value}</h2>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   )

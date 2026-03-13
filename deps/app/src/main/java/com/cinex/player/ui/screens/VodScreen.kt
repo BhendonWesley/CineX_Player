@@ -89,9 +89,10 @@ fun VodScreen(
                 )
                 
                 categories.forEach { category ->
+                    val countByCat = pagingItems.itemCount
                     CategoryItem(
                         name = category.name, 
-                        count = 0, 
+                        count = if (selectedCategory == category.id) countByCat else 0, 
                         isSelected = selectedCategory == category.id,
                         onClick = { selectedCategory = category.id }
                     )

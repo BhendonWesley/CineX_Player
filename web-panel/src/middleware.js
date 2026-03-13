@@ -1,17 +1,24 @@
 import { NextResponse } from 'next/server'
+import { addDebugLog as log } from './lib/debug-logger'
 
 export function middleware(request) {
     const session = request.cookies.get('cinex_session')
     const { pathname } = request.nextUrl
-
-    // Se não tem sessão e não está na página de login, redireciona
-    if (!session && pathname !== '/login' && !pathname.startsWith('/api')) {
-        return NextResponse.redirect(new URL('/login', request.url))
+    
+    // Log detalhado para identificar o contexto do Simulador
+    if (pathname === '/') {
+        console.error(` >>> [MIDDLEWARE] Path: / | Session: ${session ? 'OK' : 'MISSING'}`);
+        console.error(` >>> [MIDDLEWARE] Headers: Origin=${request.headers.get('origin')}, Referer=${request.headers.get('referer')}`);
     }
 
-    // Se tem sessão e tenta ir pro login, manda pro dashboard
+    // Se estiver no login e já tiver sessão, manda pro home
     if (session && pathname === '/login') {
         return NextResponse.redirect(new URL('/', request.url))
+    }
+
+    // Se NÃO tiver sessão e NÃO for login ou arquivos estáticos, manda pro login
+    if (!session && pathname !== '/login' && !pathname.startsWith('/api') && !pathname.includes('.')) {
+        return NextResponse.redirect(new URL('/login', request.url))
     }
 
     return NextResponse.next()

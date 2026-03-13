@@ -7,10 +7,15 @@ export async function getDashboardData() {
     try {
         const cookieStore = await cookies()
         const session = cookieStore.get('cinex_session')
+        
+        console.error(` >>> [DASHBOARD_ACTION] Session: ${session ? 'OK' : 'MISSING'}`);
+
         if (!session) return { success: false }
 
         const profile = JSON.parse(session.value)
         const username = profile.username
+        
+        console.error(` >>> [DASHBOARD_ACTION] Username: ${username}`);
 
         // Buscar dispositivos do revendedor
         const { data: devices, error } = await supabase

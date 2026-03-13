@@ -135,13 +135,55 @@ export default function DevicesPage() {
     }
 
     return (
-        <div style={{ padding: '40px', marginTop: '40px' }}>
-            <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px' }}>
-                <div>
-                    <h1 className="glow-text">Gerenciar Dispositivos</h1>
-                    <p style={{ color: 'var(--text-secondary)' }}>Vincule listas IPTV aos endereços MAC dos seus clientes</p>
+        <div style={{ padding: '0' }} className="main-container">
+            <style jsx>{`
+                .main-container {
+                    padding: 40px !important;
+                    margin-top: 40px;
+                }
+                .table-container {
+                    width: 100%;
+                    overflow-x: auto;
+                    -webkit-overflow-scrolling: touch;
+                }
+                @media screen and (max-width: 1024px) {
+                    .main-container {
+                        padding: 20px !important;
+                        margin-top: 20px;
+                    }
+                    .dashboard-header {
+                        flex-direction: column;
+                        align-items: flex-start !important;
+                        gap: 20px;
+                    }
+                    .header-actions {
+                        width: 100%;
+                        flex-wrap: wrap;
+                    }
+                    .header-actions button {
+                        flex: 1;
+                        min-width: 150px;
+                    }
+                    .header-title-container h1 {
+                        margin-bottom: 8px !important;
+                    }
+                    .header-title-container p {
+                        line-height: 1.4;
+                    }
+                    .desktop-only-table {
+                        display: none !important;
+                    }
+                    .mobile-only-list {
+                        display: flex !important;
+                    }
+                }
+            `}</style>
+            <header className="dashboard-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px' }}>
+                <div className="header-title-container">
+                    <h1 className="glow-text" style={{ marginBottom: '4px' }}>Gerenciar Dispositivos</h1>
+                    <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>Vincule listas IPTV aos endereços MAC dos seus clientes</p>
                 </div>
-                <div style={{ display: 'flex', gap: '12px' }}>
+                <div className="header-actions" style={{ display: 'flex', gap: '12px' }}>
                     <button onClick={loadDevices} className="input-field" style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                         <RefreshCw size={18} /> Atualizar
                     </button>
@@ -163,103 +205,160 @@ export default function DevicesPage() {
                     </button>
                 </div>
             ) : (
-                <div className="premium-card" style={{ overflow: 'hidden' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
-                        <thead>
-                            <tr style={{ background: 'rgba(216, 166, 58, 0.1)', color: 'var(--light-gold)', fontSize: '12px', letterSpacing: '1px' }}>
-                                <th style={{ padding: '16px 24px' }}>DISPOSITIVO</th>
-                                <th style={{ padding: '16px 24px' }}>ENDEREÇO MAC</th>
-                                <th style={{ padding: '16px 24px', textAlign: 'center' }}>TIPO</th>
-                                <th style={{ padding: '16px 24px', textAlign: 'center' }}>STATUS</th>
-                                <th style={{ padding: '16px 24px', textAlign: 'center' }}>AÇÕES</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {devices.map(device => (
-                                <tr key={device.id} style={{ borderBottom: '1px solid var(--glass-border)' }}>
-                                    <td style={{ padding: '16px 24px' }}>
-                                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                            <Smartphone size={18} color="var(--text-muted)" />
-                                            {device.name}
-                                        </div>
-                                    </td>
-                                    <td style={{ padding: '16px 24px' }}>
-                                        <code style={{ color: 'var(--light-gold)', fontFamily: 'monospace' }}>{device.mac_address}</code>
-                                    </td>
-                                    <td style={{ padding: '16px 24px', textAlign: 'center' }}>
-                                        <span style={{ fontSize: '12px', background: 'var(--bg-dark)', padding: '4px 10px', borderRadius: '4px', textTransform: 'uppercase' }}>
-                                            {device.playlist_type || 'xtream'}
-                                        </span>
-                                    </td>
-                                    <td style={{ padding: '16px 24px', textAlign: 'center' }}>
-                                        <div style={{ 
-                                            display: 'inline-flex', alignItems: 'center', gap: '8px',
-                                            padding: '4px 12px', borderRadius: '20px',
-                                            background: device.status === 'Bloqueado' ? 'rgba(178, 30, 43, 0.1)' : 'rgba(34, 197, 94, 0.1)',
-                                            border: `1px solid ${device.status === 'Bloqueado' ? 'var(--primary-red)' : '#22c55e'}`
-                                        }}>
+                <div className="premium-card table-container" style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}>
+                    {/* Desktop Table View */}
+                    <div className="desktop-only-table premium-card" style={{ overflow: 'hidden' }}>
+                        <table style={{ width: '100%', minWidth: '800px', borderCollapse: 'collapse', textAlign: 'left' }}>
+                            <thead>
+                                <tr style={{ background: 'rgba(216, 166, 58, 0.1)', color: 'var(--light-gold)', fontSize: '12px', letterSpacing: '1px' }}>
+                                    <th style={{ padding: '16px 24px' }}>DISPOSITIVO</th>
+                                    <th style={{ padding: '16px 24px' }}>ENDEREÇO MAC</th>
+                                    <th style={{ padding: '16px 24px', textAlign: 'center' }}>TIPO</th>
+                                    <th style={{ padding: '16px 24px', textAlign: 'center' }}>STATUS</th>
+                                    <th style={{ padding: '16px 24px', textAlign: 'center' }}>AÇÕES</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {devices.map(device => (
+                                    <tr key={device.id} style={{ borderBottom: '1px solid var(--glass-border)' }}>
+                                        <td style={{ padding: '16px 24px' }}>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                                <Smartphone size={18} color="var(--text-muted)" />
+                                                {device.name}
+                                            </div>
+                                        </td>
+                                        <td style={{ padding: '16px 24px' }}>
+                                            <code style={{ color: 'var(--light-gold)', fontFamily: 'monospace' }}>{device.mac_address}</code>
+                                        </td>
+                                        <td style={{ padding: '16px 24px', textAlign: 'center' }}>
+                                            <span style={{ fontSize: '12px', background: 'var(--bg-dark)', padding: '4px 10px', borderRadius: '4px', textTransform: 'uppercase' }}>
+                                                {device.playlist_type || 'xtream'}
+                                            </span>
+                                        </td>
+                                        <td style={{ padding: '16px 24px', textAlign: 'center' }}>
                                             <div style={{ 
-                                                width: '6px', height: '6px', borderRadius: '50%',
-                                                background: device.status === 'Bloqueado' ? 'var(--primary-red)' : '#22c55e',
-                                                boxShadow: `0 0 8px ${device.status === 'Bloqueado' ? 'var(--primary-red)' : '#22c55e'}`
-                                            }} />
+                                                display: 'inline-flex', alignItems: 'center', gap: '8px',
+                                                padding: '4px 12px', borderRadius: '20px',
+                                                background: device.status === 'Bloqueado' ? 'rgba(178, 30, 43, 0.1)' : 'rgba(34, 197, 94, 0.1)',
+                                                border: `1px solid ${device.status === 'Bloqueado' ? 'var(--primary-red)' : '#22c55e'}`
+                                            }}>
+                                                <div style={{ 
+                                                    width: '6px', height: '6px', borderRadius: '50%',
+                                                    background: device.status === 'Bloqueado' ? 'var(--primary-red)' : '#22c55e',
+                                                    boxShadow: `0 0 8px ${device.status === 'Bloqueado' ? 'var(--primary-red)' : '#22c55e'}`
+                                                }} />
+                                                <span style={{ 
+                                                    fontSize: '12px', fontWeight: '600',
+                                                    color: device.status === 'Bloqueado' ? 'var(--highlight-red)' : '#4ade80'
+                                                }}>
+                                                    {device.status || 'Ativo'}
+                                                </span>
+                                            </div>
+                                        </td>
+                                        <td style={{ padding: '16px 24px' }}>
+                                            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+                                                <button
+                                                    onClick={() => handleToggleStatus(device)}
+                                                    disabled={togglingStatus === device.id}
+                                                    style={{
+                                                        background: 'none', border: 'none', cursor: togglingStatus === device.id ? 'wait' : 'pointer',
+                                                        padding: '6px', borderRadius: '6px', display: 'flex', alignItems: 'center',
+                                                    }}
+                                                    title={device.status === 'Bloqueado' ? "Desbloquear dispositivo" : "Bloquear dispositivo"}
+                                                >
+                                                    {togglingStatus === device.id ? (
+                                                        <Loader2 size={18} style={{ color: 'var(--text-muted)', animation: 'spin 1s linear infinite' }} />
+                                                    ) : (
+                                                        device.status === 'Bloqueado' 
+                                                            ? <Lock size={18} style={{ color: 'var(--highlight-red)' }} />
+                                                            : <Unlock size={18} style={{ color: 'var(--text-secondary)' }} />
+                                                    )}
+                                                </button>
+                                                <button
+                                                    onClick={() => handleEditClick(device)}
+                                                    style={{
+                                                        background: 'none', border: 'none', cursor: 'pointer',
+                                                        padding: '6px', borderRadius: '6px', display: 'flex', alignItems: 'center',
+                                                    }}
+                                                    title="Editar dispositivo"
+                                                >
+                                                    <Edit3 size={18} style={{ color: 'var(--premium-gold)' }} />
+                                                </button>
+                                                <button
+                                                    onClick={() => triggerDelete(device)}
+                                                    disabled={deleting === device.id}
+                                                    style={{
+                                                        background: 'none', border: 'none', cursor: deleting === device.id ? 'wait' : 'pointer',
+                                                        padding: '6px', borderRadius: '6px', display: 'flex', alignItems: 'center',
+                                                    }}
+                                                    title="Remover dispositivo"
+                                                >
+                                                    {deleting === device.id
+                                                        ? <Loader2 size={18} style={{ color: 'var(--primary-red)', animation: 'spin 1s linear infinite' }} />
+                                                        : <Trash2 size={18} style={{ color: 'var(--primary-red)' }} />
+                                                    }
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {/* Mobile Card View */}
+                    <div className="mobile-only-list" style={{ display: 'none', flexDirection: 'column', gap: '16px' }}>
+                        {devices.map(device => (
+                            <div key={device.id} className="premium-card animate-fade" style={{ padding: '20px' }}>
+                                <div style={{ marginBottom: '16px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
+                                            <Smartphone size={16} color="var(--premium-gold)" />
+                                            <span style={{ fontWeight: '700', fontSize: '16px', color: '#ffffff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{device.name}</span>
+                                        </div>
+                                        <div style={{ 
+                                            display: 'flex', alignItems: 'center', gap: '6px',
+                                            padding: '4px 12px', borderRadius: '12px',
+                                            background: device.status === 'Bloqueado' ? 'rgba(178, 30, 43, 0.1)' : 'rgba(34, 197, 94, 0.1)',
+                                            border: `1px solid ${device.status === 'Bloqueado' ? 'var(--primary-red)' : '#22c55e'}`,
+                                            flexShrink: 0
+                                        }}>
                                             <span style={{ 
-                                                fontSize: '12px', fontWeight: '600',
-                                                color: device.status === 'Bloqueado' ? 'var(--highlight-red)' : '#4ade80'
+                                                fontSize: '10px', fontWeight: '800',
+                                                color: device.status === 'Bloqueado' ? 'var(--highlight-red)' : '#4ade80',
+                                                textTransform: 'uppercase',
+                                                letterSpacing: '0.5px'
                                             }}>
                                                 {device.status || 'Ativo'}
                                             </span>
                                         </div>
-                                    </td>
-                                    <td style={{ padding: '16px 24px' }}>
-                                        <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
-                                            <button
-                                                onClick={() => handleToggleStatus(device)}
-                                                disabled={togglingStatus === device.id}
-                                                style={{
-                                                    background: 'none', border: 'none', cursor: togglingStatus === device.id ? 'wait' : 'pointer',
-                                                    padding: '6px', borderRadius: '6px', display: 'flex', alignItems: 'center',
-                                                }}
-                                                title={device.status === 'Bloqueado' ? "Desbloquear dispositivo" : "Bloquear dispositivo"}
-                                            >
-                                                {togglingStatus === device.id ? (
-                                                    <Loader2 size={18} style={{ color: 'var(--text-muted)', animation: 'spin 1s linear infinite' }} />
-                                                ) : (
-                                                    device.status === 'Bloqueado' 
-                                                        ? <Lock size={18} style={{ color: 'var(--highlight-red)' }} />
-                                                        : <Unlock size={18} style={{ color: 'var(--text-secondary)' }} />
-                                                )}
-                                            </button>
-                                            <button
-                                                onClick={() => handleEditClick(device)}
-                                                style={{
-                                                    background: 'none', border: 'none', cursor: 'pointer',
-                                                    padding: '6px', borderRadius: '6px', display: 'flex', alignItems: 'center',
-                                                }}
-                                                title="Editar dispositivo"
-                                            >
-                                                <Edit3 size={18} style={{ color: 'var(--premium-gold)' }} />
-                                            </button>
-                                            <button
-                                                onClick={() => triggerDelete(device)}
-                                                disabled={deleting === device.id}
-                                                style={{
-                                                    background: 'none', border: 'none', cursor: deleting === device.id ? 'wait' : 'pointer',
-                                                    padding: '6px', borderRadius: '6px', display: 'flex', alignItems: 'center',
-                                                }}
-                                                title="Remover dispositivo"
-                                            >
-                                                {deleting === device.id
-                                                    ? <Loader2 size={18} style={{ color: 'var(--primary-red)', animation: 'spin 1s linear infinite' }} />
-                                                    : <Trash2 size={18} style={{ color: 'var(--primary-red)' }} />
-                                                }
-                                            </button>
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                                    </div>
+                                    <div style={{ paddingLeft: '24px' }}>
+                                        <code style={{ fontSize: '12px', color: 'var(--light-gold)', background: 'rgba(216, 166, 58, 0.08)', padding: '3px 8px', borderRadius: '4px', fontFamily: 'monospace', letterSpacing: '0.5px' }}>
+                                            {device.mac_address}
+                                        </code>
+                                    </div>
+                                </div>
+                                
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--glass-border)' }}>
+                                    <span style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>
+                                        LISTA: <strong style={{ color: 'var(--text-secondary)' }}>{device.playlist_type || 'XTREAM'}</strong>
+                                    </span>
+                                    <div style={{ display: 'flex', gap: '8px' }}>
+                                        <button onClick={() => handleToggleStatus(device)} disabled={togglingStatus === device.id} className="input-field" style={{ padding: '8px', width: 'auto', display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                                            {togglingStatus === device.id ? <Loader2 size={16} className="animate-spin" /> : (device.status === 'Bloqueado' ? <Unlock size={16} color="#4ade80" /> : <Lock size={16} color="var(--highlight-red)" />)}
+                                        </button>
+                                        <button onClick={() => handleEditClick(device)} className="input-field" style={{ padding: '8px', width: 'auto', display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                                            <Edit3 size={16} color="var(--premium-gold)" />
+                                        </button>
+                                        <button onClick={() => triggerDelete(device)} className="input-field" style={{ padding: '8px', width: 'auto', display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                                            <Trash2 size={16} color="var(--primary-red)" />
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
                 </div>
             )}
 

@@ -64,6 +64,7 @@ fun MainScreen(
     if (isLoading) {
         // SEMPRE mostramos a tela de carregamento se o ViewModel estiver ocupado
         CinematicLoadingScreen(
+            statusMessage = syncStatus,
             tvProgress = liveProgress / 100f,
             moviesProgress = movieProgress / 100f,
             seriesProgress = seriesProgress / 100f

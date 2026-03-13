@@ -66,7 +66,7 @@ fun CinematicLoadingScreen(
         Row(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 48.dp, vertical = 32.dp),
+                .padding(horizontal = 48.dp, vertical = 16.dp),
             horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -136,7 +136,7 @@ fun CinematicLoadingScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(40.dp))
+                Spacer(modifier = Modifier.height(20.dp))
 
                 // Rotating Status Message with Smooth Transition
                 AnimatedContent(
@@ -151,14 +151,14 @@ fun CinematicLoadingScreen(
                     Text(
                         text = targetMessage,
                         color = Color(0xFFE5E7EB),
-                        fontSize = 24.sp,
+                        fontSize = 20.sp,
                         fontWeight = FontWeight.W600,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.widthIn(max = 380.dp)
                     )
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(8.dp))
                 
                 Text(
                     text = "Aguarde enquanto preparamos seu portal",

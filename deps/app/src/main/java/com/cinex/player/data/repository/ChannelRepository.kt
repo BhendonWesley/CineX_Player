@@ -282,7 +282,6 @@ class ChannelRepository @Inject constructor(
                             }
                         }
                     }
-                }
             }
 
             // Retornamos sucesso IMEDIATAMENTE após salvar a lista inicial no banco
@@ -344,7 +343,8 @@ class ChannelRepository @Inject constructor(
                         streamUrl = "${baseUrl}live/$user/$pass/${stream.stream_id}.ts",
                         category = "LIVE_TV",
                         playlistUrl = playlistUrl,
-                        orderIndex = index
+                        orderIndex = index,
+                        remoteId = "live_${stream.stream_id}"
                     )
                 )
             }
@@ -366,7 +366,8 @@ class ChannelRepository @Inject constructor(
                     streamUrl = "${baseUrl}movie/$user/$pass/${it.stream_id}.$ext",
                     category = "MOVIE",
                     playlistUrl = playlistUrl,
-                    orderIndex = index
+                    orderIndex = index,
+                    remoteId = "vod_${it.stream_id}"
                 )
             }
             movieChannels.chunked(500).forEach { channelDao.insertAll(it) }
@@ -384,7 +385,8 @@ class ChannelRepository @Inject constructor(
                     category = "SERIES",
                     seriesName = it.name,
                     playlistUrl = playlistUrl,
-                    orderIndex = index
+                    orderIndex = index,
+                    remoteId = "series_${it.series_id}"
                 )
             }
             seriesChannels.chunked(500).forEach { channelDao.insertAll(it) }
