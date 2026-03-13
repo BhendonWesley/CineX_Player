@@ -10,8 +10,8 @@ val CineX_HighlightRed = Color(0xFFE23A3A)
 val CineX_PremiumGold = Color(0xFFD8A63A)
 val CineX_LightGold = Color(0xFFF2D27A)
 
-val CineX_BackgroundBlue = Color(0xFF0B0F1A)
-val CineX_SecondaryBackground = Color(0xFF1A2335)
+val CineX_BackgroundBlue = Color(0xFF282B30) // Updated to #282b30
+val CineX_SecondaryBackground = Color(0xFF1E2125) // Slightly darker variant for depth
 val CineX_GlowHighlight = Color(0xFFFF7A2F)
 
 // Text Colors

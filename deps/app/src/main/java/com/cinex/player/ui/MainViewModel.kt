@@ -43,13 +43,23 @@ class MainViewModel @Inject constructor(
     private val okHttpClient: OkHttpClient, // Alterado
     val liveTvPlayer: ExoPlayer
 ) : ViewModel() {
-    
     init {
         generateAccountInfo()
-        // Carrega automaticamente a última playlist usada
+        // Carrega automaticamente a última playlist usada, ou tenta sincronizar do painel se for a primeira vez
         viewModelScope.launch {
-            repository.allPlaylists.first().maxByOrNull { it.lastUsed }?.let { lastUsed ->
-                selectPlaylist(lastUsed)
+            val playlists = repository.allPlaylists.first()
+            if (playlists.isNotEmpty()) {
+                playlists.maxByOrNull { it.lastUsed }?.let { lastUsed ->
+                    // Inicialização silenciosa: Pula a tela de CinematicLoadingScreen 
+                    // e carrega os dados do banco de dados (Room Cache) diretamente
+                    _currentPlaylist.value = lastUsed
+                    repository.selectPlaylist(lastUsed) { _, _, _, _ -> }
+                    fetchRealAccountInfo(lastUsed.url)
+                    loadFeaturedMovies()
+                }
+            } else {
+                // Tenta sincronização automática (Auto-Login MAC)
+                syncFromPanel()
             }
         }
     }
@@ -98,9 +108,32 @@ class MainViewModel @Inject constructor(
 
     val misc: Flow<PagingData<Channel>> = repository.miscChannels
 
-    val liveCategories: Flow<List<com.cinex.player.data.model.Category>> = repository.liveCategories
-    val movieCategories: Flow<List<com.cinex.player.data.model.Category>> = repository.movieCategories
-    val seriesCategories: Flow<List<com.cinex.player.data.model.Category>> = repository.seriesCategories
+    val liveCategories: Flow<List<com.cinex.player.data.model.Category>> = repository.liveCategories.map { cats ->
+        val playlistUrl = _currentPlaylist.value?.url ?: ""
+        val specials = listOf(
+            com.cinex.player.data.model.Category(id = "Favorito", name = "Favorito", type = "LIVE_TV", playlistUrl = playlistUrl, orderIndex = -2),
+            com.cinex.player.data.model.Category(id = "Tudo", name = "Tudo", type = "LIVE_TV", playlistUrl = playlistUrl, orderIndex = -1)
+        )
+        specials + cats
+    }
+
+    val movieCategories: Flow<List<com.cinex.player.data.model.Category>> = repository.movieCategories.map { cats ->
+        val playlistUrl = _currentPlaylist.value?.url ?: ""
+        val specials = listOf(
+            com.cinex.player.data.model.Category(id = "Favorito", name = "Favorito", type = "MOVIE", playlistUrl = playlistUrl, orderIndex = -2),
+            com.cinex.player.data.model.Category(id = "Tudo", name = "Tudo", type = "MOVIE", playlistUrl = playlistUrl, orderIndex = -1)
+        )
+        specials + cats
+    }
+
+    val seriesCategories: Flow<List<com.cinex.player.data.model.Category>> = repository.seriesCategories.map { cats ->
+        val playlistUrl = _currentPlaylist.value?.url ?: ""
+        val specials = listOf(
+            com.cinex.player.data.model.Category(id = "Favorito", name = "Favorito", type = "SERIES", playlistUrl = playlistUrl, orderIndex = -2),
+            com.cinex.player.data.model.Category(id = "Tudo", name = "Tudo", type = "SERIES", playlistUrl = playlistUrl, orderIndex = -1)
+        )
+        specials + cats
+    }
 
     fun getPagedChannelsByCategory(group: String): Flow<PagingData<Channel>> = 
         repository.getPagedChannelsByCategory(group).cachedIn(viewModelScope)
@@ -146,6 +179,12 @@ class MainViewModel @Inject constructor(
 
     private val _accountInfo = MutableStateFlow<AccountInfo?>(null)
     val accountInfo = _accountInfo.asStateFlow()
+
+    val deviceMacAddress: String
+        get() {
+            val androidId = Settings.Secure.getString(app.contentResolver, Settings.Secure.ANDROID_ID) ?: "000000000000"
+            return androidId.chunked(2).take(6).joinToString(":").uppercase()
+        }
 
     private fun fetchRealAccountInfo(playlistUrl: String) {
         viewModelScope.launch {
@@ -196,10 +235,8 @@ class MainViewModel @Inject constructor(
 
     private fun generateAccountInfo() {
         try {
+            val simulatedMac = deviceMacAddress
             val androidId = Settings.Secure.getString(app.contentResolver, Settings.Secure.ANDROID_ID) ?: "000000000000"
-            
-            // Simulamos um MAC determinístico baseado no Android ID para apps de IPTV
-            val simulatedMac = androidId.chunked(2).take(6).joinToString(":").uppercase()
             val deviceKey = (androidId.hashCode().toLong() and 0xFFFFFF).toString()
 
             _accountInfo.value = AccountInfo(
@@ -234,9 +271,8 @@ class MainViewModel @Inject constructor(
             }
 
             try {
-                // Gerar MAC diretamente em vez de depender do accountInfo
-                val androidId = Settings.Secure.getString(app.contentResolver, Settings.Secure.ANDROID_ID) ?: "000000000000"
-                val mac = androidId.chunked(2).take(6).joinToString(":").uppercase()
+                // Obter o MAC a partir da propriedade padronizada
+                val mac = deviceMacAddress
 
                 // Buscar a configuração de playlist do painel web (em IO thread)
                 val apiUrl = "$PANEL_BASE_URL/api/device/${mac}"
@@ -246,8 +282,20 @@ class MainViewModel @Inject constructor(
                     Pair(response.code, response.body?.string() ?: "")
                 }
 
+                if (responseCode == 403 || body.contains("blocked")) {
+                    val message = if (body.contains("blocked")) {
+                        org.json.JSONObject(body).optString("message", "Dispositivo bloqueado. Contate seu revendedor.")
+                    } else {
+                        "Dispositivo bloqueado. Contate seu revendedor."
+                    }
+                    _errorMessage.value = message
+                    _isLoading.value = false
+                    rotateJob.cancel()
+                    return@launch
+                }
+
                 if (responseCode != 200 || body.contains("not_found")) {
-                    _errorMessage.value = "Dispositivo não cadastrado no painel. Contate seu revendedor.\nMAC: $mac"
+                    _errorMessage.value = "Dispositivo não cadastrado no painel.\nContate seu revendedor."
                     _isLoading.value = false
                     rotateJob.cancel()
                     return@launch
@@ -423,26 +471,7 @@ class MainViewModel @Inject constructor(
 
     fun refreshPlaylist() {
         val playlist = _currentPlaylist.value ?: return
-        viewModelScope.launch {
-            _isLoading.value = true
-            _syncStatus.value = "Sincronizando mudanças..."
-            
-            // Trigger SyncWorker
-            val workRequest = androidx.work.OneTimeWorkRequestBuilder<com.cinex.player.data.worker.SyncWorker>()
-                .setInputData(androidx.work.workDataOf("playlist_url" to playlist.url))
-                .setConstraints(androidx.work.Constraints.Builder()
-                    .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
-                    .build())
-                .build()
-            
-            androidx.work.WorkManager.getInstance(app).enqueue(workRequest)
-            
-            // Para feedback imediato na UI, podemos opcionalmente observar o status do worker
-            // mas aqui vamos apenas simular que iniciou e esperar o repository (ou deixar em background total)
-            _syncStatus.value = "Atualização iniciada em segundo plano"
-            kotlinx.coroutines.delay(2000)
-            _isLoading.value = false
-        }
+        loadPlaylist(playlist.url)
     }
 
     fun loadPlaylist(url: String) {
@@ -467,6 +496,7 @@ class MainViewModel @Inject constructor(
             
             result.onSuccess {
                 _syncStatus.value = "Finalizado!"
+                fetchRealAccountInfo(url)
                 loadFeaturedMovies() // Atualiza destaques
             }.onFailure {
                 _errorMessage.value = it.message ?: "Erro desconhecido ao carregar lista"
@@ -512,8 +542,7 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 // Tenta apagar o dispositivo do painel web também
-                val androidId = Settings.Secure.getString(app.contentResolver, Settings.Secure.ANDROID_ID) ?: "000000000000"
-                val mac = androidId.chunked(2).take(6).joinToString(":").uppercase()
+                val mac = deviceMacAddress
                 val apiUrl = "$PANEL_BASE_URL/api/device/${mac}"
 
                 val request = okhttp3.Request.Builder().url(apiUrl).delete().build()

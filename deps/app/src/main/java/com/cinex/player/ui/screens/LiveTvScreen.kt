@@ -88,14 +88,6 @@ fun LiveTvScreen(
                 .padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            item {
-                CategoryItem(
-                    name = "Tudo",
-                    count = 0,
-                    isSelected = selectedCategory == "Tudo",
-                    onClick = { selectedCategory = "Tudo" }
-                )
-            }
             items(categories) { category ->
                 CategoryItem(
                     name = category.name,

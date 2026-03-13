@@ -138,7 +138,7 @@ fun SettingsScreen(
             contentAlignment = Alignment.Center
         ) {
             Text(
-                text = "endereço MAC: 79:77:0C:0E:46:38", // Placeholder MAC based on image
+                text = "ENDEREÇO MAC: ${viewModel.deviceMacAddress}",
                 color = Color.White,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold

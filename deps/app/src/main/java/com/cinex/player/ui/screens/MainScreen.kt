@@ -63,11 +63,10 @@ fun MainScreen(
     }
     if (isLoading) {
         // SEMPRE mostramos a tela de carregamento se o ViewModel estiver ocupado
-        LoadingScreen(
-            statusMessage = syncStatus,
-            liveProgress = liveProgress,
-            movieProgress = movieProgress,
-            seriesProgress = seriesProgress
+        CinematicLoadingScreen(
+            tvProgress = liveProgress / 100f,
+            moviesProgress = movieProgress / 100f,
+            seriesProgress = seriesProgress / 100f
         )
     } else if (playingChannel != null) {
         VideoPlayerScreen(
@@ -108,8 +107,7 @@ fun MainScreen(
             )
         } else {
             PlaylistSelectionScreen(
-                viewModel = viewModel,
-                onAddPlaylistClick = { isAddingPlaylist = true }
+                viewModel = viewModel
             )
         }
         

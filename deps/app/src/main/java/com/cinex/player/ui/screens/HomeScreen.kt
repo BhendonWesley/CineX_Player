@@ -460,24 +460,41 @@ private fun HeaderBar(
         }
 
         // Action Icons
-        Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-            IconButton(onClick = onRefresh, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Default.Search, "Buscar", tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(22.dp))
-            }
-            IconButton(onClick = onSettingsClick, modifier = Modifier.size(40.dp)) {
-                Icon(Icons.Default.Settings, "Config", tint = Color.White.copy(alpha = 0.8f), modifier = Modifier.size(22.dp))
-            }
-            // Profile Avatar
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            // REFRESH BUTTON (Red)
             Box(
                 modifier = Modifier
-                    .size(36.dp)
+                    .size(38.dp)
                     .clip(CircleShape)
-                    .background(CineX_PremiumGold.copy(alpha = 0.3f))
-                    .border(1.5.dp, CineX_PremiumGold.copy(alpha = 0.5f), CircleShape)
+                    .background(CineX_DeepRed)
+                    .clickable { onRefresh() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.Refresh, "Atualizar", tint = Color.White, modifier = Modifier.size(20.dp))
+            }
+
+            // SETTINGS BUTTON (Dark Black)
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF0A0A0A))
+                    .clickable { onSettingsClick() },
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.Settings, "Config", tint = Color.White, modifier = Modifier.size(20.dp))
+            }
+
+            // PROFILE BUTTON (Premium Gold)
+            Box(
+                modifier = Modifier
+                    .size(38.dp)
+                    .clip(CircleShape)
+                    .background(CineX_PremiumGold)
                     .clickable { onAccountClick() },
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Default.Person, "Perfil", tint = CineX_LightGold, modifier = Modifier.size(20.dp))
+                Icon(Icons.Default.Person, "Perfil", tint = Color.White, modifier = Modifier.size(20.dp))
             }
         }
     }
@@ -535,8 +552,8 @@ private fun NavCard(
                 else Color.White.copy(alpha = 0.05f)
             )
             .border(
-                width = if (isActive) 1.5.dp else 0.5.dp,
-                color = if (isActive) Color.White.copy(alpha = 0.25f) else Color.White.copy(alpha = 0.08f),
+                width = if (isActive) 2.dp else 1.dp,
+                color = if (isActive) CineX_DeepRed else CineX_DeepRed.copy(alpha = 0.4f),
                 shape = RoundedCornerShape(14.dp)
             )
             .clickable(
@@ -564,7 +581,7 @@ private fun NavCard(
                 Icon(
                     imageVector = icon,
                     contentDescription = label,
-                    tint = Color.White,
+                    tint = if (isActive) CineX_PremiumGold else CineX_PremiumGold.copy(alpha = 0.7f),
                     modifier = Modifier.size(28.dp)
                 )
             }
@@ -601,38 +618,34 @@ fun AccountInfoDialog(
     ) {
         Column(
             modifier = Modifier
-                .width(450.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(CineX_SecondaryBackground)
-                .border(1.dp, Color(0x22FFFFFF), RoundedCornerShape(16.dp))
+                .width(420.dp)
+                .clip(RoundedCornerShape(12.dp))
+                .background(Color(0xFF1A1A2E)) // Tom azulado muito escuro/cinza prof.
+                .border(1.dp, Color(0xFF2D2D44), RoundedCornerShape(12.dp))
                 .clickable(enabled = false) {}
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(
-                        Brush.horizontalGradient(
-                            colors = listOf(CineX_DeepRed.copy(alpha = 0.3f), Color.Transparent)
-                        )
-                    )
-                    .padding(20.dp),
+                    .background(Color(0xFF141426)) // Header um pouco mais escuro
+                    .padding(vertical = 12.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "CONTA",
+                    text = "conta",
                     color = Color.White,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 2.sp
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Normal,
+                    letterSpacing = 1.sp
                 )
             }
 
-            Column(modifier = Modifier.padding(24.dp)) {
-                AccountRow(label = "Endereço MAC", value = accountInfo.macAddress)
+            Column(modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp)) {
+                AccountRow(label = "endereço MAC", value = accountInfo.macAddress)
                 AccountRow(label = "Chave do dispositivo", value = accountInfo.deviceKey)
-                AccountRow(label = "Estado da conta", value = accountInfo.accountStatus, valueColor = Color.Green)
-                AccountRow(label = "Data de validade", value = accountInfo.activationDate)
-                AccountRow(label = "Expiração da lista", value = accountInfo.playlistExpiration)
+                AccountRow(label = "Estado da conta", value = accountInfo.accountStatus)
+                AccountRow(label = "data de validade", value = accountInfo.activationDate)
+                AccountRow(label = "Data de expiração da lista de reprodução", value = accountInfo.playlistExpiration)
 
                 Spacer(modifier = Modifier.height(24.dp))
 
@@ -650,14 +663,27 @@ fun AccountInfoDialog(
 }
 
 @Composable
-fun AccountRow(label: String, value: String, valueColor: Color = Color.White) {
+fun AccountRow(label: String, value: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 8.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+            .padding(vertical = 10.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Text(text = label, color = CineX_TextMuted, fontSize = 14.sp)
-        Text(text = value, color = valueColor, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+        Text(
+            text = label, 
+            color = Color(0xFFAAAAAA), // Cinza suave para labels
+            fontSize = 15.sp,
+            modifier = Modifier.weight(1.2f)
+        )
+        Text(
+            text = value, 
+            color = Color.White, 
+            fontSize = 15.sp, 
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f),
+            textAlign = TextAlign.End
+        )
     }
 }

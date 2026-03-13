@@ -16,7 +16,7 @@ export async function loginAction(formData) {
 
         if (result.authorized) {
             // Configurar Cookie de sessão (expira em 24h)
-            cookies().set('cinex_session', JSON.stringify(result.profile), {
+            (await cookies()).set('cinex_session', JSON.stringify(result.profile), {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === 'production',
                 maxAge: 60 * 60 * 24,

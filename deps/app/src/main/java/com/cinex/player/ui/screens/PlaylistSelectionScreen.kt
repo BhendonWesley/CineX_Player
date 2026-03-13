@@ -3,6 +3,7 @@ package com.cinex.player.ui.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
@@ -32,15 +33,30 @@ import com.cinex.player.ui.theme.*
 
 @Composable
 fun PlaylistSelectionScreen(
-    viewModel: MainViewModel,
-    onAddPlaylistClick: () -> Unit
+    viewModel: MainViewModel
 ) {
     val playlists by viewModel.allPlaylists.collectAsState()
     val isLoading by viewModel.isLoading.collectAsState()
     val errorMessage by viewModel.errorMessage.collectAsState()
     val accountInfo by viewModel.accountInfo.collectAsState()
-    val context = androidx.compose.ui.platform.LocalContext.current
+    
+    val liveProgress by viewModel.liveProgress.collectAsState()
+    val movieProgress by viewModel.movieProgress.collectAsState()
+    val seriesProgress by viewModel.seriesProgress.collectAsState()
+    val syncStatus by viewModel.syncStatus.collectAsState() // Nova adição
 
+    if (isLoading) {
+        CinematicLoadingScreen(
+            statusMessage = syncStatus,
+            tvProgress = liveProgress / 100f,
+            moviesProgress = movieProgress / 100f,
+            seriesProgress = seriesProgress / 100f
+        )
+        return
+    }
+
+    // Layout Original Restaurado (Single-Screen Horizontal)
+    // Redimensionado para caber perfeitamente no celular sem sumir nada.
     Row(
         modifier = Modifier
             .fillMaxSize()
@@ -49,87 +65,57 @@ fun PlaylistSelectionScreen(
                     colors = listOf(CineX_BackgroundBlue, CineX_SecondaryBackground)
                 )
             )
+            .padding(16.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        // Lado Esquerdo: Ação Principal de Sincronização
-        Column(
-            modifier = Modifier
-                .weight(1.4f)
-                .fillMaxHeight()
-                .padding(40.dp)
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // Logo com Glow
-                Image(
-                    painter = painterResource(id = com.cinex.player.R.drawable.logo_cinex),
-                    contentDescription = null,
-                    modifier = Modifier.size(52.dp)
-                )
-                Spacer(modifier = Modifier.width(16.dp))
-                Text(
-                    text = "Player",
-                    color = CineX_TextPrimary,
-                    fontSize = 32.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 1.sp
-                )
-            }
-
-            Spacer(modifier = Modifier.height(64.dp))
-
-            // Novo Action Card: Sincronizar Conteúdo
-            SyncActionCard(
-                onClick = { viewModel.syncFromPanel() },
-                isLoading = isLoading
-            )
-
-            Spacer(modifier = Modifier.weight(1f))
-
-            Text(
-                text = "O CineX não vende listas de reprodução ou assinaturas.\nO CineX é um reprodutor de mídia geral e não inclui nenhum conteúdo ou lista de reprodução.",
-                color = CineX_TextMuted.copy(alpha = 0.7f),
-                fontSize = 11.sp,
-                textAlign = TextAlign.Start,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-        }
-
-        // Barra Divisória Sutil Cinemática
-        Box(
-            modifier = Modifier
-                .width(1.dp)
-                .fillMaxHeight(0.7f)
-                .align(Alignment.CenterVertically)
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(Color.Transparent, Color(0x33FFFFFF), Color.Transparent)
-                    )
-                )
-        )
-
-        // Lado Direito: Info do Dispositivo CineX
+        // Lado Esquerdo: Ações (Logo, Sincronizar, Entrar)
         Column(
             modifier = Modifier
                 .weight(1f)
-                .fillMaxHeight()
-                .padding(40.dp),
+                .fillMaxHeight(),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Top
+            verticalArrangement = Arrangement.Center
         ) {
+            // Logo Centralizado
+            Image(
+                painter = painterResource(id = com.cinex.player.R.drawable.logo_cinex),
+                contentDescription = "CineX Logo",
+                modifier = Modifier
+                    .size(48.dp)
+                    .shadow(8.dp, CircleShape, spotColor = CineX_HighlightRed.copy(alpha = 0.5f))
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Action Card: Sincronizar Conteúdo
+            SyncActionCard(
+                onClick = { viewModel.syncFromPanel() },
+                isLoading = isLoading,
+                isSynced = playlists.isNotEmpty()
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Botão Entrar
             Button(
                 onClick = { 
-                    // Se houver uma lista já sincronizada, permite ir direto
-                    if (playlists.isNotEmpty()) viewModel.selectPlaylist(playlists.first()) 
+                    if (playlists.isNotEmpty() && !isLoading) {
+                        viewModel.selectPlaylist(playlists.first()) 
+                    }
                 },
-                enabled = playlists.isNotEmpty() && !isLoading,
+                enabled = true,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = CineX_DeepRed,
-                    contentColor = Color.White,
-                    disabledContainerColor = CineX_TextMuted
+                    containerColor = if (playlists.isNotEmpty() && !isLoading) CineX_DeepRed else CineX_SecondaryBackground,
+                    contentColor = if (playlists.isNotEmpty() && !isLoading) Color.White else CineX_TextSecondary
                 ),
                 shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(
+                    1.dp, 
+                    if (playlists.isNotEmpty() && !isLoading) CineX_HighlightRed else CineX_TextMuted
+                ),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(56.dp)
+                    .height(48.dp)
                     .shadow(
                         elevation = if (playlists.isNotEmpty()) 8.dp else 0.dp,
                         shape = RoundedCornerShape(12.dp),
@@ -138,10 +124,10 @@ fun PlaylistSelectionScreen(
                     )
             ) {
                 Text(
-                    "ENTRAR", 
-                    color = Color.White, 
-                    fontSize = 20.sp, 
-                    fontWeight = FontWeight.Bold
+                    text = if (playlists.isNotEmpty() && !isLoading) "ENTRAR" else "AGUARDANDO LISTA...", 
+                    fontSize = 14.sp, 
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
                 )
             }
 
@@ -149,60 +135,126 @@ fun PlaylistSelectionScreen(
                 Text(
                     text = errorMessage ?: "", 
                     color = CineX_HighlightRed, 
-                    modifier = Modifier.padding(top = 16.dp),
+                    modifier = Modifier.padding(top = 8.dp).fillMaxWidth(),
                     textAlign = TextAlign.Center,
-                    fontSize = 14.sp
+                    fontSize = 12.sp
                 )
             }
+        }
 
-            Spacer(modifier = Modifier.height(48.dp))
+        // Barra Divisória
+        Box(
+            modifier = Modifier
+                .width(1.dp)
+                .fillMaxHeight(0.8f)
+                .align(Alignment.CenterVertically)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, Color(0x33FFFFFF), Color.Transparent)
+                    )
+                )
+        )
+
+        // Lado Direito: Boas-vindas e MAC
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxHeight(),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
             
             Text(
-                text = "Dispositivo CineX", 
-                color = CineX_TextPrimary, 
-                fontSize = 22.sp, 
-                fontWeight = FontWeight.ExtraBold
+                text = "Bem-vindo (a)!", 
+                color = Color.White, 
+                fontSize = 24.sp, 
+                fontWeight = FontWeight.ExtraBold,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
             )
             
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(12.dp))
             
-            Text("Bem-vindo", color = CineX_TextSecondary, fontSize = 16.sp)
-            
-            Spacer(modifier = Modifier.height(24.dp))
-            
-            Text("ENDEREÇO MAC", color = CineX_TextSecondary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-            
+            Text(
+                text = "Envie o código MAC abaixo para o seu revendedor oficial. Ele ativará seu dispositivo através do painel:", 
+                color = CineX_TextSecondary, 
+                fontSize = 12.sp,
+                textAlign = TextAlign.Center,
+                lineHeight = 16.sp,
+                modifier = Modifier.padding(horizontal = 8.dp)
+            )
+
             Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = accountInfo?.macAddress ?: "79:77:0C:0E:46:38", 
-                color = CineX_LightGold, 
-                fontSize = 18.sp, 
+                text = "cine-x-player.vercel.app", 
+                color = CineX_LightGold.copy(alpha = 0.8f), 
+                fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center,
-                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                maxLines = 1
+                letterSpacing = 0.5.sp
             )
-
-            Spacer(modifier = Modifier.height(48.dp))
-
-            // Ação Secundária: Gerenciar no Site
-            OutlinedButton(
-                onClick = {
-                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://cinex.play/manage"))
-                    context.startActivity(intent)
-                },
-                border = BorderStroke(1.dp, CineX_PremiumGold.copy(alpha = 0.5f)),
-                shape = RoundedCornerShape(8.dp),
-                modifier = Modifier.height(45.dp)
-            ) {
-                Icon(Icons.Default.Launch, contentDescription = null, tint = CineX_LightGold, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text("Gerenciar no Site", color = CineX_LightGold, fontSize = 14.sp)
-            }
             
-            Spacer(modifier = Modifier.weight(1f))
-            Text("v5.0", color = CineX_TextMuted, modifier = Modifier.align(Alignment.End))
+            Spacer(modifier = Modifier.height(24.dp))
+            
+            // Cartão Premium do MAC Formato Badge
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = CineX_SecondaryBackground,
+                border = BorderStroke(1.dp, CineX_PremiumGold),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(vertical = 12.dp).fillMaxWidth(),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "SEU ENDEREÇO MAC", 
+                        color = CineX_TextSecondary, 
+                        fontSize = 10.sp, 
+                        fontWeight = FontWeight.Bold, 
+                        letterSpacing = 1.sp
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = accountInfo?.macAddress ?: viewModel.deviceMacAddress, 
+                        color = CineX_LightGold, 
+                        fontSize = 18.sp, 
+                        fontWeight = FontWeight.ExtraBold,
+                        textAlign = TextAlign.Center,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        letterSpacing = 1.sp
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
+            
+            // Rodapé com Informações Extras
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Info do plano
+                Text(
+                    text = if (accountInfo != null) 
+                        "Plano: ${accountInfo?.accountStatus} • Vence: ${accountInfo?.playlistExpiration}"
+                    else 
+                        "Aguardando conexão...", 
+                    color = CineX_TextSecondary, 
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                
+                // Versão
+                Text(
+                    text = "v5.0", 
+                    color = CineX_TextMuted, 
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }
@@ -210,20 +262,22 @@ fun PlaylistSelectionScreen(
 @Composable
 fun SyncActionCard(
     onClick: () -> Unit,
-    isLoading: Boolean
+    isLoading: Boolean,
+    isSynced: Boolean = false
 ) {
     Card(
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = CineX_SecondaryBackground),
-        border = BorderStroke(1.dp, CineX_PremiumGold.copy(alpha = 0.6f)),
+        border = BorderStroke(1.dp, if (isSynced) CineX_PremiumGold else CineX_PremiumGold.copy(alpha = 0.6f)),
         modifier = Modifier
-            .size(width = 320.dp, height = 200.dp)
+            .fillMaxWidth()
+            .height(115.dp)
             .clickable(enabled = !isLoading) { onClick() }
             .shadow(
-                elevation = 12.dp,
-                shape = RoundedCornerShape(16.dp),
-                ambientColor = CineX_HighlightRed.copy(alpha = 0.4f),
-                spotColor = CineX_HighlightRed.copy(alpha = 0.4f)
+                elevation = if (isSynced) 8.dp else 4.dp,
+                shape = RoundedCornerShape(12.dp),
+                ambientColor = if (isSynced) CineX_PremiumGold.copy(alpha = 0.2f) else CineX_HighlightRed.copy(alpha = 0.4f),
+                spotColor = if (isSynced) CineX_PremiumGold.copy(alpha = 0.2f) else CineX_HighlightRed.copy(alpha = 0.4f)
             )
     ) {
         Column(
@@ -232,27 +286,27 @@ fun SyncActionCard(
             verticalArrangement = Arrangement.Center
         ) {
             if (isLoading) {
-                CircularProgressIndicator(color = CineX_DeepRed, modifier = Modifier.size(48.dp))
+                CircularProgressIndicator(color = CineX_DeepRed, modifier = Modifier.size(32.dp))
             } else {
                 Icon(
-                    imageVector = Icons.Default.Sync, 
+                    imageVector = if (isSynced) Icons.Default.CheckCircle else Icons.Default.Sync, 
                     contentDescription = null, 
                     tint = CineX_LightGold, 
-                    modifier = Modifier.size(56.dp)
+                    modifier = Modifier.size(32.dp)
                 )
             }
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = "Sincronizar Conteúdo", 
-                color = Color.White, 
-                fontSize = 20.sp,
+                text = if (isSynced) "Conteúdo sincronizado!" else "Sincronizar Conteúdo", 
+                color = if (isSynced) CineX_PremiumGold else Color.White, 
+                fontSize = 14.sp,
                 fontWeight = FontWeight.ExtraBold
             )
             Spacer(modifier = Modifier.height(4.dp))
             Text(
-                text = "Buscar biblioteca do servidor", 
+                text = if (isSynced) "Clique no botão ENTRAR abaixo" else "Buscar biblioteca do servidor", 
                 color = CineX_TextSecondary,
-                fontSize = 14.sp
+                fontSize = 11.sp
             )
         }
     }

@@ -23,7 +23,7 @@ export default function HomePage() {
 
   if (loading) {
     return (
-      <div style={{ padding: '40px', textAlign: 'center', paddingTop: '200px', color: 'var(--text-muted)' }}>
+      <div style={{ padding: '200px 40px 40px', textAlign: 'center', color: 'var(--text-muted)' }}>
         Carregando dados do painel...
       </div>
     )
@@ -54,7 +54,7 @@ export default function HomePage() {
           Olá, <span style={{ color: 'var(--premium-gold)' }}>{data?.username || 'Revendedor'}</span>! 👋
         </h2>
         <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
-          Gerencie seus dispositivos e envie listas IPTV para os seus clientes.
+          Este painel foi criado para que você possa gerenciar seus dispositivos e enviar listas IPTV diretamente para o aplicativo <strong>CineX Player</strong> dos seus clientes.
         </p>
       </div>
 
@@ -64,9 +64,9 @@ export default function HomePage() {
           <div key={i} className="premium-card animate-fade" style={{ padding: '24px', animationDelay: `${i * 0.1}s` }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
               {stat.icon}
-              <p style={{ color: 'var(--text-muted)', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '1px' }}>{stat.label}</p>
+              <p style={{ color: '#ffffff', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '1px' }}>{stat.label}</p>
             </div>
-            <h2 style={{ fontSize: '32px' }}>{stat.value}</h2>
+            <h2 style={{ fontSize: '32px', color: '#ffffff' }}>{stat.value}</h2>
           </div>
         ))}
       </div>

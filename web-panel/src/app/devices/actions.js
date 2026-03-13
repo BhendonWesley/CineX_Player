@@ -80,16 +80,25 @@ export async function deleteDevice(deviceId) {
     const username = getUsername(cookieStore)
     if (!username) return { success: false }
 
-    const { error } = await supabase
+    const { data, error } = await supabase
         .from('devices')
         .delete()
         .eq('id', deviceId)
         .eq('reseller_username', username)
+        .select()
 
     if (error) {
         console.error('Error deleting device:', error)
-        return { success: false, message: 'Erro ao remover dispositivo.' }
+        return { success: false, message: `Erro DB: ${error.message}` }
     }
+
+    if (!data || data.length === 0) {
+        return { 
+            success: false, 
+            message: 'Erro no Banco: Permissão negada pelo Supabase. O Row Level Security (RLS) não possui política para Deletar em "devices".' 
+        }
+    }
+
     return { success: true }
 }
 
@@ -125,6 +134,24 @@ export async function updateDevice(deviceId, formData) {
     if (error) {
         console.error('Error updating device:', error)
         return { success: false, message: 'Erro ao atualizar dispositivo.' }
+    }
+    return { success: true }
+}
+
+export async function toggleDeviceStatus(deviceId, newStatus) {
+    const cookieStore = await cookies()
+    const username = getUsername(cookieStore)
+    if (!username) return { success: false }
+
+    const { error } = await supabase
+        .from('devices')
+        .update({ status: newStatus })
+        .eq('id', deviceId)
+        .eq('reseller_username', username)
+
+    if (error) {
+        console.error('Error toggling device status:', error)
+        return { success: false, message: 'Erro ao alterar status.' }
     }
     return { success: true }
 }

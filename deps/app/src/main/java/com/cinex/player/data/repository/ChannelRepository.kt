@@ -123,27 +123,42 @@ class ChannelRepository @Inject constructor(
     }
 
     fun getPagedChannelsByCategory(categoryId: String): Flow<PagingData<Channel>> {
-        val url = _activePlaylistUrl.value ?: return flowOf(PagingData.empty())
-        return Pager(PagingConfig(pageSize = 50)) {
-            if (categoryId == "Tudo" || categoryId == "Favorito") channelDao.getChannelsByCategory("LIVE_TV", url)
-            else channelDao.getChannelsByCategoryIdPaged(categoryId, url)
-        }.flow.cachedIn(repositoryScope)
+        return _activePlaylistUrl.flatMapLatest { url ->
+            if (url == null) flowOf(PagingData.empty())
+            else Pager(PagingConfig(pageSize = 50)) {
+                if (categoryId == "Tudo" || categoryId == "Favorito" || categoryId == "Favoritos") {
+                    channelDao.getChannelsByCategory("LIVE_TV", url)
+                } else {
+                    channelDao.getChannelsByCategoryIdPaged(categoryId, url)
+                }
+            }.flow
+        }.cachedIn(repositoryScope)
     }
 
     fun getPagedMoviesByCategory(categoryId: String): Flow<PagingData<Channel>> {
-        val url = _activePlaylistUrl.value ?: return flowOf(PagingData.empty())
-        return Pager(PagingConfig(pageSize = 50)) {
-            if (categoryId == "Tudo" || categoryId == "Favoritos") channelDao.getChannelsByCategory("MOVIE", url)
-            else channelDao.getChannelsByCategoryIdPaged(categoryId, url)
-        }.flow.cachedIn(repositoryScope)
+        return _activePlaylistUrl.flatMapLatest { url ->
+            if (url == null) flowOf(PagingData.empty())
+            else Pager(PagingConfig(pageSize = 50)) {
+                if (categoryId == "Tudo" || categoryId == "Favorito" || categoryId == "Favoritos") {
+                    channelDao.getChannelsByCategory("MOVIE", url)
+                } else {
+                    channelDao.getChannelsByCategoryIdPaged(categoryId, url)
+                }
+            }.flow
+        }.cachedIn(repositoryScope)
     }
 
     fun getPagedSeriesByCategory(categoryId: String): Flow<PagingData<Channel>> {
-        val url = _activePlaylistUrl.value ?: return flowOf(PagingData.empty())
-        return Pager(PagingConfig(pageSize = 50)) {
-            if (categoryId == "Tudo" || categoryId == "Favoritos") channelDao.getUniqueSeries(url)
-            else channelDao.getUniqueSeriesByCategoryId(categoryId, url)
-        }.flow.cachedIn(repositoryScope)
+        return _activePlaylistUrl.flatMapLatest { url ->
+            if (url == null) flowOf(PagingData.empty())
+            else Pager(PagingConfig(pageSize = 50)) {
+                if (categoryId == "Tudo" || categoryId == "Favorito" || categoryId == "Favoritos") {
+                    channelDao.getUniqueSeries(url)
+                } else {
+                    channelDao.getUniqueSeriesByCategoryId(categoryId, url)
+                }
+            }.flow
+        }.cachedIn(repositoryScope)
     }
 
     suspend fun getFeaturedContent(): List<Channel> {
@@ -156,12 +171,11 @@ class ChannelRepository @Inject constructor(
         onProgress: (livePct: Int, moviePct: Int, seriesPct: Int, status: String) -> Unit
     ): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            // VERIFICAÇÃO DE INSTANT ACCESS: Se já temos canais para esta URL, não baixamos de novo
-            if (channelDao.hasChannels(url)) {
-                onProgress(100, 100, 100, "Carregando do cache...")
-                _activePlaylistUrl.value = url
-                return@withContext Result.success(Unit)
-            }
+            // Reset reatividade UI
+            _activePlaylistUrl.value = null 
+            
+            // Download progress start
+            onProgress(10, 10, 10, "Conectando ao servidor...")
 
             onProgress(10, 10, 10, "Baixando lista de reprodução...")
             
@@ -183,6 +197,7 @@ class ChannelRepository @Inject constructor(
             }
 
             // FALLBACK PARA M3U
+            onProgress(10, 10, 10, "Baixando lista de reprodução...")
             val request = Request.Builder().url(url).build()
             val response = okHttpClient.newCall(request).execute()
             if (!response.isSuccessful) return@withContext Result.failure(Exception("HTTP Error: ${response.code}"))
@@ -191,9 +206,9 @@ class ChannelRepository @Inject constructor(
             val parsedChannels = body.charStream().buffered().use { reader -> parser.parse(reader, url) }
             
             if (parsedChannels.isNotEmpty()) {
-                onProgress(50, 50, 50, "Salvando canais...")
+                onProgress(50, 50, 50, "Limpando dados antigos...")
                 channelDao.clearByPlaylist(url)
-                categoryDao.clearByPlaylist(url) // Novo
+                categoryDao.clearByPlaylist(url) 
 
                 // Extrai categorias do M3U — detecta tipo baseado no conteúdo
                 val channelsByGroup = parsedChannels.groupBy { it.groupTitle }
@@ -221,6 +236,9 @@ class ChannelRepository @Inject constructor(
 
                 _activePlaylistUrl.value = url
                 onProgress(100, 100, 100, "Iniciando em segundo plano...")
+            } else {
+                return@withContext Result.failure(Exception("Nenhum conteúdo encontrado na lista. Verifique a URL."))
+            }
 
                 // PHASE 2: Background Enrichment (Does NOT block the user)
                 repositoryScope.launch {
@@ -641,6 +659,10 @@ class ChannelRepository @Inject constructor(
         
         val parsedChannels = body.charStream().buffered().use { reader -> parser.parse(reader, url) }
         
+        if (parsedChannels.isEmpty()) {
+            return null // Treat empty list of channels as a failure
+        }
+
         val m3uCategories = parsedChannels.map { it.groupTitle }.distinct().mapIndexed { index, catName ->
             com.cinex.player.data.model.Category(
                 id = catName,

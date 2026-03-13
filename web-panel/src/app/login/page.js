@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Lock, User, Loader2, Shield, Smartphone, Zap } from 'lucide-react'
+import { Lock, User, Loader2, Shield, Smartphone, Zap, Eye, EyeOff } from 'lucide-react'
 import { loginAction } from './actions'
 
 // ═══════════════════════════════════════════════════════════
@@ -106,14 +106,59 @@ function buildColumns() {
     return cols
 }
 
-const COLS = buildColumns()
-
 export default function LoginPage() {
+    const [cols, setCols] = useState([])
     const [username, setUsername] = useState('')
     const [password, setPassword] = useState('')
+    const [showPassword, setShowPassword] = useState(false)
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState('')
     const router = useRouter()
+
+    useEffect(() => {
+        let isMounted = true;
+        async function fetchPosters() {
+            try {
+                const pages = [1, 2, 3, 4, 5]
+                let allPaths = []
+                for (const p of pages) {
+                    const res = await fetch(`https://api.themoviedb.org/3/trending/all/week?api_key=7091240e68c6f4bf3aa111b87207bf72&language=pt-BR&page=${p}`)
+                    const data = await res.json()
+                    allPaths.push(...(data.results || []).map(m => m.poster_path).filter(Boolean))
+                }
+                
+                // Get unique posters and slice exactly 84 (6 rows * 14 columns)
+                allPaths = [...new Set(allPaths)].slice(0, 84)
+
+                // Fill array if TMDB didn't return enough results
+                while(allPaths.length < 84 && allPaths.length > 0) {
+                     allPaths = [...allPaths, ...allPaths].slice(0, 84)
+                }
+
+                const newCols = []
+                const speeds = ['sa','sb','sc','sd','se','sf']
+                for (let i = 0; i < 14; i++) {
+                    const colPaths = allPaths.slice(i * 6, i * 6 + 6)
+                    newCols.push({
+                        posters: colPaths.map(p => `https://image.tmdb.org/t/p/w342${p}`),
+                        speed: speeds[i % 6],
+                        offset: (i % 3) * 30,
+                    })
+                }
+                if (isMounted) setCols(newCols)
+            } catch (err) {
+                console.error("Erro ao baixar capas", err)
+            }
+        }
+        fetchPosters()
+        return () => { isMounted = false }
+    }, [])
+
+    const displayCols = cols.length > 0 ? cols : Array.from({length: 14}).map((_, i) => ({
+        posters: Array(6).fill(''),
+        speed: ['sa','sb','sc','sd','se','sf'][i % 6],
+        offset: (i % 3) * 30
+    }))
 
     const handleLogin = async (e) => {
         e.preventDefault()
@@ -138,15 +183,24 @@ export default function LoginPage() {
             <style jsx global>{`
                 .pw { position:absolute; inset:-40px; display:flex; gap:8px; overflow:hidden }
                 .pc { flex:1; min-width:0; display:flex; flex-direction:column; gap:8px; will-change:transform }
+                
+                /* Agrupa filmes para criar 2 blocos idênticos por coluna para o loop perfeito */
+                .p-group { display:flex; flex-direction:column; gap:8px; }
+
                 .pp { width:100%; aspect-ratio:2/3; border-radius:6px; object-fit:cover; flex-shrink:0; opacity:.5; display:block; background:rgba(255,255,255,.02) }
                 .pp[data-e] { display:none }
 
+                /* Loop perfeito transladando exatamente a altura de 1 p-group (50% do wrapper inteiro) */
                 @keyframes su { 0%{transform:translateY(0)} 100%{transform:translateY(-50%)} }
                 @keyframes sd { 0%{transform:translateY(-50%)} 100%{transform:translateY(0)} }
-                .sa{animation:su 85s linear infinite} .sb{animation:sd 60s linear infinite}
-                .sc{animation:su 45s linear infinite} .sd{animation:sd 80s linear infinite}
-                .se{animation:su 50s linear infinite} .sf{animation:sd 38s linear infinite}
-                @media(prefers-reduced-motion:reduce){.pc{animation:none!important}}
+                
+                .sa > .pc-inner { animation:su 120s linear infinite } 
+                .sb > .pc-inner { animation:sd 140s linear infinite }
+                .sc > .pc-inner { animation:su 100s linear infinite } 
+                .sd > .pc-inner { animation:sd 130s linear infinite }
+                .se > .pc-inner { animation:su 110s linear infinite } 
+                .sf > .pc-inner { animation:sd 150s linear infinite }
+                @media(prefers-reduced-motion:reduce){.pc-inner{animation:none!important}}
 
                 .ov{position:absolute;inset:0;z-index:2;pointer-events:none;background:radial-gradient(ellipse at center,rgba(11,15,26,.55)0%,rgba(11,15,26,.9)70%)}
                 .gw{position:absolute;top:10%;left:50%;transform:translateX(-50%);width:500px;height:500px;background:radial-gradient(circle,rgba(178,30,43,.12)0%,transparent 55%);pointer-events:none;z-index:3}
@@ -162,7 +216,7 @@ export default function LoginPage() {
                 .cb:hover:not(:disabled){box-shadow:0 0 32px rgba(226,58,58,.5);transform:translateY(-1px)}
                 .cb:disabled{opacity:.55;cursor:not-allowed}
 
-                .cp{display:flex;align-items:center;gap:8px;padding:6px 12px;background:rgba(255,255,255,.03);border:1px solid rgba(216,166,58,.08);border-radius:8px;font-size:11px;color:#8a91a3}
+                .cp{display:flex;align-items:center;justify-content:center;gap:8px;padding:6px 12px;background:rgba(255,255,255,.03);border:1px solid rgba(216,166,58,.08);border-radius:8px;font-size:11px;color:#8a91a3}
 
                 @keyframes spin{to{transform:rotate(360deg)}}
                 .spin{animation:spin 1s linear infinite}
@@ -172,16 +226,34 @@ export default function LoginPage() {
             <div style={{ position:'relative', minHeight:'100vh', width:'100%', background:'#0B0F1A', display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden' }}>
                 {/* ═══ FULLSCREEN POSTER WALL — 14 unique columns ═══ */}
                 <div className="pw">
-                    {COLS.map((col, ci) => {
-                        const doubled = [...col.posters, ...col.posters]
+                    {displayCols.map((col, ci) => {
                         return (
                             <div key={ci} className={`pc ${col.speed}`} style={{ paddingTop: col.offset }}>
-                                {doubled.map((src, i) => (
-                                    <img key={`${ci}-${i}`} src={src} alt="" className="pp"
-                                        decoding="async"
-                                        onError={e => { e.target.setAttribute('data-e','1'); e.target.style.display='none' }}
-                                    />
-                                ))}
+                                <div className="pc-inner" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                    
+                                    {/* Primeira Metade (Original) */}
+                                    <div className="p-group">
+                                        {col.posters.map((src, i) => (
+                                            src ? (
+                                                <img key={`orig-${ci}-${i}`} src={src} alt="" className="pp" decoding="async" onError={e => { e.target.style.opacity = '0.05' }} />
+                                            ) : (
+                                                <div key={`orig-empty-${ci}-${i}`} className="pp" />
+                                            )
+                                        ))}
+                                    </div>
+                                    
+                                    {/* Segunda Metade (Clone para Sincronia de Loop Reverso) */}
+                                    <div className="p-group">
+                                        {col.posters.map((src, i) => (
+                                            src ? (
+                                                <img key={`clone-${ci}-${i}`} src={src} alt="" className="pp" decoding="async" onError={e => { e.target.style.opacity = '0.05' }} />
+                                            ) : (
+                                                <div key={`clone-empty-${ci}-${i}`} className="pp" />
+                                            )
+                                        ))}
+                                    </div>
+                                    
+                                </div>
                             </div>
                         )
                     })}
@@ -193,12 +265,12 @@ export default function LoginPage() {
                 {/* ═══ UNIFIED CARD ═══ */}
                 <div className="cc">
                     <div style={{ textAlign:'center', marginBottom:'6px' }}>
-                        <div style={{ width:'52px', height:'52px', margin:'0 auto 12px', background:'linear-gradient(135deg,#B21E2B,#8E0F1E)', borderRadius:'14px', display:'flex', alignItems:'center', justifyContent:'center', boxShadow:'0 4px 24px rgba(178,30,43,.4)' }}>
+                        <div style={{ margin:'0 auto 12px', display:'flex', alignItems:'center', justifyContent:'center' }}>
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src="/logo_cinex.png" alt="CineX" width={36} height={36} style={{ objectFit:'contain' }} onError={e => { e.target.style.display='none' }} />
+                            <img src="/cinex-logo-final.png" alt="CineX" width={80} height={80} style={{ objectFit:'contain', filter:'drop-shadow(0 4px 12px rgba(178,30,43,0.3))' }} />
                         </div>
-                        <h1 style={{ fontSize:'24px', fontWeight:'800', color:'#fff', marginBottom:'2px', letterSpacing:'-0.5px' }}>
-                            CineX <span style={{ color:'#B21E2B' }}>Control Center</span>
+                        <h1 style={{ fontSize:'24px', fontWeight:'800', color:'#B21E2B', marginBottom:'2px', letterSpacing:'-0.5px' }}>
+                            CENTRAL DE CONTROLE
                         </h1>
                         <p style={{ fontSize:'10px', color:'#D8A63A', fontWeight:'600', letterSpacing:'2.5px', textTransform:'uppercase' }}>
                             Painel oficial de revendedores
@@ -207,16 +279,10 @@ export default function LoginPage() {
 
                     <div className="dv" />
 
-                    <div style={{ display:'flex', gap:'6px', marginBottom:'16px', flexWrap:'wrap', justifyContent:'center' }}>
+                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', marginBottom:'16px' }}>
                         <div className="cp"><Smartphone size={13} style={{ color:'#D8A63A', flexShrink:0 }} /><span>Dispositivos via MAC</span></div>
                         <div className="cp"><Zap size={13} style={{ color:'#D8A63A', flexShrink:0 }} /><span>M3U e Xtream</span></div>
-                        <div className="cp"><Shield size={13} style={{ color:'#D8A63A', flexShrink:0 }} /><span>Sync CineX Player</span></div>
-                    </div>
-
-                    <div style={{ textAlign:'center', marginBottom:'16px' }}>
-                        <p style={{ fontSize:'12px', color:'#fff', fontWeight:'500', background:'rgba(216,166,58,.1)', padding:'8px 12px', borderRadius:'8px', border:'1px solid rgba(216,166,58,.2)' }}>
-                            Use o mesmo acesso do painel CineX para entrar no painel de controle
-                        </p>
+                        <div className="cp" style={{ gridColumn: '1 / -1' }}><Shield size={13} style={{ color:'#D8A63A', flexShrink:0 }} /><span>Sincronize com o CineX Player</span></div>
                     </div>
 
                     <form onSubmit={handleLogin} style={{ display:'flex', flexDirection:'column', gap:'12px' }}>
@@ -229,11 +295,37 @@ export default function LoginPage() {
                         </div>
                         <div style={{ position:'relative' }}>
                             <Lock size={16} style={{ position:'absolute', left:'14px', top:'50%', transform:'translateY(-50%)', color:'#5a6175', pointerEvents:'none' }} />
-                            <input type="password" placeholder="Senha do Painel" value={password} onChange={e=>setPassword(e.target.value)} required className="ci" />
+                            <input 
+                                type={showPassword ? "text" : "password"} 
+                                placeholder="Senha do Painel" 
+                                value={password} 
+                                onChange={e=>setPassword(e.target.value)} 
+                                required 
+                                className="ci" 
+                                style={{ paddingRight: '44px' }}
+                            />
+                            <button
+                                type="button"
+                                onClick={() => setShowPassword(!showPassword)}
+                                style={{
+                                    position: 'absolute', right: '14px', top: '50%', transform: 'translateY(-50%)',
+                                    background: 'transparent', border: 'none', color: '#5a6175', cursor: 'pointer',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '4px',
+                                    transition: 'color 0.2s'
+                                }}
+                                onMouseEnter={(e) => e.currentTarget.style.color = '#D8A63A'}
+                                onMouseLeave={(e) => e.currentTarget.style.color = '#5a6175'}
+                            >
+                                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                            </button>
                         </div>
                         <button type="submit" disabled={loading} className="cb" style={{ marginTop:'2px' }}>
                             {loading ? <Loader2 className="spin" size={20} /> : 'Entrar no Painel'}
                         </button>
+                        
+                        <p style={{ textAlign: 'center', fontSize: '12px', color: '#9CA3AF', marginTop: '12px', lineHeight: '1.5', whiteSpace: 'nowrap' }}>
+                            Use o mesmo usuário e senha do Painel de Revendedor CineX.
+                        </p>
                     </form>
 
                     <div style={{ textAlign:'center', marginTop:'16px' }}>

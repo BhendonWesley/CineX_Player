@@ -88,43 +88,23 @@ fun VodScreen(
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
                 
-                // Opção "Favorito"
-                CategoryItem(
-                    name = "Favorito", 
-                    count = 0, 
-                    isSelected = selectedCategory == "Favoritos",
-                    onClick = { selectedCategory = "Favoritos" }
-                )
-                
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Opção "Tudo"
-                CategoryItem(
-                    name = "Tudo", 
-                    count = 0, 
-                    isSelected = selectedCategory == "Tudo",
-                    onClick = { selectedCategory = "Tudo" }
-                )
-                
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Opção "Continuar Assistindo" no topo se houver itens
-                if (continueWatching.isNotEmpty()) {
-                    CategoryItem(
-                        name = "Visualizados recentemente", 
-                        count = continueWatching.size, 
-                        isSelected = selectedCategory == "Continuar Assistindo",
-                        onClick = { selectedCategory = "Continuar Assistindo" }
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                }
-                
                 categories.forEach { category ->
                     CategoryItem(
                         name = category.name, 
                         count = 0, 
                         isSelected = selectedCategory == category.id,
                         onClick = { selectedCategory = category.id }
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+                
+                // Opção "Continuar Assistindo" no final se houver itens (opcional, ou manter no topo)
+                if (continueWatching.isNotEmpty()) {
+                    CategoryItem(
+                        name = "Visualizados recentemente", 
+                        count = continueWatching.size, 
+                        isSelected = selectedCategory == "Continuar Assistindo",
+                        onClick = { selectedCategory = "Continuar Assistindo" }
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                 }
