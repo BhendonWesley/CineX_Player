@@ -21,6 +21,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.res.painterResource
 import coil.compose.AsyncImage
 import com.cinex.player.data.model.Channel
 import com.cinex.player.ui.theme.CineX_SecondaryBackground
@@ -40,15 +41,18 @@ fun VodPosterItem(
             .background(com.cinex.player.ui.theme.CineX_SecondaryBackground)
             .clickable { onClick() }
     ) {
-        if (channel.logoUrl != null) {
+        val imageUrl = channel.posterUrl?.takeIf { it.isNotEmpty() } ?: channel.logoUrl
+        
+        if (imageUrl != null) {
             AsyncImage(
-                model = channel.logoUrl,
+                model = imageUrl,
                 contentDescription = channel.name,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+                error = painterResource(id = com.cinex.player.R.drawable.logo_cinex) // Fallback visual
             )
         } else {
-            // Fallback se não tiver imagem
+            // Fallback se não tiver nenhuma imagem no banco
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -57,7 +61,10 @@ fun VodPosterItem(
                     text = channel.name,
                     color = TextWhite,
                     textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(16.dp)
+                    modifier = Modifier.padding(16.dp),
+                    fontSize = 11.sp,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }

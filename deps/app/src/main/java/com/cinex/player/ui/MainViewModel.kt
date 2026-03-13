@@ -144,6 +144,14 @@ class MainViewModel @Inject constructor(
     fun getPagedSeriesByCategory(group: String): Flow<PagingData<Channel>> = 
         repository.getPagedSeriesByCategory(group).cachedIn(viewModelScope)
 
+    fun onChannelVisible(channel: Channel) {
+        if (channel.category != "LIVE_TV" && (channel.posterUrl.isNullOrEmpty() || channel.tmdbSynopsis.isNullOrEmpty())) {
+            viewModelScope.launch {
+                repository.enrichChannelWithTmdb(channel)
+            }
+        }
+    }
+
     val continueWatching: StateFlow<List<Channel>> = repository.continueWatching.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -173,6 +181,24 @@ class MainViewModel @Inject constructor(
 
     private val _currentPlaylist = MutableStateFlow<com.cinex.player.data.model.Playlist?>(null)
     val currentPlaylist = _currentPlaylist.asStateFlow()
+
+    val categoryCounts: StateFlow<Map<String, Int>> = repository.categoryCounts.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyMap()
+    )
+
+    val typeCounts: StateFlow<Map<String, Int>> = repository.typeCounts.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyMap()
+    )
+
+    val favoriteCounts: StateFlow<Map<String, Int>> = repository.favoriteCounts.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyMap()
+    )
 
     private val _selectedChannelForDetails = MutableStateFlow<Channel?>(null)
     val selectedChannelForDetails = _selectedChannelForDetails.asStateFlow()

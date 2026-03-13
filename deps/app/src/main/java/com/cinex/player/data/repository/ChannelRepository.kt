@@ -84,6 +84,21 @@ class ChannelRepository @Inject constructor(
 
     val allPlaylists: Flow<List<com.cinex.player.data.model.Playlist>> = playlistDao.getAllPlaylists()
 
+    val categoryCounts: Flow<Map<String, Int>> = _activePlaylistUrl.flatMapLatest { url ->
+        if (url == null) flowOf(emptyMap())
+        else channelDao.getCategoryCounts(url).map { list -> list.associate { it.categoryId to it.count } }
+    }
+
+    val typeCounts: Flow<Map<String, Int>> = _activePlaylistUrl.flatMapLatest { url ->
+        if (url == null) flowOf(emptyMap())
+        else channelDao.getTypeCounts(url).map { list -> list.associate { it.category to it.count } }
+    }
+
+    val favoriteCounts: Flow<Map<String, Int>> = _activePlaylistUrl.flatMapLatest { url ->
+        if (url == null) flowOf(emptyMap())
+        else channelDao.getFavoriteCounts(url).map { list -> list.associate { it.category to it.count } }
+    }
+
     suspend fun addPlaylist(name: String, url: String) = withContext(Dispatchers.IO) {
         playlistDao.insertPlaylist(com.cinex.player.data.model.Playlist(name = name, url = url))
     }

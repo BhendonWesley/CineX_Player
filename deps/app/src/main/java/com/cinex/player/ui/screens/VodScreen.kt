@@ -88,11 +88,19 @@ fun VodScreen(
                     textAlign = androidx.compose.ui.text.style.TextAlign.Center
                 )
                 
+                val counts by viewModel.categoryCounts.collectAsState()
+                val typeCounts by viewModel.typeCounts.collectAsState()
+                val favCounts by viewModel.favoriteCounts.collectAsState()
+
                 categories.forEach { category ->
-                    val countByCat = pagingItems.itemCount
+                    val countByCat = when (category.id) {
+                        "Tudo" -> typeCounts[type] ?: 0
+                        "Favorito" -> favCounts[type] ?: 0
+                        else -> counts[category.id] ?: 0
+                    }
                     CategoryItem(
                         name = category.name, 
-                        count = if (selectedCategory == category.id) countByCat else 0, 
+                        count = countByCat, 
                         isSelected = selectedCategory == category.id,
                         onClick = { selectedCategory = category.id }
                     )
@@ -127,6 +135,9 @@ fun VodScreen(
                 key = pagingItems.itemKey { it.id }
             ) { index ->
                 pagingItems[index]?.let { channel ->
+                    LaunchedEffect(channel.id) {
+                        viewModel.onChannelVisible(channel)
+                    }
                     VodPosterItem(
                         channel = channel,
                         modifier = Modifier.padding(8.dp),

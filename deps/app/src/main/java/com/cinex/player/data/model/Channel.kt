@@ -34,5 +34,6 @@ data class Channel(
     val castMembers: String? = null,       // Membros do elenco (separados por vírgula)
     val playlistUrl: String = "",          // URL da playlist à qual este canal pertence
     val remoteId: String = "",             // ID Único do Servidor (stream_id no Xtream, Hash no M3U)
-    val trailerUrl: String? = null         // URL do trailer (ex: YouTube)
+    val trailerUrl: String? = null,        // URL do trailer (ex: YouTube)
+    val posterUrl: String? = null          // Poster de alta qualidade do TMDB
 )

@@ -271,9 +271,10 @@ private fun HeroMovieInfo(
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 Text(
-                    text = "Sincronize sua lista para ver conteúdos em destaque",
-                    color = CineX_TextMuted,
-                    fontSize = 14.sp
+                    text = "Carregando biblioteca...",
+                    color = CineX_TextMuted.copy(alpha = 0.5f),
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Medium
                 )
             }
         }

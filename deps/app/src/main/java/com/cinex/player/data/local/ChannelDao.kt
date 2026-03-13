@@ -68,7 +68,7 @@ interface ChannelDao {
     fun getFavorites(url: String): Flow<List<Channel>>
 
     // Atualiza metadados do TMDB
-    @Query("UPDATE channels SET tmdbRating = :rating, tmdbSynopsis = :synopsis, logoUrl = :posterUrl, bannerUrl = :bannerUrl, tmdbYear = :year, castMembers = :cast, trailerUrl = :trailer WHERE id = :channelId")
+    @Query("UPDATE channels SET tmdbRating = :rating, tmdbSynopsis = :synopsis, posterUrl = :posterUrl, bannerUrl = :bannerUrl, tmdbYear = :year, castMembers = :cast, trailerUrl = :trailer WHERE id = :channelId")
     suspend fun updateTmdbInfo(channelId: Int, rating: Double?, synopsis: String?, posterUrl: String?, bannerUrl: String?, year: String?, cast: String?, trailer: String?)
 
     @Query("DELETE FROM channels WHERE playlistUrl = :url")
@@ -91,4 +91,23 @@ interface ChannelDao {
     
     @Query("SELECT * FROM channels WHERE playlistUrl = :url")
     suspend fun getAllByPlaylist(url: String): List<Channel>
+
+    @Query("SELECT categoryId, COUNT(*) as count FROM channels WHERE playlistUrl = :url GROUP BY categoryId")
+    fun getCategoryCounts(url: String): Flow<List<CategoryCount>>
+
+    @Query("SELECT category, COUNT(*) as count FROM channels WHERE playlistUrl = :url GROUP BY category")
+    fun getTypeCounts(url: String): Flow<List<TypeCount>>
+
+    @Query("SELECT category, COUNT(*) as count FROM channels WHERE playlistUrl = :url AND isFavorite = 1 GROUP BY category")
+    fun getFavoriteCounts(url: String): Flow<List<TypeCount>>
 }
+
+data class CategoryCount(
+    val categoryId: String,
+    val count: Int
+)
+
+data class TypeCount(
+    val category: String, // "LIVE_TV", "MOVIE", "SERIES"
+    val count: Int
+)

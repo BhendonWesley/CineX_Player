@@ -89,10 +89,19 @@ fun LiveTvScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(categories) { category ->
-                val countByCat = pagingItems.itemCount // Simplificação: no PagingItems temos o total da categoria selecionada
+                val counts by viewModel.categoryCounts.collectAsState()
+                val typeCounts by viewModel.typeCounts.collectAsState()
+                val favoriteCounts by viewModel.favoriteCounts.collectAsState()
+                
+                val countByCat = when (category.id) {
+                    "Tudo" -> typeCounts["LIVE_TV"] ?: 0
+                    "Favorito" -> favoriteCounts["LIVE_TV"] ?: 0
+                    else -> counts[category.id] ?: 0
+                }
+
                 CategoryItem(
                     name = category.name,
-                    count = if (selectedCategory == category.id) countByCat else 0,
+                    count = countByCat,
                     isSelected = selectedCategory == category.id,
                     onClick = { selectedCategory = category.id }
                 )
