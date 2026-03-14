@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.cinex.player.data.model.Channel
 import com.cinex.player.data.repository.ChannelRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,9 +18,9 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.media3.exoplayer.ExoPlayer
 import com.cinex.player.data.network.XtreamCodesApi
-import okhttp3.OkHttpClient // Novo
+import okhttp3.OkHttpClient
 import retrofit2.Retrofit
-import retrofit2.converter.gson.GsonConverterFactory // Novo
+import retrofit2.converter.gson.GsonConverterFactory
 import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import java.text.SimpleDateFormat
@@ -40,7 +41,7 @@ data class AccountInfo(
 class MainViewModel @Inject constructor(
     private val repository: ChannelRepository,
     private val app: android.app.Application,
-    private val okHttpClient: OkHttpClient, // Alterado
+    private val okHttpClient: OkHttpClient,
     val liveTvPlayer: ExoPlayer
 ) : ViewModel() {
 
@@ -49,19 +50,15 @@ class MainViewModel @Inject constructor(
 
     init {
         generateAccountInfo()
-        // Carrega automaticamente a última playlist usada, ou tenta sincronizar do painel se for a primeira vez
         viewModelScope.launch {
             val playlists = repository.allPlaylists.first()
             if (playlists.isNotEmpty()) {
                 playlists.maxByOrNull { it.lastUsed }?.let { lastUsed ->
-                    // Inicialização silenciosa: Pula a tela de CinematicLoadingScreen 
-                    // e carrega os dados do banco de dados (Room Cache) diretamente
                     _currentPlaylist.value = lastUsed
-                    repository.selectPlaylist(lastUsed) { _, _, _, _ -> }
+                    repository.activatePlaylist(lastUsed.url)
                     fetchRealAccountInfo(lastUsed.url)
                 }
             } else {
-                // Tenta sincronização automática (Auto-Login MAC)
                 syncFromPanel()
             }
         }
@@ -106,11 +103,11 @@ class MainViewModel @Inject constructor(
     val movies: Flow<PagingData<Channel>> = repository.movieChannels
     val series: Flow<PagingData<Channel>> = repository.seriesChannels
 
-    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    @OptIn(ExperimentalCoroutinesApi::class)
     val featuredMovies: StateFlow<List<Channel>> = _currentPlaylist.flatMapLatest { playlist ->
-        _homeReady.value = false // Reseta quando troca de playlist
+        _homeReady.value = false
         if (playlist == null) flowOf(emptyList())
-        else repository.getFeaturedContent()
+        else repository.getFeaturedContent(playlist.url)
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -227,7 +224,6 @@ class MainViewModel @Inject constructor(
 
     fun updateSelectedChannel(channel: Channel?) {
         _selectedChannelTvgId.value = channel?.tvgId
-        // Fallback para Xtream EPG se tvg-id não estiver presente ou falhar
         if (channel != null && channel.tvgId == null) {
             val streamId = try { channel.remoteId.replace("live_", "").toInt() } catch (e: Exception) { -1 }
             if (streamId != -1) fetchEpg(streamId)
@@ -257,11 +253,10 @@ class MainViewModel @Inject constructor(
 
         androidx.work.WorkManager.getInstance(app).enqueueUniquePeriodicWork(
             "epg_sync",
-            androidx.work.ExistingPeriodicWorkPolicy.REPLACE,
+            androidx.work.ExistingPeriodicWorkPolicy.UPDATE,
             request
         )
         
-        // Dispara um sync imediato também
         viewModelScope.launch { repository.syncEpg(epgUrl) }
     }
 
@@ -277,8 +272,6 @@ class MainViewModel @Inject constructor(
     private fun fetchRealAccountInfo(playlistUrl: String) {
         viewModelScope.launch {
             try {
-                // Tenta extrair baseUrl, username e password da URL m3u
-                // Ex: http://server:port/get.php?username=XXX&password=YYY...
                 val uri = android.net.Uri.parse(playlistUrl)
                 val username = uri.getQueryParameter("username")
                 val password = uri.getQueryParameter("password")
@@ -308,7 +301,6 @@ class MainViewModel @Inject constructor(
                             "ILIMITADO"
                         }
 
-                        // Atualiza as informações mantendo o MAC e Key do dispositivo
                         _accountInfo.value = _accountInfo.value?.copy(
                             accountStatus = info.status?.uppercase() ?: "ATIVADO",
                             playlistExpiration = expDateStr
@@ -359,10 +351,7 @@ class MainViewModel @Inject constructor(
             }
 
             try {
-                // Obter o MAC a partir da propriedade padronizada
                 val mac = deviceMacAddress
-
-                // Buscar a configuração de playlist do painel web (em IO thread)
                 val apiUrl = "$PANEL_BASE_URL/api/device/${mac}"
                 val (responseCode, body) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     val request = okhttp3.Request.Builder().url(apiUrl).get().build()
@@ -389,7 +378,6 @@ class MainViewModel @Inject constructor(
                     return@launch
                 }
 
-                // Parsear JSON de resposta
                 val json = org.json.JSONObject(body)
                 val playlist = json.getJSONObject("playlist")
                 val type = playlist.getString("type")
@@ -475,6 +463,9 @@ class MainViewModel @Inject constructor(
         _searchQuery.value = query
     }
 
+    private val _selectedChannelForDetails = MutableStateFlow<Channel?>(null)
+    val selectedChannelForDetails = _selectedChannelForDetails.asStateFlow()
+
     fun selectChannelForDetails(channel: Channel?) {
         _selectedChannelForDetails.value = channel
         if (channel != null) {
@@ -521,7 +512,6 @@ class MainViewModel @Inject constructor(
             _errorMessage.value = null
             _currentPlaylist.value = playlist
             
-            // Corrotina para frases rotativas
             val rotateJob = launch {
                 var phraseIndex = 0
                 while (_isLoading.value) {
@@ -628,14 +618,13 @@ class MainViewModel @Inject constructor(
 
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Tenta apagar o dispositivo do painel web também
                 val mac = deviceMacAddress
                 val apiUrl = "$PANEL_BASE_URL/api/device/${mac}"
 
                 val request = okhttp3.Request.Builder().url(apiUrl).delete().build()
                 okHttpClient.newCall(request).execute()
             } catch (e: Exception) {
-                e.printStackTrace() // Ignora o erro para que o app apague localmente mesmo offline
+                e.printStackTrace()
             }
 
             if (currentUrl != null) {

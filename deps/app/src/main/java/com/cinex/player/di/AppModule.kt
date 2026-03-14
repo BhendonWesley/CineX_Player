@@ -4,6 +4,7 @@ import android.app.Application
 import androidx.room.Room
 import com.cinex.player.data.local.AppDatabase
 import com.cinex.player.data.local.ChannelDao
+import com.cinex.player.data.local.EpgDao
 import com.cinex.player.data.parser.M3UParser
 import dagger.Module
 import dagger.Provides
@@ -43,6 +44,12 @@ object AppModule {
     @Singleton
     fun provideCategoryDao(db: AppDatabase): com.cinex.player.data.local.CategoryDao {
         return db.categoryDao()
+    }
+
+    @Provides
+    @Singleton
+    fun provideEpgDao(db: AppDatabase): EpgDao {
+        return db.epgDao()
     }
 
     @Provides

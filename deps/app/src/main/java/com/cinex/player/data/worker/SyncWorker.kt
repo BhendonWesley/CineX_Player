@@ -19,7 +19,7 @@ class SyncWorker @AssistedInject constructor(
         val playlistUrl = inputData.getString("playlist_url") ?: return Result.failure()
         
         return try {
-            val result = repository.syncPlaylistDelta(playlistUrl)
+            val result = repository.syncPlaylistDelta()
             if (result.isSuccess) {
                 Result.success()
             } else {

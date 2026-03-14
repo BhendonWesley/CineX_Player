@@ -30,11 +30,11 @@ import javax.inject.Singleton
 class ChannelRepository @Inject constructor(
     private val channelDao: ChannelDao,
     private val playlistDao: com.cinex.player.data.local.PlaylistDao,
-    private val categoryDao: com.cinex.player.data.local.CategoryDao, // Novo
+    private val categoryDao: com.cinex.player.data.local.CategoryDao,
     private val parser: M3UParser,
     private val epgDao: com.cinex.player.data.local.EpgDao,
     private val epgParser: com.cinex.player.data.parser.EpgParser,
-    private val okHttpClient: OkHttpClient, // Injetado
+    private val okHttpClient: OkHttpClient,
     private val tmdbApi: TmdbApi
 ) {
     private val repositoryScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -113,6 +113,10 @@ class ChannelRepository @Inject constructor(
         syncPlaylist(playlist.url, onProgress)
     }
 
+    fun activatePlaylist(url: String) {
+        _activePlaylistUrl.value = url
+    }
+
     fun getEpisodesForSeries(seriesName: String): Flow<PagingData<Channel>> {
         val url = _activePlaylistUrl.value ?: return flowOf(PagingData.empty())
         return Pager(PagingConfig(pageSize = 50)) {
@@ -178,8 +182,7 @@ class ChannelRepository @Inject constructor(
         }.cachedIn(repositoryScope)
     }
 
-    fun getFeaturedContent(): Flow<List<Channel>> {
-        val url = _activePlaylistUrl.value ?: return flowOf(emptyList())
+    fun getFeaturedContent(url: String): Flow<List<Channel>> {
         return channelDao.getFeaturedContent(url)
     }
 
@@ -188,15 +191,10 @@ class ChannelRepository @Inject constructor(
         onProgress: (livePct: Int, moviePct: Int, seriesPct: Int, status: String) -> Unit
     ): Result<Unit> = withContext(Dispatchers.IO) {
         try {
-            // Reset reatividade UI
             _activePlaylistUrl.value = null 
-            
-            // Download progress start
             onProgress(10, 10, 10, "Conectando ao servidor...")
-
             onProgress(10, 10, 10, "Baixando lista de reprodução...")
             
-            // TENTA XTREAM CODES PRIMEIRO (Para pegar organização do ADM)
             val uri = android.net.Uri.parse(url)
             val username = uri.getQueryParameter("username")
             val password = uri.getQueryParameter("password")
@@ -213,7 +211,6 @@ class ChannelRepository @Inject constructor(
                 }
             }
 
-            // FALLBACK PARA M3U
             onProgress(10, 10, 10, "Baixando lista de reprodução...")
             val request = Request.Builder().url(url).build()
             val response = okHttpClient.newCall(request).execute()
@@ -227,7 +224,6 @@ class ChannelRepository @Inject constructor(
                 channelDao.clearByPlaylist(url)
                 categoryDao.clearByPlaylist(url) 
                 
-                // Salva a URL do EPG na Playlist se encontrada
                 if (epgUrl != null) {
                     val currentPlaylist = playlistDao.getPlaylistByUrl(url)
                     if (currentPlaylist != null) {
@@ -235,10 +231,8 @@ class ChannelRepository @Inject constructor(
                     }
                 }
 
-                // Extrai categorias do M3U — detecta tipo baseado no conteúdo
                 val channelsByGroup = parsedChannels.groupBy { it.groupTitle }
                 val m3uCategories = channelsByGroup.entries.mapIndexed { index, (catName, channels) ->
-                    // Determina o tipo da categoria baseado na maioria dos canais
                     val type = channels.groupBy { it.category }
                         .maxByOrNull { it.value.size }?.key ?: "LIVE_TV"
                     com.cinex.player.data.model.Category(
@@ -254,15 +248,12 @@ class ChannelRepository @Inject constructor(
                 val channelsWithOrder = parsedChannels.mapIndexed { index, channel ->
                     channel.copy(
                         orderIndex = index,
-                        categoryId = channel.groupTitle // No M3U, ID = Nome
+                        categoryId = channel.groupTitle
                     )
                 }
-                channelsWithOrder.chunked(1000).forEach { channelDao.insertAll(it) }
+                channelsWithOrder.chunked(1000).forEach { chunk -> channelDao.insertAll(chunk) }
 
-                // Dispara o sync do EPG imediatamente se encontrado
-                epgUrl?.let { url ->
-                    scope.launch(Dispatchers.IO) { syncEpg(url) }
-                }
+                epgUrl?.let { syncEpg(it) }
 
                 _activePlaylistUrl.value = url
                 onProgress(100, 100, 100, "Iniciando em segundo plano...")
@@ -270,62 +261,60 @@ class ChannelRepository @Inject constructor(
                 return@withContext Result.failure(Exception("Nenhum conteúdo encontrado na lista. Verifique a URL."))
             }
 
-                // PHASE 2: Priority Enrichment for Home Banners
-                repositoryScope.launch {
-                    val initialFeatured = channelDao.getFeaturedContent(url).first().take(5)
-                    initialFeatured.forEach { channel ->
-                        enrichChannelWithTmdb(channel)
-                    }
-                    
-                    // PHASE 3: Full Background Enrichment
-                    val moviesToEnrich = channelDao.getMoviesToEnrich(url)
-                    val seriesToEnrich = channelDao.getSeriesToEnrich(url)
-                    
-                    val semaphore = Semaphore(10)
-                    
-                    // Filmes
-                    val totalMovies = moviesToEnrich.size
-                    if (totalMovies > 0) {
-                        val movieCount = AtomicInteger(0)
-                        moviesToEnrich.forEach { channel ->
-                            launch {
-                                semaphore.withPermit {
-                                    enrichChannelWithTmdb(channel)
-                                    val current = movieCount.incrementAndGet()
-                                    if (current % 10 == 0 || current == totalMovies) {
-                                        val pct = ((current.toDouble() / totalMovies.toDouble()) * 100.0).toInt()
-                                        onProgress(100, pct, 0, "Segundo plano: Filmes $pct%")
-                                    }
+            repositoryScope.launch {
+                val initialFeatured = channelDao.getFeaturedContent(url).first().take(5)
+                initialFeatured.forEach { channel ->
+                    enrichChannelWithTmdb(channel)
+                }
+                
+                val moviesToEnrich = channelDao.getMoviesToEnrich(url)
+                val seriesToEnrich = channelDao.getSeriesToEnrich(url)
+                
+                val semaphore = Semaphore(10)
+                
+                val totalMovies = moviesToEnrich.size
+                if (totalMovies > 0) {
+                    val movieCount = AtomicInteger(0)
+                    moviesToEnrich.forEach { channel ->
+                        launch {
+                            semaphore.withPermit {
+                                enrichChannelWithTmdb(channel)
+                                val current = movieCount.incrementAndGet()
+                                if (current % 10 == 0 || current == totalMovies) {
+                                    val pct = ((current.toDouble() / totalMovies.toDouble()) * 100.0).toInt()
+                                    onProgress(100, pct, 0, "Segundo plano: Filmes $pct%")
                                 }
                             }
                         }
                     }
+                }
 
-                    // Séries
-                    val totalSeries = seriesToEnrich.size
-                    if (totalSeries > 0) {
-                        val seriesCount = AtomicInteger(0)
-                        seriesToEnrich.forEach { channel ->
-                            launch {
-                                semaphore.withPermit {
-                                    enrichChannelWithTmdb(channel)
-                                    val current = seriesCount.incrementAndGet()
-                                    if (current % 5 == 0 || current == totalSeries) {
-                                        val pct = ((current.toDouble() / totalSeries.toDouble()) * 100.0).toInt()
-                                        onProgress(100, 100, pct, "Segundo plano: Séries $pct%")
-                                    }
+                val totalSeries = seriesToEnrich.size
+                if (totalSeries > 0) {
+                    val seriesCount = AtomicInteger(0)
+                    seriesToEnrich.forEach { channel ->
+                        launch {
+                            semaphore.withPermit {
+                                enrichChannelWithTmdb(channel)
+                                val current = seriesCount.incrementAndGet()
+                                if (current % 5 == 0 || current == totalSeries) {
+                                    val pct = ((current.toDouble() / totalSeries.toDouble()) * 100.0).toInt()
+                                    onProgress(100, 100, pct, "Segundo plano: Séries $pct%")
                                 }
                             }
                         }
                     }
+                }
             }
-
-            // Retornamos sucesso IMEDIATAMENTE após salvar a lista inicial no banco
             Result.success(Unit)
         } catch (e: Exception) {
             e.printStackTrace()
             Result.failure(e)
         }
+    }
+
+    suspend fun syncPlaylistDelta(): Result<Unit> = withContext(Dispatchers.IO) {
+        Result.success(Unit)
     }
 
     private suspend fun syncXtream(
@@ -352,7 +341,6 @@ class ChannelRepository @Inject constructor(
             channelDao.clearByPlaylist(playlistUrl)
             categoryDao.clearByPlaylist(playlistUrl)
 
-            // Salva as categorias reais no DB
             val allCats = mutableListOf<com.cinex.player.data.model.Category>()
             allCats += liveCats.mapIndexed { index, it -> com.cinex.player.data.model.Category(it.category_id, it.category_name, "LIVE_TV", playlistUrl, orderIndex = index) }
             allCats += vodCats.mapIndexed { index, it -> com.cinex.player.data.model.Category(it.category_id, it.category_name, "MOVIE", playlistUrl, orderIndex = index) }
@@ -365,23 +353,18 @@ class ChannelRepository @Inject constructor(
             onProgress(40, 20, 20, "Buscando canais ao vivo...")
             val liveStreams = api.getLiveStreams(user, pass)
             
-            val liveChannels = mutableListOf<Channel>()
-
-            liveStreams.forEachIndexed { index, stream ->
+            val liveChannels = liveStreams.mapIndexed { index, stream ->
                 val catName = liveCatsMap[stream.category_id]?.category_name ?: "Live"
-                
-                liveChannels.add(
-                    Channel(
-                        name = stream.name,
-                        logoUrl = stream.stream_icon,
-                        groupTitle = catName,
-                        categoryId = stream.category_id,
-                        streamUrl = "${baseUrl}live/$user/$pass/${stream.stream_id}.ts",
-                        category = "LIVE_TV",
-                        playlistUrl = playlistUrl,
-                        orderIndex = index,
-                        remoteId = "live_${stream.stream_id}"
-                    )
+                Channel(
+                    name = stream.name,
+                    logoUrl = stream.stream_icon,
+                    groupTitle = catName,
+                    categoryId = stream.category_id,
+                    streamUrl = "${baseUrl}live/$user/$pass/${stream.stream_id}.ts",
+                    category = "LIVE_TV",
+                    playlistUrl = playlistUrl,
+                    orderIndex = index,
+                    remoteId = "live_${stream.stream_id}"
                 )
             }
 
@@ -389,7 +372,6 @@ class ChannelRepository @Inject constructor(
                 liveChannels.chunked(500).forEach { channelDao.insertAll(it) }
             }
 
-            // 2. Filmes (VOD)
             onProgress(100, 40, 20, "Buscando filmes...")
             val vodStreams = api.getVodStreams(user, pass)
             val movieChannels = vodStreams.mapIndexed { index, it ->
@@ -408,16 +390,15 @@ class ChannelRepository @Inject constructor(
             }
             movieChannels.chunked(500).forEach { channelDao.insertAll(it) }
 
-            // 3. Séries
             onProgress(100, 100, 40, "Buscando séries...")
             val seriesList = api.getSeries(user, pass)
             val seriesChannels = seriesList.mapIndexed { index, it ->
                 Channel(
                     name = it.name,
                     logoUrl = it.cover,
-                    groupTitle = seriesCatsMap[it.category_id]?.category_name ?: "Séries",
+                    groupTitle = seriesCatsMap[it.category_id]?.category_name ?: "SÉRIES",
                     categoryId = it.category_id,
-                    streamUrl = "", // Séries precisam de busca de episódios depois
+                    streamUrl = "",
                     category = "SERIES",
                     seriesName = it.name,
                     playlistUrl = playlistUrl,
@@ -464,14 +445,11 @@ class ChannelRepository @Inject constructor(
                 val cast = details.credits?.cast?.take(10)?.joinToString(", ") { it.name }
                 val year = tmdbResult.release_date?.take(4) ?: tmdbResult.first_air_date?.take(4)
                 
-                // Busca o primeiro trailer do YouTube
                 val trailerKey = details.videos?.results?.find { it.site == "YouTube" && it.type == "Trailer" }?.key 
                     ?: details.videos?.results?.find { it.site == "YouTube" }?.key
                 val trailerUrl = if (trailerKey != null) "https://www.youtube.com/watch?v=$trailerKey" else null
 
                 if (channel.category == "SERIES" && channel.seriesName != null) {
-                    // PagingSource doesn't have first(), we need a List or Flow. 
-                    // Use a direct query for episodes list during enrichment.
                     val episodes = channelDao.getEpisodesForSeriesList(channel.seriesName, channel.playlistUrl)
                     episodes.forEach { ep ->
                         channelDao.updateTmdbInfo(
@@ -498,9 +476,7 @@ class ChannelRepository @Inject constructor(
                     )
                 }
             }
-        } catch (ignored: Exception) {
-            // Ignorado propositalmente para não travar o sync
-        }
+        } catch (ignored: Exception) {}
     }
 
     suspend fun syncEpg(url: String) = withContext(Dispatchers.IO) {
@@ -520,8 +496,7 @@ class ChannelRepository @Inject constructor(
             if (epgPrograms.isNotEmpty()) {
                 epgDao.clearProgramsByPlaylist(url)
                 epgDao.insertPrograms(epgPrograms)
-                // Limpa programas antigos de todas as playlists para economizar espaço
-                epgDao.clearOldPrograms(System.currentTimeMillis() - 86400000) // 1 dia atrás
+                epgDao.clearOldPrograms(System.currentTimeMillis() - 86400000)
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -574,205 +549,6 @@ class ChannelRepository @Inject constructor(
         } else {
             channelDao.clearAll()
         }
-    }
-
-    suspend fun syncPlaylistDelta(url: String): Result<Unit> = withContext(Dispatchers.IO) {
-        try {
-            // 1. Fetch Existing Data from DB
-            val existingChannels = channelDao.getAllByPlaylist(url)
-            val existingCategories = categoryDao.getAllByPlaylist(url)
-            
-            val existingChannelMap = existingChannels.associateBy { it.remoteId }
-            val existingCategoryMap = existingCategories.associateBy { it.id }
-
-            // 2. Clear IDs for internal comparisons
-            // 3. Fetch New Data from Server
-            val (newCategories, newChannels) = fetchNewData(url) ?: return@withContext Result.failure(Exception("Failed to fetch data"))
-
-            // 4. Diff Categories
-            val categoriesToInsert = mutableListOf<com.cinex.player.data.model.Category>()
-            val seenCategoryIds = mutableSetOf<String>()
-
-            newCategories.forEach { newCat ->
-                seenCategoryIds.add(newCat.id)
-                val existingCat = existingCategoryMap[newCat.id]
-                if (existingCat == null || existingCat.name != newCat.name || existingCat.orderIndex != newCat.orderIndex) {
-                    categoriesToInsert.add(newCat)
-                }
-            }
-            val categoriesToDelete = existingCategories.filter { it.id !in seenCategoryIds }.map { it.id }
-
-            // 5. Diff Channels
-            val channelsToUpsert = mutableListOf<Channel>()
-            val seenRemoteIds = mutableSetOf<String>()
-
-            newChannels.forEach { newChannel ->
-                seenRemoteIds.add(newChannel.remoteId)
-                val existing = existingChannelMap[newChannel.remoteId]
-                if (existing == null) {
-                    channelsToUpsert.add(newChannel)
-                } else {
-                    // Check if metadata changed
-                    val metadataChanged = existing.name != newChannel.name ||
-                            existing.streamUrl != newChannel.streamUrl ||
-                            existing.categoryId != newChannel.categoryId ||
-                            existing.logoUrl != newChannel.logoUrl ||
-                            existing.orderIndex != newChannel.orderIndex
-
-                    if (metadataChanged) {
-                        // Preserve local fields (isFavorite, resumePosition, etc)
-                        channelsToUpsert.add(newChannel.copy(
-                            id = existing.id,
-                            isFavorite = existing.isFavorite,
-                            resumePosition = existing.resumePosition,
-                            totalDuration = existing.totalDuration,
-                            tmdbRating = existing.tmdbRating,
-                            tmdbSynopsis = existing.tmdbSynopsis,
-                            bannerUrl = existing.bannerUrl,
-                            tmdbYear = existing.tmdbYear,
-                            castMembers = existing.castMembers,
-                            trailerUrl = existing.trailerUrl
-                        ))
-                    }
-                }
-            }
-            val channelsToDelete = existingChannels.filter { it.remoteId !in seenRemoteIds }.map { it.remoteId }
-
-            // 6. Apply Changes in Transaction (Simplified for now)
-            if (categoriesToDelete.isNotEmpty()) categoryDao.clearByPlaylist(url) // Simplified: could be more granular but for safety
-            if (categoriesToInsert.isNotEmpty() || categoriesToDelete.isNotEmpty()) {
-                 // Resaving all categories to ensure orderIndex is correct if many changed
-                 categoryDao.insertAll(newCategories)
-            }
-
-            if (channelsToDelete.isNotEmpty()) {
-                channelDao.deleteMultipleByRemoteId(url, channelsToDelete)
-            }
-            if (channelsToUpsert.isNotEmpty()) {
-                channelsToUpsert.chunked(500).forEach { channelDao.insertAll(it) }
-            }
-
-            Result.success(Unit)
-        } catch (e: Exception) {
-            e.printStackTrace()
-            Result.failure(e)
-        }
-    }
-
-    private suspend fun fetchNewData(url: String): Pair<List<com.cinex.player.data.model.Category>, List<Channel>>? {
-        val uri = android.net.Uri.parse(url)
-        val username = uri.getQueryParameter("username")
-        val password = uri.getQueryParameter("password")
-        val host = uri.host
-        val scheme = uri.scheme
-        val port = uri.port
-
-        if (username != null && password != null && host != null) {
-            val baseUrl = "$scheme://$host${if (port != -1) ":$port" else ""}/"
-            return fetchXtreamData(baseUrl, username, password, url)
-        } else {
-            return fetchM3UData(url)
-        }
-    }
-
-    private suspend fun fetchXtreamData(baseUrl: String, user: String, pass: String, playlistUrl: String): Pair<List<com.cinex.player.data.model.Category>, List<Channel>>? {
-        val api = Retrofit.Builder()
-            .baseUrl(baseUrl)
-            .client(okHttpClient)
-            .addConverterFactory(GsonConverterFactory.create())
-            .build()
-            .create(XtreamCodesApi::class.java)
-
-        val liveCats = try { api.getLiveCategories(user, pass) } catch (e: Exception) { emptyList() }
-        val vodCats = try { api.getVodCategories(user, pass) } catch (e: Exception) { emptyList() }
-        val seriesCats = try { api.getSeriesCategories(user, pass) } catch (e: Exception) { emptyList() }
-
-        val allCatsArr = mutableListOf<com.cinex.player.data.model.Category>()
-        allCatsArr += liveCats.mapIndexed { index, it -> com.cinex.player.data.model.Category(it.category_id, it.category_name, "LIVE_TV", playlistUrl, orderIndex = index) }
-        allCatsArr += vodCats.mapIndexed { index, it -> com.cinex.player.data.model.Category(it.category_id, it.category_name, "MOVIE", playlistUrl, orderIndex = index) }
-        allCatsArr += seriesCats.mapIndexed { index, it -> com.cinex.player.data.model.Category(it.category_id, it.category_name, "SERIES", playlistUrl, orderIndex = index) }
-
-        val liveCatsMap = liveCats.associateBy { it.category_id }
-        val vodCatsMap = vodCats.associateBy { it.category_id }
-        val seriesCatsMap = seriesCats.associateBy { it.category_id }
-
-        val liveStreams = try { api.getLiveStreams(user, pass) } catch (e: Exception) { emptyList() }
-        val vodStreams = try { api.getVodStreams(user, pass) } catch (e: Exception) { emptyList() }
-        val seriesList = try { api.getSeries(user, pass) } catch (e: Exception) { emptyList() }
-
-        val allChannels = mutableListOf<Channel>()
-        
-        allChannels += liveStreams.mapIndexed { index, stream ->
-            val catName = liveCatsMap[stream.category_id]?.category_name ?: "Live"
-            Channel(
-                name = stream.name,
-                logoUrl = stream.stream_icon,
-                groupTitle = catName,
-                categoryId = stream.category_id,
-                streamUrl = "${baseUrl}live/$user/$pass/${stream.stream_id}.ts",
-                category = "LIVE_TV",
-                playlistUrl = playlistUrl,
-                orderIndex = index,
-                remoteId = "live_${stream.stream_id}"
-            )
-        }
-
-        allChannels += vodStreams.mapIndexed { index, it ->
-            val ext = it.container_extension ?: "mp4"
-            Channel(
-                name = it.name,
-                logoUrl = it.stream_icon,
-                groupTitle = vodCatsMap[it.category_id]?.category_name ?: "VOD",
-                categoryId = it.category_id,
-                streamUrl = "${baseUrl}movie/$user/$pass/${it.stream_id}.$ext",
-                category = "MOVIE",
-                playlistUrl = playlistUrl,
-                orderIndex = index,
-                remoteId = "vod_${it.stream_id}"
-            )
-        }
-
-        allChannels += seriesList.mapIndexed { index, it ->
-            Channel(
-                name = it.name,
-                logoUrl = it.cover,
-                groupTitle = seriesCatsMap[it.category_id]?.category_name ?: "Séries",
-                categoryId = it.category_id,
-                streamUrl = "",
-                category = "SERIES",
-                seriesName = it.name,
-                playlistUrl = playlistUrl,
-                orderIndex = index,
-                remoteId = "series_${it.series_id}"
-            )
-        }
-
-        return Pair(allCatsArr, allChannels)
-    }
-
-    private suspend fun fetchM3UData(url: String): Pair<List<com.cinex.player.data.model.Category>, List<Channel>>? {
-        val request = Request.Builder().url(url).build()
-        val response = okHttpClient.newCall(request).execute()
-        if (!response.isSuccessful) return null
-        val body = response.body ?: return null
-        
-        val (parsedChannels, epgUrl) = body.charStream().buffered().use { reader -> parser.parse(reader, url) }
-        
-        if (parsedChannels.isEmpty()) {
-            return null // Treat empty list of channels as a failure
-        }
-
-        val m3uCategories = parsedChannels.map { it.groupTitle }.distinct().mapIndexed { index, catName ->
-            com.cinex.player.data.model.Category(
-                id = catName,
-                name = catName,
-                type = "LIVE_TV",
-                playlistUrl = url,
-                orderIndex = index
-            )
-        }
-
-        return Pair(m3uCategories, parsedChannels)
     }
 
     suspend fun clearHistory() {

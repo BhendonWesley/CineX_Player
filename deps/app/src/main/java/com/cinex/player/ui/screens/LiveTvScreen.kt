@@ -187,65 +187,88 @@ fun LiveTvScreen(
                 }
             }
             
-            // Área de Detalhes e EPG
-            Column(
+            // 1. Título do Canal (Sutil)
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp, vertical = 12.dp)
+            ) {
+                Text(
+                    text = (selectedChannel?.name ?: "NOME DO CANAL").uppercase(),
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+            }
+
+            // 2. EPG Section (Prioritária)
+            Box(
                 modifier = Modifier
                     .weight(1f)
-                    .padding(24.dp)
+                    .padding(horizontal = 24.dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = (selectedChannel?.name ?: "NOME DO CANAL").uppercase(),
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color.White
-                    )
-                }
-                
-                Spacer(modifier = Modifier.height(16.dp))
-                
-                // EPG Section
                 val hasEpg = currentProgram != null || epgListings.isNotEmpty()
                 
                 if (!hasEpg) {
-                    Text("Guia de programação não disponível para este canal.", color = Color.Gray.copy(alpha = 0.6f), fontSize = 14.sp)
+                    Text(
+                        "Guia de programação não disponível para este canal.", 
+                        color = Color.White.copy(alpha = 0.3f), 
+                        fontSize = 13.sp
+                    )
                 } else {
-                    // Programa Atual
-                    if (currentProgram != null) {
-                        EpgItem(program = currentProgram!!, isCurrent = true)
-                        
-                        // Barra de Progresso
-                        val total = (currentProgram!!.endTime - currentProgram!!.startTime).coerceAtLeast(1)
-                        val passed = (System.currentTimeMillis() - currentProgram!!.startTime).coerceIn(0, total)
-                        val progress = passed.toFloat() / total.toFloat()
-                        
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Box(modifier = Modifier.fillMaxWidth().height(4.dp).background(Color.Gray.copy(alpha = 0.3f))) {
-                            Box(modifier = Modifier.fillMaxWidth(progress).fillMaxHeight().background(Color(0xFFE50914)))
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        // Programa Atual com Destaque Amarelo (Estilo Profissional)
+                        if (currentProgram != null) {
+                            item {
+                                Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                                    EpgItem(program = currentProgram!!, isCurrent = true)
+                                    
+                                    // Barra de Progresso Sutil
+                                    val total = (currentProgram!!.endTime - currentProgram!!.startTime).coerceAtLeast(1)
+                                    val passed = (System.currentTimeMillis() - currentProgram!!.startTime).coerceIn(0, total)
+                                    val progress = passed.toFloat() / total.toFloat()
+                                    
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Box(modifier = Modifier.fillMaxWidth().height(2.dp).background(Color.Gray.copy(alpha = 0.2f))) {
+                                        Box(modifier = Modifier.fillMaxWidth(progress).fillMaxHeight().background(Color(0xFFFFD700))) // Amarelo
+                                    }
+                                }
+                            }
+                        } else if (epgListings.isNotEmpty()) {
+                            item {
+                                val first = epgListings[0]
+                                Text(
+                                    text = "AGORA: ${first.title.decodeBase64IfNeeded()}", 
+                                    color = Color(0xFFFFD700), 
+                                    fontWeight = FontWeight.Bold, 
+                                    fontSize = 14.sp
+                                )
+                            }
                         }
-                    } else if (epgListings.isNotEmpty()) {
-                        val first = epgListings[0]
-                        Text("AGORA: ${first.title.decodeBase64IfNeeded()}", color = Color.Yellow, fontWeight = FontWeight.Bold)
-                    }
 
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("A SEGUIR", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Spacer(modifier = Modifier.height(8.dp))
-
-                    if (upcomingPrograms.isNotEmpty()) {
-                        upcomingPrograms.take(3).forEach { program ->
-                            EpgItem(program = program, isCurrent = false)
-                        }
-                    } else if (epgListings.size > 1) {
-                        epgListings.drop(1).take(3).forEach { epg ->
-                            val title = epg.title.decodeBase64IfNeeded()
-                            Text("${epg.start.takeLast(8).take(5)}  $title", color = Color.White.copy(alpha = 0.7f), fontSize = 14.sp)
+                        // Lista a Seguir (Mais Densa)
+                        if (upcomingPrograms.isNotEmpty()) {
+                            items(upcomingPrograms.take(10)) { program ->
+                                EpgItem(program = program, isCurrent = false)
+                            }
+                        } else if (epgListings.size > 1) {
+                            items(epgListings.drop(1).take(10)) { epg ->
+                                val title = epg.title.decodeBase64IfNeeded()
+                                val time = epg.start.takeLast(8).take(5)
+                                Row(modifier = Modifier.padding(vertical = 2.dp)) {
+                                    Text(text = time, color = Color.Gray, fontSize = 13.sp, modifier = Modifier.width(60.dp))
+                                    Text(text = title, color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
+                                }
+                            }
                         }
                     }
                 }
             }
 
-            // Barra de Botões Inferior
+            // 3. Barra de Ações na Base (Discreta)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -255,17 +278,23 @@ fun LiveTvScreen(
             ) {
                 val isFavorite = selectedChannel?.isFavorite == true
                 
-                ActionButton(
-                    text = if (isFavorite) "Remover dos Favoritos" else "Adicionar aos Favoritos", 
-                    color = if (isFavorite) Color.DarkGray else Color(0xFFC62828),
-                    onClick = { selectedChannel?.let { viewModel.updateFavorite(it.id, !isFavorite) } }
-                )
-                
-                ActionButton(
-                    text = "Procurar", 
-                    color = Color(0xFF1A1A1A),
-                    onClick = { /* Navegar para busca ou abrir campo */ }
-                )
+                // Botão de Favorito Compacto
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (isFavorite) Color.White.copy(alpha = 0.1f) else Color(0xFFC62828).copy(alpha = 0.1f))
+                        .clickable { selectedChannel?.let { viewModel.updateFavorite(it.id, !isFavorite) } }
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = if (isFavorite) "REMOVER FAVORITO" else "ADICIONAR FAVORITO",
+                            color = if (isFavorite) Color.White else Color(0xFFC62828),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
             }
         }
     }
