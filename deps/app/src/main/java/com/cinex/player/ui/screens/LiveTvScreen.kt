@@ -33,6 +33,9 @@ import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
 import androidx.paging.PagingData
 import kotlinx.coroutines.flow.Flow
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -308,25 +311,6 @@ fun ActionButton(text: String, color: Color, onClick: () -> Unit = {}) {
             text = text.uppercase(), 
             color = Color.White, 
             fontSize = 12.sp, 
-            fontWeight = FontWeight.ExtraBold
-        )
-    }
-}
-}
-
-@Composable
-fun ActionButton(text: String, color: Color) {
-    Box(
-        modifier = Modifier
-            .clip(RoundedCornerShape(4.dp))
-            .background(color)
-            .clickable { /* Ação */ }
-            .padding(horizontal = 16.dp, vertical = 8.dp)
-    ) {
-        Text(
-            text = text.uppercase(), 
-            color = Color.White, 
-            fontSize = 11.sp, 
             fontWeight = FontWeight.ExtraBold
         )
     }

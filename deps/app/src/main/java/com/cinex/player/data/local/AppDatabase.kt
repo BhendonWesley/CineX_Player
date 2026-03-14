@@ -2,6 +2,9 @@ package com.cinex.player.data.local
 
 import androidx.room.Database
 import androidx.room.RoomDatabase
+import com.cinex.player.data.model.Channel
+import com.cinex.player.data.model.Playlist
+import com.cinex.player.data.model.Category
 import com.cinex.player.data.model.EpgChannel
 import com.cinex.player.data.model.EpgProgram
 
