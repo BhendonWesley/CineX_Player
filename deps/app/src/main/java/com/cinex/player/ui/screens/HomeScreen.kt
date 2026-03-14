@@ -1,8 +1,7 @@
 package com.cinex.player.ui.screens
 
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.tween
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -20,10 +19,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
@@ -36,87 +36,112 @@ import coil.compose.AsyncImage
 import com.cinex.player.data.model.Channel
 import com.cinex.player.ui.theme.*
 import kotlinx.coroutines.delay
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
-
-// ══════════════════════════════════════════════════════════════
-//  CineX Home Screen — Netflix/TV-Style Landscape Interface
-// ══════════════════════════════════════════════════════════════
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun HomeScreen(
     featuredMovies: List<Channel>,
+    isHomeReady: Boolean,
+    onHomeReady: () -> Unit,
     onNavigate: (Int) -> Unit,
     onSettingsClick: () -> Unit,
-    onServerSwap: () -> Unit,
     onRefresh: () -> Unit,
     accountInfo: com.cinex.player.ui.AccountInfo?,
     macAddress: String = "",
     modifier: Modifier = Modifier
 ) {
+    // ESTADOS ESSENCIAIS (Corrigindo Unresolved Reference)
+    var showInitialLoading by remember { mutableStateOf(!isHomeReady && featuredMovies.isEmpty()) }
     var showAccountDialog by remember { mutableStateOf(false) }
+
+    val validMovies = remember(featuredMovies) {
+        featuredMovies.filter { !it.bannerUrl.isNullOrEmpty() && !it.bannerUrl.endsWith("null") }.take(10)
+    }
+
+    val pagerState = rememberPagerState(
+        initialPage = 0,
+        pageCount = { validMovies.size }
+    )
+
+    LaunchedEffect(pagerState, validMovies) {
+        if (validMovies.isEmpty()) return@LaunchedEffect
+        while (true) {
+            delay(7000)
+            val next = (pagerState.currentPage + 1) % validMovies.size
+            pagerState.animateScrollToPage(next, animationSpec = tween(1000, easing = LinearEasing))
+        }
+    }
+
+    LaunchedEffect(featuredMovies) {
+        if (isHomeReady) {
+            showInitialLoading = false
+            return@LaunchedEffect
+        }
+        if (featuredMovies.isNotEmpty()) {
+            showInitialLoading = false
+            onHomeReady()
+        } else {
+            delay(8000)
+            showInitialLoading = false
+            onHomeReady()
+        }
+    }
 
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(CineX_BackgroundBlue)
     ) {
-        // ── LAYER 1: FULL-SCREEN BACKDROP ──
-        HeroBackdrop(
-            movies = featuredMovies,
-            modifier = Modifier.fillMaxSize()
-        )
-
-        // ── LAYER 2: CONTENT OVERLAY ──
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 40.dp, vertical = 24.dp),
-            verticalArrangement = Arrangement.SpaceBetween
-        ) {
-            // ── TOP: HEADER BAR ──
-            HeaderBar(
-                onSettingsClick = onSettingsClick,
-                onRefresh = onRefresh,
-                onServerSwap = onServerSwap,
-                onAccountClick = { showAccountDialog = true }
+        if (showInitialLoading) {
+            LoadingScreen(statusMessage = "Preparando sua biblioteca...")
+        } else {
+            HeroBackdrop(
+                movies = validMovies,
+                pagerState = pagerState,
+                modifier = Modifier.fillMaxSize()
             )
 
-            // ── CENTER: MOVIE INFO (left-aligned) ──
-            HeroMovieInfo(
-                movies = featuredMovies,
+            Column(
                 modifier = Modifier
-                    .fillMaxWidth(0.55f)
-                    .weight(1f)
-                    .padding(vertical = 16.dp)
-            )
-
-            // ── BOTTOM: NAVIGATION CARDS + MAC ──
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                NavigationCardsRow(
-                    onNavigate = onNavigate
+                    .fillMaxSize()
+                    .padding(horizontal = 40.dp, vertical = 24.dp),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                HeaderBar(
+                    onSettingsClick = onSettingsClick,
+                    onRefresh = onRefresh,
+                    onAccountClick = { showAccountDialog = true }
                 )
 
-                Spacer(modifier = Modifier.height(12.dp))
+                HeroMovieInfo(
+                    movies = validMovies,
+                    pagerState = pagerState,
+                    modifier = Modifier
+                        .fillMaxWidth(0.55f)
+                        .weight(1f)
+                        .padding(vertical = 16.dp)
+                )
 
-                // MAC Address — bottom center
-                if (macAddress.isNotEmpty()) {
-                    Text(
-                        text = macAddress,
-                        color = CineX_TextMuted.copy(alpha = 0.6f),
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium,
-                        letterSpacing = 1.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier.fillMaxWidth()
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    NavigationCardsRow(
+                        onNavigate = onNavigate
                     )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    if (macAddress.isNotEmpty()) {
+                        Text(
+                            text = macAddress,
+                            color = CineX_TextMuted.copy(alpha = 0.6f),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            letterSpacing = 1.sp,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                 }
             }
         }
 
-        // Account Dialog
         if (showAccountDialog && accountInfo != null) {
             AccountInfoDialog(
                 accountInfo = accountInfo,
@@ -126,94 +151,74 @@ fun HomeScreen(
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-//  HERO BACKDROP — Full-Screen Auto-Rotating Backdrop
-// ══════════════════════════════════════════════════════════════
-
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HeroBackdrop(
     movies: List<Channel>,
+    pagerState: androidx.compose.foundation.pager.PagerState,
     modifier: Modifier = Modifier
 ) {
-    val validMovies = remember(movies) {
-        movies.take(8)
-    }
-
-    if (validMovies.isEmpty()) {
+    if (movies.isEmpty()) {
         Box(
             modifier = modifier.background(
-                Brush.radialGradient(
-                    colors = listOf(
-                        CineX_DeepRed.copy(alpha = 0.15f),
-                        CineX_BackgroundBlue
-                    )
+                Brush.verticalGradient(
+                    colors = listOf(CineX_BackgroundBlue, Color.Black.copy(alpha = 0.8f))
                 )
             )
-        )
-        return
-    }
-
-    val pagerState = rememberPagerState(pageCount = { validMovies.size })
-
-    // Auto-scroll every 7 seconds
-    LaunchedEffect(pagerState) {
-        while (true) {
-            delay(7000)
-            val next = (pagerState.currentPage + 1) % validMovies.size
-            pagerState.animateScrollToPage(
-                next,
-                animationSpec = tween(1000, easing = LinearEasing)
+        ) {
+            Image(
+                painter = painterResource(id = com.cinex.player.R.drawable.logo_cinex),
+                contentDescription = null,
+                modifier = Modifier.align(Alignment.Center).size(120.dp).alpha(0.1f),
+                contentScale = ContentScale.Fit
             )
         }
+        return
     }
 
     HorizontalPager(
         state = pagerState,
         modifier = modifier,
-        userScrollEnabled = false
+        userScrollEnabled = false,
+        key = { page -> if (page < movies.size) movies[page].id else page }
     ) { page ->
-        val movie = validMovies[page]
-        val imageUrl = movie.bannerUrl?.takeIf { it.isNotEmpty() }
-            ?: movie.logoUrl?.takeIf { it.isNotEmpty() }
-        Box(modifier = Modifier.fillMaxSize()) {
-            if (imageUrl != null) {
-                AsyncImage(
-                    model = imageUrl,
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-            } else {
-                Box(
-                    modifier = Modifier.fillMaxSize().background(
-                        Brush.radialGradient(
-                            colors = listOf(
-                                CineX_DeepRed.copy(alpha = 0.2f),
-                                CineX_BackgroundBlue
-                            )
-                        )
-                    )
-                )
-            }
+        val movie = movies[page]
+        val imageUrl = movie.bannerUrl
 
-            // Dark gradient overlays for readability
-            // Left gradient (for text)
-            Box(
+        val infiniteTransition = rememberInfiniteTransition(label = "ken_burns")
+        val scale by infiniteTransition.animateFloat(
+            initialValue = 1f,
+            targetValue = 1.08f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(12000, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "zoom"
+        )
+        val translationX by infiniteTransition.animateFloat(
+            initialValue = -20f,
+            targetValue = 20f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(15000, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "pan"
+        )
+
+        Box(modifier = Modifier.fillMaxSize()) {
+            AsyncImage(
+                model = imageUrl,
+                contentDescription = null,
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(
-                        Brush.horizontalGradient(
-                            colors = listOf(
-                                Color.Black.copy(alpha = 0.85f),
-                                Color.Black.copy(alpha = 0.4f),
-                                Color.Transparent
-                            ),
-                            endX = 1200f
-                        )
-                    )
+                    .graphicsLayer(
+                        scaleX = scale,
+                        scaleY = scale,
+                        translationX = translationX
+                    ),
+                contentScale = ContentScale.Crop
             )
-            // Bottom gradient (for cards)
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -221,24 +226,26 @@ private fun HeroBackdrop(
                         Brush.verticalGradient(
                             colors = listOf(
                                 Color.Transparent,
-                                Color.Black.copy(alpha = 0.3f),
-                                CineX_BackgroundBlue.copy(alpha = 0.9f)
+                                Color.Black.copy(alpha = 0.2f),
+                                CineX_BackgroundBlue.copy(alpha = 0.6f),
+                                CineX_BackgroundBlue
                             ),
-                            startY = 300f
+                            startY = 200f
                         )
                     )
             )
-            // Top gradient (for header)
+
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(
-                        Brush.verticalGradient(
+                        Brush.horizontalGradient(
                             colors = listOf(
-                                Color.Black.copy(alpha = 0.6f),
+                                Color.Black.copy(alpha = 0.7f),
+                                Color.Black.copy(alpha = 0.4f),
                                 Color.Transparent
                             ),
-                            endY = 200f
+                            endX = 1400f
                         )
                     )
             )
@@ -246,67 +253,40 @@ private fun HeroBackdrop(
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-//  HERO MOVIE INFO — Left-Aligned Title + Synopsis + Metadata
-// ══════════════════════════════════════════════════════════════
-
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun HeroMovieInfo(
     movies: List<Channel>,
+    pagerState: androidx.compose.foundation.pager.PagerState,
     modifier: Modifier = Modifier
 ) {
-    val validMovies = remember(movies) {
-        movies.take(8)
-    }
-
-    if (validMovies.isEmpty()) {
-        Box(modifier = modifier, contentAlignment = Alignment.CenterStart) {
-            Column {
-                Image(
-                    painter = painterResource(id = com.cinex.player.R.drawable.logo_cinex),
-                    contentDescription = "CineX",
-                    modifier = Modifier.height(80.dp),
-                    contentScale = ContentScale.Fit
-                )
-                Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = "Carregando biblioteca...",
-                    color = CineX_TextMuted.copy(alpha = 0.5f),
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Medium
-                )
-            }
-        }
+    if (movies.isEmpty()) {
+        Box(modifier = modifier)
         return
     }
 
-    val pagerState = rememberPagerState(pageCount = { validMovies.size })
-
-    // Sync with backdrop pager
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(7000)
-            val next = (pagerState.currentPage + 1) % validMovies.size
-            pagerState.animateScrollToPage(
-                next,
-                animationSpec = tween(1000, easing = LinearEasing)
-            )
-        }
+    val currentPage = pagerState.currentPage
+    val movie = remember(currentPage, movies) { 
+        if (currentPage < movies.size) movies[currentPage] else null 
     }
 
-    HorizontalPager(
-        state = pagerState,
+    AnimatedContent(
+        targetState = movie,
+        transitionSpec = {
+            fadeIn(animationSpec = tween(600)) + slideInHorizontally(
+                animationSpec = tween(600),
+                initialOffsetX = { 20 }
+            ) togetherWith fadeOut(animationSpec = tween(400))
+        },
         modifier = modifier,
-        userScrollEnabled = false
-    ) { page ->
-        val movie = validMovies[page]
+        label = "hero_info"
+    ) { currentMovie ->
+        if (currentMovie == null) return@AnimatedContent
 
         Column(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.Center
         ) {
-            // "ORIGINAL" pill + subtitle
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
@@ -323,7 +303,7 @@ private fun HeroMovieInfo(
                 }
                 Spacer(modifier = Modifier.width(12.dp))
                 Text(
-                    text = movie.groupTitle
+                    text = currentMovie.groupTitle
                         .replace("MOVIE |", "")
                         .replace("SERIES |", "")
                         .trim()
@@ -336,66 +316,68 @@ private fun HeroMovieInfo(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Movie Title (split into two colors for effect)
             Text(
-                text = movie.name.uppercase(),
+                text = currentMovie.name.uppercase(),
                 color = Color.White,
-                fontSize = 36.sp,
+                fontSize = 38.sp,
                 fontWeight = FontWeight.Black,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
-                lineHeight = 40.sp,
+                lineHeight = 42.sp,
                 letterSpacing = 1.sp
             )
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Synopsis
-            if (!movie.tmdbSynopsis.isNullOrEmpty()) {
-                Text(
-                    text = movie.tmdbSynopsis,
-                    color = CineX_TextSecondary,
-                    fontSize = 14.sp,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                    lineHeight = 20.sp
-                )
-                Spacer(modifier = Modifier.height(14.dp))
-            }
+            val synopsis = currentMovie.tmdbSynopsis?.trim()
+            Text(
+                text = if (synopsis.isNullOrEmpty()) "Explora este conteúdo incrível no CineX Player. Descubra mais detalhes assistindo agora." else synopsis,
+                color = CineX_TextSecondary,
+                fontSize = 14.sp,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+                lineHeight = 20.sp
+            )
+            
+            Spacer(modifier = Modifier.height(20.dp))
 
-            // Metadata Pills
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                if (!movie.tmdbYear.isNullOrEmpty()) {
-                    MetadataPill(text = movie.tmdbYear)
+                if (!currentMovie.tmdbYear.isNullOrEmpty()) {
+                    MetadataPill(text = currentMovie.tmdbYear)
                 }
-                val rating = movie.tmdbRating
+                val rating = currentMovie.tmdbRating
                 if (rating != null && rating > 0) {
                     MetadataPill(
-                        text = "⭐ ${String.format("%.1f", rating)}",
+                        text = "⭐ ${"%.1f".format(rating)}",
                         highlight = true
                     )
                 }
+                // Badge de Qualidade HD/4K sutil
+                MetadataPill(text = "4K ULTRA HD", highlight = false)
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
-            // Carousel Dots
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                validMovies.forEachIndexed { index, _ ->
+            // INDICADORES DE BARRA PREMIUM
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                movies.forEachIndexed { index, _ ->
                     val isSelected = pagerState.currentPage == index
+                    val width by animateDpAsState(
+                        targetValue = if (isSelected) 40.dp else 12.dp,
+                        animationSpec = tween(500),
+                        label = "indicator_width"
+                    )
+                    
                     Box(
                         modifier = Modifier
-                            .size(
-                                width = if (isSelected) 24.dp else 8.dp,
-                                height = 4.dp
-                            )
+                            .size(width = width, height = 4.dp)
                             .clip(RoundedCornerShape(2.dp))
                             .background(
-                                if (isSelected) CineX_DeepRed
-                                else Color.White.copy(alpha = 0.25f)
+                                if (isSelected) CineX_PremiumGold
+                                else Color.White.copy(alpha = 0.2f)
                             )
                     )
                 }
@@ -404,45 +386,31 @@ private fun HeroMovieInfo(
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-//  METADATA PILL
-// ══════════════════════════════════════════════════════════════
-
 @Composable
 private fun MetadataPill(text: String, highlight: Boolean = false) {
+    val backgroundColor = if (highlight) CineX_DeepRed.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.08f)
+    val borderColor = if (highlight) CineX_DeepRed.copy(alpha = 0.4f) else Color.White.copy(alpha = 0.12f)
+    val textColor = if (highlight) CineX_PremiumGold else Color.White.copy(alpha = 0.85f)
+
     Box(
         modifier = Modifier
-            .background(
-                if (highlight) CineX_PremiumGold.copy(alpha = 0.15f)
-                else Color.White.copy(alpha = 0.08f),
-                RoundedCornerShape(20.dp)
-            )
-            .border(
-                1.dp,
-                if (highlight) CineX_PremiumGold.copy(alpha = 0.3f)
-                else Color.White.copy(alpha = 0.1f),
-                RoundedCornerShape(20.dp)
-            )
+            .background(backgroundColor, RoundedCornerShape(20.dp))
+            .border(1.dp, borderColor, RoundedCornerShape(20.dp))
             .padding(horizontal = 14.dp, vertical = 5.dp)
     ) {
         Text(
             text = text,
-            color = if (highlight) CineX_LightGold else Color.White.copy(alpha = 0.85f),
+            color = textColor,
             fontSize = 12.sp,
             fontWeight = FontWeight.SemiBold
         )
     }
 }
 
-// ══════════════════════════════════════════════════════════════
-//  HEADER BAR — Logo + Action Icons
-// ══════════════════════════════════════════════════════════════
-
 @Composable
 private fun HeaderBar(
     onSettingsClick: () -> Unit,
     onRefresh: () -> Unit,
-    onServerSwap: () -> Unit,
     onAccountClick: () -> Unit
 ) {
     Row(
@@ -450,7 +418,6 @@ private fun HeaderBar(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
-        // Logo only — no text
         Row(verticalAlignment = Alignment.CenterVertically) {
             Image(
                 painter = painterResource(id = com.cinex.player.R.drawable.logo_cinex),
@@ -460,9 +427,7 @@ private fun HeaderBar(
             )
         }
 
-        // Action Icons
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            // REFRESH BUTTON (Red)
             Box(
                 modifier = Modifier
                     .size(38.dp)
@@ -474,7 +439,6 @@ private fun HeaderBar(
                 Icon(Icons.Default.Refresh, "Atualizar", tint = Color.White, modifier = Modifier.size(20.dp))
             }
 
-            // SETTINGS BUTTON (Dark Black)
             Box(
                 modifier = Modifier
                     .size(38.dp)
@@ -486,7 +450,6 @@ private fun HeaderBar(
                 Icon(Icons.Default.Settings, "Config", tint = Color.White, modifier = Modifier.size(20.dp))
             }
 
-            // PROFILE BUTTON (Premium Gold)
             Box(
                 modifier = Modifier
                     .size(38.dp)
@@ -500,10 +463,6 @@ private fun HeaderBar(
         }
     }
 }
-
-// ══════════════════════════════════════════════════════════════
-//  NAVIGATION CARDS — Compact Glass Row (3 Cards)
-// ══════════════════════════════════════════════════════════════
 
 @Composable
 private fun NavigationCardsRow(
@@ -568,7 +527,6 @@ private fun NavCard(
             verticalArrangement = Arrangement.Center,
             modifier = Modifier.padding(8.dp)
         ) {
-            // Icon inside glass square
             Box(
                 modifier = Modifier
                     .size(48.dp)
@@ -587,7 +545,6 @@ private fun NavCard(
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
-            // Label — centered, uppercase, bold
             Text(
                 text = label,
                 color = Color.White,
@@ -600,10 +557,6 @@ private fun NavCard(
         }
     }
 }
-
-// ══════════════════════════════════════════════════════════════
-//  ACCOUNT INFO DIALOG
-// ══════════════════════════════════════════════════════════════
 
 @Composable
 fun AccountInfoDialog(
@@ -621,19 +574,19 @@ fun AccountInfoDialog(
             modifier = Modifier
                 .width(420.dp)
                 .clip(RoundedCornerShape(12.dp))
-                .background(Color(0xFF1A1A2E)) // Tom azulado muito escuro/cinza prof.
+                .background(Color(0xFF1A1A2E))
                 .border(1.dp, Color(0xFF2D2D44), RoundedCornerShape(12.dp))
                 .clickable(enabled = false) {}
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF141426)) // Header um pouco mais escuro
+                    .background(Color(0xFF141426))
                     .padding(vertical = 12.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = "conta",
+                    text = "CONTA",
                     color = Color.White,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Normal,
@@ -674,7 +627,7 @@ fun AccountRow(label: String, value: String) {
     ) {
         Text(
             text = label, 
-            color = Color(0xFFAAAAAA), // Cinza suave para labels
+            color = Color(0xFFAAAAAA),
             fontSize = 15.sp,
             modifier = Modifier.weight(1.2f)
         )

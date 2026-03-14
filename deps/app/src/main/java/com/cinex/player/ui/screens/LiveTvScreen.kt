@@ -2,6 +2,7 @@ package com.cinex.player.ui.screens
 
 import android.view.ViewGroup
 import android.widget.FrameLayout
+import android.util.Base64
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -58,10 +59,15 @@ fun LiveTvScreen(
         }
     }
     
-    LaunchedEffect(selectedCategory) {
-        // Se mudou de categoria, seleciona o primeiro canal da nova lista para o preview
-        if (pagingItems.itemCount > 0) {
+    val currentProgram by viewModel.currentProgram.collectAsState()
+    val upcomingPrograms by viewModel.upcomingPrograms.collectAsState()
+    val epgListings by viewModel.epgListings.collectAsState() // Fallback Xtream
+
+    // Auto-play: seleciona o primeiro canal quando a lista carrega
+    LaunchedEffect(pagingItems.itemCount, selectedCategory) {
+        if (pagingItems.itemCount > 0 && selectedChannel == null) {
             selectedChannel = pagingItems[0]
+            viewModel.updateSelectedChannel(pagingItems[0])
         }
     }
 
@@ -79,12 +85,12 @@ fun LiveTvScreen(
     }
 
     Row(modifier = modifier.fillMaxSize()) {
-        // 1. Coluna de Categorias (Mais estreita)
+        // 1. Coluna de Categorias
         LazyColumn(
             modifier = Modifier
-                .weight(0.9f)
+                .width(200.dp)
                 .fillMaxHeight()
-                .background(Color(0xFF1A1A1A))
+                .background(Color(0xFF151515))
                 .padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -108,12 +114,12 @@ fun LiveTvScreen(
             }
         }
         
-        // 2. Coluna de Canais (Média)
+        // 2. Coluna de Canais
         LazyColumn(
             modifier = Modifier
-                .weight(1f)
+                .width(280.dp)
                 .fillMaxHeight()
-                .background(Color(0xFF222222))
+                .background(Color(0xFF1A1A1A))
         ) {
             items(
                 count = pagingItems.itemCount,
@@ -122,16 +128,24 @@ fun LiveTvScreen(
                 val channel = pagingItems[index]
                 if (channel != null) {
                     val isSelected = selectedChannel?.id == channel.id
-                    Text(
-                        text = "${index + 1}   ${channel.name}",
-                        color = if (isSelected) Color.Yellow else Color.White,
-                        fontSize = 14.sp,
+                    Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(if (isSelected) Color(0xFF444444) else Color.Transparent)
-                            .clickable { selectedChannel = channel } 
-                            .padding(16.dp)
-                    )
+                            .background(if (isSelected) Color(0xFFC62828).copy(alpha = 0.2f) else Color.Transparent)
+                            .clickable { 
+                                selectedChannel = channel
+                                viewModel.updateSelectedChannel(channel)
+                            } 
+                            .padding(horizontal = 16.dp, vertical = 12.dp)
+                    ) {
+                        Text(
+                            text = "${index + 1}   ${channel.name}",
+                            color = if (isSelected) Color(0xFFE50914) else Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                            maxLines = 1
+                        )
+                    }
                 }
             }
         }
@@ -139,15 +153,15 @@ fun LiveTvScreen(
         // 3. Coluna de Conteúdo (Maior - Player + EPG + Botões)
         Column(
             modifier = Modifier
-                .weight(2.3f)
+                .weight(1f)
                 .fillMaxHeight()
-                .background(Color(0xFF121212))
+                .background(Color(0xFF0D0D0D))
         ) {
-            // Player Area (16:9 ou similar)
+            // Player Area (Professional 16:9)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(320.dp) // Aumentamos para destacar o player
+                    .aspectRatio(16f / 9f)
                     .background(Color.Black)
                     .clickable { selectedChannel?.let { onChannelExpand(it) } },
                 contentAlignment = Alignment.Center
@@ -157,8 +171,8 @@ fun LiveTvScreen(
                         factory = { ctx ->
                             PlayerView(ctx).apply {
                                 player = previewPlayer
-                                useController = false // Sem controles no preview
-                                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_FILL
+                                useController = false
+                                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                                 layoutParams = FrameLayout.LayoutParams(
                                     ViewGroup.LayoutParams.MATCH_PARENT,
                                     ViewGroup.LayoutParams.MATCH_PARENT
@@ -176,41 +190,128 @@ fun LiveTvScreen(
                     .weight(1f)
                     .padding(24.dp)
             ) {
-                Text(
-                    text = (selectedChannel?.name ?: "NOME DO CANAL").uppercase(),
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = Color.White,
-                    modifier = Modifier.fillMaxWidth(),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = (selectedChannel?.name ?: "NOME DO CANAL").uppercase(),
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = Color.White
+                    )
+                }
                 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(16.dp))
                 
-                // Programação (EPG)
-                Text("05:00 AM ~ 06:50 AM  ${selectedChannel?.name ?: "Programação Atual"}", color = Color.Yellow, fontSize = 15.sp)
-                Spacer(modifier = Modifier.height(8.dp))
-                Text("06:50 AM ~ 08:40 AM  Próximo Programa", color = Color.LightGray, fontSize = 14.sp)
-                Text("08:40 AM ~ 10:45 AM  Filme da Manhã", color = Color.LightGray, fontSize = 14.sp)
-                Text("10:45 AM ~ 01:35 PM  Telejornal Local", color = Color.LightGray, fontSize = 14.sp)
+                // EPG Section
+                val hasEpg = currentProgram != null || epgListings.isNotEmpty()
+                
+                if (!hasEpg) {
+                    Text("Guia de programação não disponível para este canal.", color = Color.Gray.copy(alpha = 0.6f), fontSize = 14.sp)
+                } else {
+                    // Programa Atual
+                    if (currentProgram != null) {
+                        EpgItem(program = currentProgram!!, isCurrent = true)
+                        
+                        // Barra de Progresso
+                        val total = (currentProgram!!.endTime - currentProgram!!.startTime).coerceAtLeast(1)
+                        val passed = (System.currentTimeMillis() - currentProgram!!.startTime).coerceIn(0, total)
+                        val progress = passed.toFloat() / total.toFloat()
+                        
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Box(modifier = Modifier.fillMaxWidth().height(4.dp).background(Color.Gray.copy(alpha = 0.3f))) {
+                            Box(modifier = Modifier.fillMaxWidth(progress).fillMaxHeight().background(Color(0xFFE50914)))
+                        }
+                    } else if (epgListings.isNotEmpty()) {
+                        val first = epgListings[0]
+                        Text("AGORA: ${first.title.decodeBase64IfNeeded()}", color = Color.Yellow, fontWeight = FontWeight.Bold)
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("A SEGUIR", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    if (upcomingPrograms.isNotEmpty()) {
+                        upcomingPrograms.take(3).forEach { program ->
+                            EpgItem(program = program, isCurrent = false)
+                        }
+                    } else if (epgListings.size > 1) {
+                        epgListings.drop(1).take(3).forEach { epg ->
+                            val title = epg.title.decodeBase64IfNeeded()
+                            Text("${epg.start.takeLast(8).take(5)}  $title", color = Color.White.copy(alpha = 0.7f), fontSize = 14.sp)
+                        }
+                    }
+                }
             }
 
-            // Barra de Botões Inferior (Estilo IBO PRO)
+            // Barra de Botões Inferior
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
+                    .padding(24.dp),
                 horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalAlignment = Alignment.Bottom
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Spacer(modifier = Modifier.weight(1f))
+                val isFavorite = selectedChannel?.isFavorite == true
                 
-                ActionButton(text = "Guia de Jogos", color = Color(0xFF6200EE))
-                ActionButton(text = "Adicionar aos favoritos", color = Color(0xFF6200EE))
-                ActionButton(text = "procurar", color = Color(0xFF6200EE))
+                ActionButton(
+                    text = if (isFavorite) "Remover dos Favoritos" else "Adicionar aos Favoritos", 
+                    color = if (isFavorite) Color.DarkGray else Color(0xFFC62828),
+                    onClick = { selectedChannel?.let { viewModel.updateFavorite(it.id, !isFavorite) } }
+                )
+                
+                ActionButton(
+                    text = "Procurar", 
+                    color = Color(0xFF1A1A1A),
+                    onClick = { /* Navegar para busca ou abrir campo */ }
+                )
             }
         }
     }
+}
+
+@Composable
+fun EpgItem(program: com.cinex.player.data.model.EpgProgram, isCurrent: Boolean) {
+    val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+    val start = timeFormat.format(Date(program.startTime))
+    val end = timeFormat.format(Date(program.endTime))
+    
+    Row(
+        modifier = Modifier.padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            text = "$start - $end",
+            color = if (isCurrent) Color.Yellow else Color.Gray,
+            fontSize = 14.sp,
+            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+            modifier = Modifier.width(100.dp)
+        )
+        Text(
+            text = program.title,
+            color = if (isCurrent) Color.White else Color.White.copy(alpha = 0.7f),
+            fontSize = if (isCurrent) 16.sp else 14.sp,
+            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+            maxLines = 1
+        )
+    }
+}
+
+@Composable
+fun ActionButton(text: String, color: Color, onClick: () -> Unit = {}) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(8.dp))
+            .background(color)
+            .clickable { onClick() }
+            .padding(horizontal = 24.dp, vertical = 12.dp)
+    ) {
+        Text(
+            text = text.uppercase(), 
+            color = Color.White, 
+            fontSize = 12.sp, 
+            fontWeight = FontWeight.ExtraBold
+        )
+    }
+}
 }
 
 @Composable
@@ -228,5 +329,19 @@ fun ActionButton(text: String, color: Color) {
             fontSize = 11.sp, 
             fontWeight = FontWeight.ExtraBold
         )
+    }
+}
+
+fun String.decodeBase64IfNeeded(): String {
+    return try {
+        // Verifica se parece base64 (caracteres válidos e comprimento múltiplo de 4)
+        if (this.length > 4 && this.contains(Regex("[a-zA-Z0-9+/=]"))) {
+            val decodedBytes = Base64.decode(this, Base64.DEFAULT)
+            String(decodedBytes)
+        } else {
+            this
+        }
+    } catch (e: Exception) {
+        this
     }
 }

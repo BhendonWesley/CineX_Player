@@ -78,4 +78,10 @@ object AppModule {
     fun provideM3UParser(): M3UParser {
         return M3UParser()
     }
+
+    @Provides
+    @Singleton
+    fun provideEpgParser(): com.cinex.player.data.parser.EpgParser {
+        return com.cinex.player.data.parser.EpgParser()
+    }
 }

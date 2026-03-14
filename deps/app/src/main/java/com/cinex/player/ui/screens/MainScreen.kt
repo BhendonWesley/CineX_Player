@@ -62,7 +62,7 @@ fun MainScreen(
         }
     }
     if (isLoading) {
-        // SEMPRE mostramos a tela de carregamento se o ViewModel estiver ocupado
+        // RESTORED: Initial Sync Screen (TV, Movies, Series cards)
         CinematicLoadingScreen(
             statusMessage = syncStatus,
             tvProgress = liveProgress / 100f,
@@ -149,6 +149,7 @@ fun MainScreen(
             }
             
             val featuredMovies by viewModel.featuredMovies.collectAsState()
+            val isHomeReady by viewModel.homeReady.collectAsState()
 
             if (searchQuery.isNotEmpty()) {
                 // TELA DE BUSCA GLOBAL
@@ -164,9 +165,10 @@ fun MainScreen(
                 when (selectedTab) {
                     0 -> HomeScreen(
                         featuredMovies = featuredMovies,
+                        isHomeReady = isHomeReady,
+                        onHomeReady = { viewModel.setHomeReady(true) },
                         onNavigate = { selectedTab = it },
                         onSettingsClick = { isSettingsOpen = true },
-                        onServerSwap = { isServerSwapOpen = true },
                         onRefresh = { viewModel.refreshPlaylist() },
                         accountInfo = accountInfo,
                         macAddress = accountInfo?.macAddress ?: ""

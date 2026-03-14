@@ -41,15 +41,17 @@ fun VodPosterItem(
             .background(com.cinex.player.ui.theme.CineX_SecondaryBackground)
             .clickable { onClick() }
     ) {
-        val imageUrl = channel.posterUrl?.takeIf { it.isNotEmpty() } ?: channel.logoUrl
+        // Prioritizing List Cover (logoUrl) over TMDB (posterUrl) as requested by the user
+        val imageUrl = channel.logoUrl?.takeIf { it.isNotEmpty() } ?: channel.posterUrl
         
         if (imageUrl != null) {
             AsyncImage(
                 model = imageUrl,
                 contentDescription = channel.name,
-                contentScale = ContentScale.Crop,
+                contentScale = if (channel.posterUrl.isNullOrEmpty()) ContentScale.Fit else ContentScale.Crop,
+                alignment = Alignment.TopCenter,
                 modifier = Modifier.fillMaxSize(),
-                error = painterResource(id = com.cinex.player.R.drawable.logo_cinex) // Fallback visual
+                error = painterResource(id = com.cinex.player.R.drawable.logo_cinex)
             )
         } else {
             // Fallback se não tiver nenhuma imagem no banco

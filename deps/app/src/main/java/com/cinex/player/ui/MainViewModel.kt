@@ -43,6 +43,10 @@ class MainViewModel @Inject constructor(
     private val okHttpClient: OkHttpClient, // Alterado
     val liveTvPlayer: ExoPlayer
 ) : ViewModel() {
+
+    private val _currentPlaylist = MutableStateFlow<com.cinex.player.data.model.Playlist?>(null)
+    val currentPlaylist = _currentPlaylist.asStateFlow()
+
     init {
         generateAccountInfo()
         // Carrega automaticamente a última playlist usada, ou tenta sincronizar do painel se for a primeira vez
@@ -55,7 +59,6 @@ class MainViewModel @Inject constructor(
                     _currentPlaylist.value = lastUsed
                     repository.selectPlaylist(lastUsed) { _, _, _, _ -> }
                     fetchRealAccountInfo(lastUsed.url)
-                    loadFeaturedMovies()
                 }
             } else {
                 // Tenta sincronização automática (Auto-Login MAC)
@@ -72,6 +75,13 @@ class MainViewModel @Inject constructor(
 
     private val _syncStatus = MutableStateFlow("Iniciando...")
     val syncStatus = _syncStatus.asStateFlow()
+
+    private val _homeReady = MutableStateFlow(false)
+    val homeReady = _homeReady.asStateFlow()
+
+    fun setHomeReady(ready: Boolean) {
+        _homeReady.value = ready
+    }
 
     private val _liveProgress = MutableStateFlow(0)
     val liveProgress = _liveProgress.asStateFlow()
@@ -96,15 +106,16 @@ class MainViewModel @Inject constructor(
     val movies: Flow<PagingData<Channel>> = repository.movieChannels
     val series: Flow<PagingData<Channel>> = repository.seriesChannels
 
-    private val _featuredMovies = MutableStateFlow<List<Channel>>(emptyList())
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    val featuredMovies: StateFlow<List<Channel>> = _featuredMovies.asStateFlow()
-
-    private fun loadFeaturedMovies() {
-        viewModelScope.launch {
-            _featuredMovies.value = repository.getFeaturedContent()
-        }
-    }
+    val featuredMovies: StateFlow<List<Channel>> = _currentPlaylist.flatMapLatest { playlist ->
+        _homeReady.value = false // Reseta quando troca de playlist
+        if (playlist == null) flowOf(emptyList())
+        else repository.getFeaturedContent()
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
 
     val misc: Flow<PagingData<Channel>> = repository.miscChannels
 
@@ -179,9 +190,6 @@ class MainViewModel @Inject constructor(
         initialValue = emptyList()
     )
 
-    private val _currentPlaylist = MutableStateFlow<com.cinex.player.data.model.Playlist?>(null)
-    val currentPlaylist = _currentPlaylist.asStateFlow()
-
     val categoryCounts: StateFlow<Map<String, Int>> = repository.categoryCounts.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -200,8 +208,62 @@ class MainViewModel @Inject constructor(
         initialValue = emptyMap()
     )
 
-    private val _selectedChannelForDetails = MutableStateFlow<Channel?>(null)
-    val selectedChannelForDetails = _selectedChannelForDetails.asStateFlow()
+    private val _selectedChannelTvgId = MutableStateFlow<String?>(null)
+    
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val currentProgram: StateFlow<com.cinex.player.data.model.EpgProgram?> = _selectedChannelTvgId.flatMapLatest { tvgId ->
+        if (tvgId == null) flowOf(null)
+        else repository.getCurrentProgram(tvgId)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val upcomingPrograms: StateFlow<List<com.cinex.player.data.model.EpgProgram>> = _selectedChannelTvgId.flatMapLatest { tvgId ->
+        if (tvgId == null) flowOf(emptyList())
+        else repository.getUpcomingPrograms(tvgId)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    private val _epgListings = MutableStateFlow<List<com.cinex.player.data.network.EpgListing>>(emptyList())
+    val epgListings = _epgListings.asStateFlow()
+
+    fun updateSelectedChannel(channel: Channel?) {
+        _selectedChannelTvgId.value = channel?.tvgId
+        // Fallback para Xtream EPG se tvg-id não estiver presente ou falhar
+        if (channel != null && channel.tvgId == null) {
+            val streamId = try { channel.remoteId.replace("live_", "").toInt() } catch (e: Exception) { -1 }
+            if (streamId != -1) fetchEpg(streamId)
+        } else {
+            _epgListings.value = emptyList()
+        }
+    }
+
+    fun fetchEpg(streamId: Int) {
+        viewModelScope.launch {
+            repository.getShortEpg(streamId).onSuccess { response ->
+                _epgListings.value = response.epg_listings ?: emptyList()
+            }.onFailure {
+                _epgListings.value = emptyList()
+            }
+        }
+    }
+
+    private fun scheduleEpgSync(epgUrl: String) {
+        val data = androidx.work.Data.Builder()
+            .putString("epg_url", epgUrl)
+            .build()
+        
+        val request = androidx.work.PeriodicWorkRequestBuilder<com.cinex.player.data.worker.EpgSyncWorker>(
+            12, java.util.concurrent.TimeUnit.HOURS
+        ).setInputData(data).build()
+
+        androidx.work.WorkManager.getInstance(app).enqueueUniquePeriodicWork(
+            "epg_sync",
+            androidx.work.ExistingPeriodicWorkPolicy.REPLACE,
+            request
+        )
+        
+        // Dispara um sync imediato também
+        viewModelScope.launch { repository.syncEpg(epgUrl) }
+    }
 
     private val _accountInfo = MutableStateFlow<AccountInfo?>(null)
     val accountInfo = _accountInfo.asStateFlow()
@@ -349,10 +411,11 @@ class MainViewModel @Inject constructor(
                         }
                         result.onSuccess {
                             _syncStatus.value = "Lista carregada com sucesso!"
-                            _currentPlaylist.value = com.cinex.player.data.model.Playlist(
+                            val savedPlaylist = repository.allPlaylists.first().find { it.url == url }
+                            savedPlaylist?.epgUrl?.let { scheduleEpgSync(it) }
+                            _currentPlaylist.value = savedPlaylist ?: com.cinex.player.data.model.Playlist(
                                 name = "CineX Panel", url = url, lastUsed = System.currentTimeMillis()
                             )
-                            loadFeaturedMovies()
                         }.onFailure {
                             _errorMessage.value = it.message ?: "Erro ao carregar lista M3U"
                         }
@@ -379,7 +442,6 @@ class MainViewModel @Inject constructor(
                             _currentPlaylist.value = com.cinex.player.data.model.Playlist(
                                 name = "CineX Panel (Xtream)", url = xtreamUrl, lastUsed = System.currentTimeMillis()
                             )
-                            loadFeaturedMovies()
                         }.onFailure {
                             _errorMessage.value = it.message ?: "Erro ao carregar lista Xtream"
                         }
@@ -479,7 +541,7 @@ class MainViewModel @Inject constructor(
             
             result.onSuccess {
                 _syncStatus.value = "Lista carregada com sucesso!"
-                loadFeaturedMovies() // Atualiza destaques
+                playlist.epgUrl?.let { scheduleEpgSync(it) }
             }.onFailure {
                 _errorMessage.value = it.message ?: "Erro ao conectar ao servidor"
             }
@@ -523,7 +585,6 @@ class MainViewModel @Inject constructor(
             result.onSuccess {
                 _syncStatus.value = "Finalizado!"
                 fetchRealAccountInfo(url)
-                loadFeaturedMovies() // Atualiza destaques
             }.onFailure {
                 _errorMessage.value = it.message ?: "Erro desconhecido ao carregar lista"
             }

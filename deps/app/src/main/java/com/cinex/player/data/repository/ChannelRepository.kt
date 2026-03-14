@@ -32,6 +32,8 @@ class ChannelRepository @Inject constructor(
     private val playlistDao: com.cinex.player.data.local.PlaylistDao,
     private val categoryDao: com.cinex.player.data.local.CategoryDao, // Novo
     private val parser: M3UParser,
+    private val epgDao: com.cinex.player.data.local.EpgDao,
+    private val epgParser: com.cinex.player.data.parser.EpgParser,
     private val okHttpClient: OkHttpClient, // Injetado
     private val tmdbApi: TmdbApi
 ) {
@@ -176,8 +178,8 @@ class ChannelRepository @Inject constructor(
         }.cachedIn(repositoryScope)
     }
 
-    suspend fun getFeaturedContent(): List<Channel> {
-        val url = _activePlaylistUrl.value ?: return emptyList()
+    fun getFeaturedContent(): Flow<List<Channel>> {
+        val url = _activePlaylistUrl.value ?: return flowOf(emptyList())
         return channelDao.getFeaturedContent(url)
     }
 
@@ -218,12 +220,20 @@ class ChannelRepository @Inject constructor(
             if (!response.isSuccessful) return@withContext Result.failure(Exception("HTTP Error: ${response.code}"))
             val body = response.body ?: return@withContext Result.failure(Exception("Empty Body"))
             
-            val parsedChannels = body.charStream().buffered().use { reader -> parser.parse(reader, url) }
+            val (parsedChannels, epgUrl) = body.charStream().buffered().use { reader -> parser.parse(reader, url) }
             
             if (parsedChannels.isNotEmpty()) {
                 onProgress(50, 50, 50, "Limpando dados antigos...")
                 channelDao.clearByPlaylist(url)
                 categoryDao.clearByPlaylist(url) 
+                
+                // Salva a URL do EPG na Playlist se encontrada
+                if (epgUrl != null) {
+                    val currentPlaylist = playlistDao.getPlaylistByUrl(url)
+                    if (currentPlaylist != null) {
+                        playlistDao.insertPlaylist(currentPlaylist.copy(epgUrl = epgUrl))
+                    }
+                }
 
                 // Extrai categorias do M3U — detecta tipo baseado no conteúdo
                 val channelsByGroup = parsedChannels.groupBy { it.groupTitle }
@@ -247,7 +257,12 @@ class ChannelRepository @Inject constructor(
                         categoryId = channel.groupTitle // No M3U, ID = Nome
                     )
                 }
-                channelsWithOrder.chunked(1000).forEach { chunk -> channelDao.insertAll(chunk) }
+                channelsWithOrder.chunked(1000).forEach { channelDao.insertAll(it) }
+
+                // Dispara o sync do EPG imediatamente se encontrado
+                epgUrl?.let { url ->
+                    scope.launch(Dispatchers.IO) { syncEpg(url) }
+                }
 
                 _activePlaylistUrl.value = url
                 onProgress(100, 100, 100, "Iniciando em segundo plano...")
@@ -255,10 +270,16 @@ class ChannelRepository @Inject constructor(
                 return@withContext Result.failure(Exception("Nenhum conteúdo encontrado na lista. Verifique a URL."))
             }
 
-                // PHASE 2: Background Enrichment (Does NOT block the user)
+                // PHASE 2: Priority Enrichment for Home Banners
                 repositoryScope.launch {
-                    val moviesToEnrich = channelDao.getChannelsByCategoryList("MOVIE", url)
-                    val seriesToEnrich = channelDao.getUniqueSeriesList(url)
+                    val initialFeatured = channelDao.getFeaturedContent(url).first().take(5)
+                    initialFeatured.forEach { channel ->
+                        enrichChannelWithTmdb(channel)
+                    }
+                    
+                    // PHASE 3: Full Background Enrichment
+                    val moviesToEnrich = channelDao.getMoviesToEnrich(url)
+                    val seriesToEnrich = channelDao.getSeriesToEnrich(url)
                     
                     val semaphore = Semaphore(10)
                     
@@ -438,8 +459,8 @@ class ChannelRepository @Inject constructor(
                     tmdbApi.getTvDetails(tmdbResult.id, tmdbApiKey)
                 }
 
-                val posterUrl = "https://image.tmdb.org/t/p/w500${details.poster_path}"
-                val backdropUrl = "https://image.tmdb.org/t/p/original${details.backdrop_path}"
+                val posterUrl = details.poster_path?.let { "https://image.tmdb.org/t/p/w500$it" }
+                val backdropUrl = details.backdrop_path?.let { "https://image.tmdb.org/t/p/original$it" }
                 val cast = details.credits?.cast?.take(10)?.joinToString(", ") { it.name }
                 val year = tmdbResult.release_date?.take(4) ?: tmdbResult.first_air_date?.take(4)
                 
@@ -479,6 +500,67 @@ class ChannelRepository @Inject constructor(
             }
         } catch (ignored: Exception) {
             // Ignorado propositalmente para não travar o sync
+        }
+    }
+
+    suspend fun syncEpg(url: String) = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder().url(url).build()
+            val response = okHttpClient.newCall(request).execute()
+            if (!response.isSuccessful) return@withContext
+            
+            val body = response.body ?: return@withContext
+            val (epgChannels, epgPrograms) = body.byteStream().use { epgParser.parse(it, url) }
+            
+            if (epgChannels.isNotEmpty()) {
+                epgDao.clearChannelsByPlaylist(url)
+                epgDao.insertChannels(epgChannels)
+            }
+            
+            if (epgPrograms.isNotEmpty()) {
+                epgDao.clearProgramsByPlaylist(url)
+                epgDao.insertPrograms(epgPrograms)
+                // Limpa programas antigos de todas as playlists para economizar espaço
+                epgDao.clearOldPrograms(System.currentTimeMillis() - 86400000) // 1 dia atrás
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun getCurrentProgram(tvgId: String): Flow<com.cinex.player.data.model.EpgProgram?> {
+        return epgDao.getCurrentProgram(tvgId, System.currentTimeMillis())
+    }
+
+    fun getUpcomingPrograms(tvgId: String): Flow<List<com.cinex.player.data.model.EpgProgram>> {
+        return epgDao.getUpcomingPrograms(tvgId, System.currentTimeMillis())
+    }
+
+    suspend fun getShortEpg(streamId: Int): Result<com.cinex.player.data.network.XtreamEpgResponse> = withContext(Dispatchers.IO) {
+        val url = _activePlaylistUrl.value ?: return@withContext Result.failure(Exception("No active playlist"))
+        try {
+            val uri = android.net.Uri.parse(url)
+            val username = uri.getQueryParameter("username")
+            val password = uri.getQueryParameter("password")
+            val host = uri.host
+            val scheme = uri.scheme
+            val port = uri.port
+            
+            if (username != null && password != null && host != null) {
+                val baseUrl = "$scheme://$host${if (port != -1) ":$port" else ""}/"
+                val api = Retrofit.Builder()
+                    .baseUrl(baseUrl)
+                    .client(okHttpClient)
+                    .addConverterFactory(GsonConverterFactory.create())
+                    .build()
+                    .create(XtreamCodesApi::class.java)
+                
+                Result.success(api.getShortEpg(username, password, streamId))
+            } else {
+                Result.failure(Exception("Not an Xtream playlist"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
         }
     }
 
@@ -674,7 +756,7 @@ class ChannelRepository @Inject constructor(
         if (!response.isSuccessful) return null
         val body = response.body ?: return null
         
-        val parsedChannels = body.charStream().buffered().use { reader -> parser.parse(reader, url) }
+        val (parsedChannels, epgUrl) = body.charStream().buffered().use { reader -> parser.parse(reader, url) }
         
         if (parsedChannels.isEmpty()) {
             return null // Treat empty list of channels as a failure

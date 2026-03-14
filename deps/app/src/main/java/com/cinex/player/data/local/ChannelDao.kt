@@ -19,6 +19,9 @@ interface ChannelDao {
     @Query("SELECT * FROM channels WHERE category = :category AND playlistUrl = :url")
     suspend fun getChannelsByCategoryList(category: String, url: String): List<Channel>
 
+    @Query("SELECT * FROM channels WHERE category = 'MOVIE' AND playlistUrl = :url AND (tmdbSynopsis IS NULL OR tmdbSynopsis = '')")
+    suspend fun getMoviesToEnrich(url: String): List<Channel>
+
     @Query("SELECT * FROM channels WHERE groupTitle = :groupTitle AND playlistUrl = :url ORDER BY orderIndex ASC")
     fun getChannelsByGroupPaged(groupTitle: String, url: String): PagingSource<Int, Channel>
 
@@ -32,11 +35,14 @@ interface ChannelDao {
     @Query("SELECT * FROM channels WHERE category = 'SERIES' AND playlistUrl = :url GROUP BY seriesName")
     suspend fun getUniqueSeriesList(url: String): List<Channel>
 
+    @Query("SELECT * FROM channels WHERE category = 'SERIES' AND playlistUrl = :url AND (tmdbSynopsis IS NULL OR tmdbSynopsis = '') GROUP BY seriesName")
+    suspend fun getSeriesToEnrich(url: String): List<Channel>
+
     @Query("SELECT * FROM channels WHERE categoryId = :categoryId AND category = 'SERIES' AND playlistUrl = :url GROUP BY seriesName ORDER BY orderIndex ASC")
     fun getUniqueSeriesByCategoryId(categoryId: String, url: String): PagingSource<Int, Channel>
 
-    @Query("SELECT * FROM channels WHERE category IN ('MOVIE', 'SERIES') AND playlistUrl = :url ORDER BY CASE WHEN bannerUrl IS NOT NULL AND bannerUrl != '' THEN 0 WHEN logoUrl IS NOT NULL AND logoUrl != '' THEN 1 ELSE 2 END, id DESC LIMIT 20")
-    suspend fun getFeaturedContent(url: String): List<Channel>
+    @Query("SELECT * FROM channels WHERE category IN ('MOVIE', 'SERIES') AND playlistUrl = :url AND bannerUrl IS NOT NULL AND bannerUrl != '' AND bannerUrl NOT LIKE '%null' ORDER BY id DESC LIMIT 20")
+    fun getFeaturedContent(url: String): Flow<List<Channel>>
 
     // Retorna todos os episódios de uma série específica, ordenados
     @Query("SELECT * FROM channels WHERE category = 'SERIES' AND seriesName = :seriesName AND playlistUrl = :url ORDER BY seasonNumber ASC, episodeNumber ASC")

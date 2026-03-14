@@ -3,8 +3,9 @@ package com.cinex.player.data.parser
 import com.cinex.player.data.model.Channel
 
 class M3UParser {
-    fun parse(reader: java.io.BufferedReader, playlistUrl: String = ""): List<Channel> {
+    fun parse(reader: java.io.BufferedReader, playlistUrl: String = ""): Pair<List<Channel>, String?> {
         val channels = mutableListOf<Channel>()
+        var epgUrl: String? = null
         val seriesRegex = Regex("(?i)[Ss](\\d{2})\\s?[Ee](\\d{2})")
 
         var currentExtInf: String? = null
@@ -17,7 +18,18 @@ class M3UParser {
                 continue
             }
 
-            if (trimmedLine.startsWith("#EXTINF:")) {
+            if (trimmedLine.startsWith("#EXTM3U")) {
+                // Procura por url-tvg ou x-tvg-url no cabeçalho
+                if (trimmedLine.contains("url-tvg=\"")) {
+                    val start = trimmedLine.indexOf("url-tvg=\"") + 9
+                    val end = trimmedLine.indexOf("\"", start)
+                    if (end != -1) epgUrl = trimmedLine.substring(start, end)
+                } else if (trimmedLine.contains("x-tvg-url=\"")) {
+                    val start = trimmedLine.indexOf("x-tvg-url=\"") + 11
+                    val end = trimmedLine.indexOf("\"", start)
+                    if (end != -1) epgUrl = trimmedLine.substring(start, end)
+                }
+            } else if (trimmedLine.startsWith("#EXTINF:")) {
                 currentExtInf = trimmedLine
             } else if (!trimmedLine.startsWith("#") && currentExtInf != null) {
                 val extInf = currentExtInf
@@ -41,6 +53,13 @@ class M3UParser {
                     val start = extInf.indexOf("group-title=\"") + 13
                     val end = extInf.indexOf("\"", start)
                     if (end != -1) groupTitle = extInf.substring(start, end)
+                }
+
+                var tvgId: String? = null
+                if (extInf.contains("tvg-id=\"")) {
+                    val start = extInf.indexOf("tvg-id=\"") + 8
+                    val end = extInf.indexOf("\"", start)
+                    if (end != -1) tvgId = extInf.substring(start, end)
                 }
 
                 val lowerName = finalDisplayName.lowercase()
@@ -80,13 +99,14 @@ class M3UParser {
                         seasonNumber = season,
                         episodeNumber = ep,
                         playlistUrl = playlistUrl,
-                        remoteId = remoteId
+                        remoteId = remoteId,
+                        tvgId = tvgId
                     )
                 )
                 currentExtInf = null 
             }
             line = reader.readLine()
         }
-        return channels
+        return channels to epgUrl
     }
 }

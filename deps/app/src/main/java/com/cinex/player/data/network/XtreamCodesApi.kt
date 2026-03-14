@@ -48,7 +48,31 @@ interface XtreamCodesApi {
         @Query("password") password: String,
         @Query("category_id") categoryId: String? = null
     ): List<SeriesItem>
+
+    @GET("player_api.php?action=get_short_epg")
+    suspend fun getShortEpg(
+        @Query("username") username: String,
+        @Query("password") password: String,
+        @Query("stream_id") streamId: Int
+    ): XtreamEpgResponse
 }
+
+data class XtreamEpgResponse(
+    val epg_listings: List<EpgListing>? = null
+)
+
+data class EpgListing(
+    val id: String? = null,
+    val epg_id: String? = null,
+    val title: String,
+    val lang: String? = null,
+    val start: String, // Formato "yyyy-MM-dd HH:mm:ss"
+    val end: String,   // Formato "yyyy-MM-dd HH:mm:ss"
+    val description: String? = null,
+    val channel_id: String? = null,
+    val start_timestamp: String? = null,
+    val stop_timestamp: String? = null
+)
 
 data class XtreamAccountResponse(
     val user_info: UserInfo? = null
