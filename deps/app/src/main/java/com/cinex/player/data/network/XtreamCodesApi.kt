@@ -55,7 +55,55 @@ interface XtreamCodesApi {
         @Query("password") password: String,
         @Query("stream_id") streamId: Int
     ): XtreamEpgResponse
+
+    @GET("player_api.php?action=get_series_info")
+    suspend fun getSeriesInfo(
+        @Query("username") username: String,
+        @Query("password") password: String,
+        @Query("series_id") seriesId: Int
+    ): SeriesInfoResponse
 }
+
+data class SeriesInfoResponse(
+    val seasons: List<SeasonInfo>? = null,
+    val episodes: Map<String, List<EpisodeItem>>? = null,
+    val info: SeriesExtraInfo? = null
+)
+
+data class SeasonInfo(
+    val season_number: Int,
+    val name: String? = null,
+    val episode_count: Int = 0
+)
+
+data class EpisodeItem(
+    val id: String,
+    val episode_num: Int,
+    val title: String,
+    val container_extension: String? = "mp4",
+    val info: EpisodeExtraInfo? = null
+)
+
+data class EpisodeExtraInfo(
+    val movie_image: String? = null,
+    val plot: String? = null,
+    val duration: String? = null,
+    val release_date: String? = null,
+    val rating: String? = null
+)
+
+data class SeriesExtraInfo(
+    val name: String? = null,
+    val cover: String? = null,
+    val plot: String? = null,
+    val cast: String? = null,
+    val director: String? = null,
+    val genre: String? = null,
+    val releaseDate: String? = null,
+    val rating: String? = null,
+    val youtube_trailer: String? = null,
+    val backdrop_path: List<String>? = null
+)
 
 data class XtreamEpgResponse(
     val epg_listings: List<EpgListing>? = null
@@ -75,15 +123,23 @@ data class EpgListing(
 )
 
 data class XtreamAccountResponse(
-    val user_info: UserInfo? = null
+    val user_info: UserInfo? = null,
+    val server_info: ServerInfo? = null
 )
 
 data class UserInfo(
     val username: String? = null,
     val status: String? = null,
     val exp_date: String? = null,
+    val created_at: String? = null,
     val active_cons: String? = null,
     val max_connections: String? = null
+)
+
+data class ServerInfo(
+    val timezone: String? = null,
+    val timestamp_now: Long? = null,
+    val time_now: String? = null
 )
 
 data class XtreamCategory(

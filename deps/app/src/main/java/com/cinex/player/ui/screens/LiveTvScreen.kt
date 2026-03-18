@@ -9,6 +9,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -21,18 +23,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.cinex.player.data.model.Channel
-import com.cinex.player.ui.theme.CineX_SecondaryBackground
 import com.cinex.player.ui.components.CategoryItem
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
-import androidx.paging.PagingData
-import kotlinx.coroutines.flow.Flow
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -45,26 +42,28 @@ fun LiveTvScreen(
     modifier: Modifier = Modifier
 ) {
     val categories by viewModel.liveCategories.collectAsState(initial = emptyList())
-    var selectedCategory by remember { mutableStateOf("Tudo") }
+    val selectedCategory by viewModel.liveCategoryId.collectAsState()
     
-    val pagingItems = remember(selectedCategory) {
-        viewModel.getPagedChannelsByCategory(selectedCategory)
-    }.collectAsLazyPagingItems()
+    val pagingItems = viewModel.liveTvPagingData.collectAsLazyPagingItems()
 
     var selectedChannel by remember { mutableStateOf<Channel?>(null) }
     val context = LocalContext.current
-    val previewPlayer = remember { ExoPlayer.Builder(context).build() }
-
-    // Libera o player ao sair da tela
-    DisposableEffect(Unit) {
-        onDispose {
-            previewPlayer.release()
-        }
-    }
     
     val currentProgram by viewModel.currentProgram.collectAsState()
     val upcomingPrograms by viewModel.upcomingPrograms.collectAsState()
     val epgListings by viewModel.epgListings.collectAsState() // Fallback Xtream
+    val is24Hour by viewModel.is24HourFormat.collectAsState()
+
+    val categoryCounts by viewModel.categoryCounts.collectAsState()
+    val typeCounts by viewModel.typeCounts.collectAsState()
+    val favoriteCounts by viewModel.favoriteCounts.collectAsState()
+
+    // Para o player quando a tela sair da composição (troca de aba, etc.)
+    DisposableEffect(Unit) {
+        onDispose {
+            viewModel.stopLiveTv()
+        }
+    }
 
     // Auto-play: seleciona o primeiro canal quando a lista carrega
     LaunchedEffect(pagingItems.itemCount, selectedCategory) {
@@ -77,14 +76,9 @@ fun LiveTvScreen(
     LaunchedEffect(selectedChannel) {
         selectedChannel?.let { channel ->
             if (channel.streamUrl.isNotEmpty()) {
-                val mediaItem = MediaItem.fromUri(channel.streamUrl)
-                previewPlayer.setMediaItem(mediaItem)
-                previewPlayer.prepare()
-                previewPlayer.play()
+                viewModel.playLiveChannel(channel)
             }
-        } ?: run {
-            previewPlayer.stop()
-        }
+        } ?: viewModel.stopLiveTv()
     }
 
     Row(modifier = modifier.fillMaxSize()) {
@@ -98,73 +92,85 @@ fun LiveTvScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(categories) { category ->
-                val counts by viewModel.categoryCounts.collectAsState()
-                val typeCounts by viewModel.typeCounts.collectAsState()
-                val favoriteCounts by viewModel.favoriteCounts.collectAsState()
-                
                 val countByCat = when (category.id) {
                     "Tudo" -> typeCounts["LIVE_TV"] ?: 0
                     "Favorito" -> favoriteCounts["LIVE_TV"] ?: 0
-                    else -> counts[category.id] ?: 0
+                    else -> categoryCounts[category.id] ?: 0
                 }
 
                 CategoryItem(
                     name = category.name,
                     count = countByCat,
                     isSelected = selectedCategory == category.id,
-                    onClick = { selectedCategory = category.id }
+                    onClick = {
+                        selectedChannel = null
+                        viewModel.setLiveCategory(category.id)
+                    }
                 )
             }
         }
         
+        
         // 2. Coluna de Canais
-        LazyColumn(
+        Box(
             modifier = Modifier
                 .width(280.dp)
                 .fillMaxHeight()
                 .background(Color(0xFF1A1A1A))
         ) {
-            items(
-                count = pagingItems.itemCount,
-                key = pagingItems.itemKey { it.id }
-            ) { index ->
-                val channel = pagingItems[index]
-                if (channel != null) {
-                    val isSelected = selectedChannel?.id == channel.id
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(if (isSelected) Color(0xFFC62828).copy(alpha = 0.2f) else Color.Transparent)
-                            .clickable { 
-                                selectedChannel = channel
-                                viewModel.updateSelectedChannel(channel)
-                            } 
-                            .padding(horizontal = 16.dp, vertical = 12.dp)
-                    ) {
-                        Text(
-                            text = "${index + 1}   ${channel.name}",
-                            color = if (isSelected) Color(0xFFE50914) else Color.White,
-                            fontSize = 14.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                            maxLines = 1
-                        )
+            if (pagingItems.itemCount == 0) {
+                // Loading indicator
+                androidx.compose.material3.CircularProgressIndicator(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .align(Alignment.Center),
+                    color = Color(0xFFC62828),
+                    strokeWidth = 3.dp
+                )
+            }
+            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                items(
+                    count = pagingItems.itemCount,
+                    key = pagingItems.itemKey { it.id }
+                ) { index ->
+                    val channel = pagingItems[index]
+                    if (channel != null) {
+                        val isSelected = selectedChannel?.id == channel.id
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(if (isSelected) Color(0xFFC62828).copy(alpha = 0.2f) else Color.Transparent)
+                                .clickable { 
+                                    selectedChannel = channel
+                                    viewModel.updateSelectedChannel(channel)
+                                } 
+                                .padding(horizontal = 16.dp, vertical = 12.dp)
+                        ) {
+                            Text(
+                                text = "${index + 1}   ${channel.name}",
+                                color = if (isSelected) Color(0xFFE50914) else Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                maxLines = 1
+                            )
+                        }
                     }
                 }
             }
         }
 
-        // 3. Coluna de Conteúdo (Maior - Player + EPG + Botões)
+        // 3. Coluna de Conteúdo (Player + EPG + Botões)
         Column(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
                 .background(Color(0xFF0D0D0D))
         ) {
-            // Player Area (Professional 16:9)
+            // Player (proporção fixa, sem consumir toda a altura)
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(16f / 9f)
+                    .weight(0.45f)
                     .background(Color.Black)
                     .clickable { selectedChannel?.let { onChannelExpand(it) } },
                 contentAlignment = Alignment.Center
@@ -173,7 +179,7 @@ fun LiveTvScreen(
                     AndroidView(
                         factory = { ctx ->
                             PlayerView(ctx).apply {
-                                player = previewPlayer
+                                player = viewModel.liveTvPlayer
                                 useController = false
                                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
                                 layoutParams = FrameLayout.LayoutParams(
@@ -186,107 +192,163 @@ fun LiveTvScreen(
                     )
                 }
             }
-            
-            // 1. Título do Canal (Sutil)
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 24.dp, vertical = 12.dp)
-            ) {
-                Text(
-                    text = (selectedChannel?.name ?: "NOME DO CANAL").uppercase(),
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color.White
-                )
-            }
 
-            // 2. EPG Section (Prioritária)
-            Box(
+            // EPG + Título + Favorito (ocupa o espaço restante)
+            Column(
                 modifier = Modifier
-                    .weight(1f)
+                    .weight(0.55f)
+                    .fillMaxWidth()
                     .padding(horizontal = 24.dp)
             ) {
-                val hasEpg = currentProgram != null || epgListings.isNotEmpty()
-                
-                if (!hasEpg) {
-                    Text(
-                        "Guia de programação não disponível para este canal.", 
-                        color = Color.White.copy(alpha = 0.3f), 
-                        fontSize = 13.sp
-                    )
-                } else {
-                    LazyColumn(
-                        modifier = Modifier.fillMaxSize(),
-                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                // Título do Canal
+                Text(
+                    text = (selectedChannel?.name ?: "NOME DO CANAL").uppercase(),
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = Color.White,
+                    modifier = Modifier.padding(vertical = 8.dp)
+                )
+
+                val hasEpg = (currentProgram != null) || epgListings.isNotEmpty() || upcomingPrograms.isNotEmpty()
+
+                // EPG ou MODO 24H
+                if (selectedChannel != null && !hasEpg) {
+                    // Fallback - Canal sem EPG
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        // Programa Atual com Destaque Amarelo (Estilo Profissional)
+                        Text(
+                            text = "MODO 24H",
+                            color = Color(0xFFFFD700),
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Black
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(3.dp)
+                                .background(Color(0xFFFFD700).copy(alpha = 0.8f))
+                        )
+                        Text(
+                            text = "Este canal não fornece guia de programação ou transmite conteúdo contínuo 24 horas por dia.",
+                            color = Color.White.copy(alpha = 0.6f),
+                            fontSize = 13.sp,
+                            lineHeight = 18.sp
+                        )
+                    }
+                } else if (hasEpg) {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        contentPadding = PaddingValues(vertical = 4.dp)
+                    ) {
+                        // Programa Atual (Destaque Amarelo + Progresso)
                         if (currentProgram != null) {
                             item {
-                                Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
-                                    EpgItem(program = currentProgram!!, isCurrent = true)
-                                    
-                                    // Barra de Progresso Sutil
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    EpgItem(program = currentProgram!!, isCurrent = true, is24Hour = is24Hour)
                                     val total = (currentProgram!!.endTime - currentProgram!!.startTime).coerceAtLeast(1)
                                     val passed = (System.currentTimeMillis() - currentProgram!!.startTime).coerceIn(0, total)
                                     val progress = passed.toFloat() / total.toFloat()
-                                    
                                     Spacer(modifier = Modifier.height(6.dp))
-                                    Box(modifier = Modifier.fillMaxWidth().height(2.dp).background(Color.Gray.copy(alpha = 0.2f))) {
-                                        Box(modifier = Modifier.fillMaxWidth(progress).fillMaxHeight().background(Color(0xFFFFD700))) // Amarelo
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(4.dp)
+                                            .clip(RoundedCornerShape(2.dp))
+                                            .background(Color.White.copy(alpha = 0.1f))
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth(progress)
+                                                .fillMaxHeight()
+                                                .background(Color(0xFFFFD700))
+                                        )
                                     }
                                 }
                             }
                         } else if (epgListings.isNotEmpty()) {
                             item {
                                 val first = epgListings[0]
-                                Text(
-                                    text = "AGORA: ${first.title.decodeBase64IfNeeded()}", 
-                                    color = Color(0xFFFFD700), 
-                                    fontWeight = FontWeight.Bold, 
-                                    fontSize = 14.sp
-                                )
+                                val title = first.title.decodeBase64IfNeeded()
+                                val timeRange = formatEpgTime(first, is24Hour)
+                                Column(modifier = Modifier.fillMaxWidth()) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = timeRange,
+                                            color = Color(0xFFFFD700),
+                                            fontSize = 14.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.width(if (is24Hour) 110.dp else 160.dp)
+                                        )
+                                        Text(
+                                            text = title,
+                                            color = Color.White,
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            maxLines = 1
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Box(modifier = Modifier.fillMaxWidth().height(2.dp).background(Color(0xFFFFD700).copy(alpha = 0.4f)))
+                                }
                             }
                         }
 
-                        // Lista a Seguir (Mais Densa)
+                        // Próximos Programas
                         if (upcomingPrograms.isNotEmpty()) {
                             items(upcomingPrograms.take(10)) { program ->
-                                EpgItem(program = program, isCurrent = false)
+                                EpgItem(program = program, isCurrent = false, is24Hour = is24Hour)
                             }
                         } else if (epgListings.size > 1) {
                             items(epgListings.drop(1).take(10)) { epg ->
                                 val title = epg.title.decodeBase64IfNeeded()
-                                val time = epg.start.takeLast(8).take(5)
-                                Row(modifier = Modifier.padding(vertical = 2.dp)) {
-                                    Text(text = time, color = Color.Gray, fontSize = 13.sp, modifier = Modifier.width(60.dp))
-                                    Text(text = title, color = Color.White.copy(alpha = 0.6f), fontSize = 13.sp)
+                                val timeRange = formatEpgTime(epg, is24Hour)
+                                Row(
+                                    modifier = Modifier.padding(vertical = 2.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = timeRange,
+                                        color = Color.Gray,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        modifier = Modifier.width(if (is24Hour) 110.dp else 160.dp)
+                                    )
+                                    Text(
+                                        text = title,
+                                        color = Color.White.copy(alpha = 0.85f),
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Normal,
+                                        maxLines = 1
+                                    )
                                 }
                             }
                         }
                     }
                 }
-            }
 
-            // 3. Barra de Ações na Base (Discreta)
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(24.dp),
-                horizontalArrangement = Arrangement.spacedBy(16.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                val isFavorite = selectedChannel?.isFavorite == true
-                
-                // Botão de Favorito Compacto
-                Box(
+                // Botão Favorito (sempre visível na base)
+                Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(if (isFavorite) Color.White.copy(alpha = 0.1f) else Color(0xFFC62828).copy(alpha = 0.1f))
-                        .clickable { selectedChannel?.let { viewModel.updateFavorite(it.id, !isFavorite) } }
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    val isFavorite = selectedChannel?.isFavorite == true
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(if (isFavorite) Color.White.copy(alpha = 0.1f) else Color(0xFFC62828).copy(alpha = 0.1f))
+                            .clickable { selectedChannel?.let { viewModel.updateFavorite(it.id, !isFavorite) } }
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
                         Text(
                             text = if (isFavorite) "REMOVER FAVORITO" else "ADICIONAR FAVORITO",
                             color = if (isFavorite) Color.White else Color(0xFFC62828),
@@ -301,8 +363,9 @@ fun LiveTvScreen(
 }
 
 @Composable
-fun EpgItem(program: com.cinex.player.data.model.EpgProgram, isCurrent: Boolean) {
-    val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+fun EpgItem(program: com.cinex.player.data.model.EpgProgram, isCurrent: Boolean, is24Hour: Boolean = true) {
+    val pattern = if (is24Hour) "HH:mm" else "hh:mm a"
+    val timeFormat = SimpleDateFormat(pattern, Locale.getDefault())
     val start = timeFormat.format(Date(program.startTime))
     val end = timeFormat.format(Date(program.endTime))
     
@@ -312,15 +375,15 @@ fun EpgItem(program: com.cinex.player.data.model.EpgProgram, isCurrent: Boolean)
     ) {
         Text(
             text = "$start - $end",
-            color = if (isCurrent) Color.Yellow else Color.Gray,
-            fontSize = 14.sp,
-            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-            modifier = Modifier.width(100.dp)
+            color = if (isCurrent) Color(0xFFFFD700) else Color.Gray,
+            fontSize = if (isCurrent) 15.sp else 14.sp,
+            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
+            modifier = Modifier.width(if (is24Hour) 110.dp else 160.dp)
         )
         Text(
             text = program.title,
             color = if (isCurrent) Color.White else Color.White.copy(alpha = 0.7f),
-            fontSize = if (isCurrent) 16.sp else 14.sp,
+            fontSize = if (isCurrent) 17.sp else 14.sp,
             fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
             maxLines = 1
         )
@@ -347,14 +410,48 @@ fun ActionButton(text: String, color: Color, onClick: () -> Unit = {}) {
 
 fun String.decodeBase64IfNeeded(): String {
     return try {
-        // Verifica se parece base64 (caracteres válidos e comprimento múltiplo de 4)
-        if (this.length > 4 && this.contains(Regex("[a-zA-Z0-9+/=]"))) {
-            val decodedBytes = Base64.decode(this, Base64.DEFAULT)
-            String(decodedBytes)
+        val trimmed = this.trim()
+        if (trimmed.isEmpty()) return this
+        // Tenta decodificar Base64 (Xtream envia títulos codificados)
+        val decodedBytes = Base64.decode(trimmed, Base64.DEFAULT)
+        val decoded = String(decodedBytes, Charsets.UTF_8)
+        // Verifica se o resultado é texto legível (sem caracteres de controle)
+        if (decoded.all { it.code >= 32 || it == '\n' || it == '\r' }) {
+            decoded.trim()
         } else {
             this
         }
     } catch (e: Exception) {
         this
+    }
+}
+
+// Formata horários do EPG Xtream usando timestamps Unix (fonte confiável)
+fun formatEpgTime(epg: com.cinex.player.data.network.EpgListing, is24Hour: Boolean): String {
+    val pattern = if (is24Hour) "HH:mm" else "hh:mm a"
+    val outputFormat = SimpleDateFormat(pattern, Locale.getDefault())
+    
+    // Prioridade 1: Usar start_timestamp / stop_timestamp (Unix epoch em segundos)
+    val startTs = epg.start_timestamp?.toLongOrNull()
+    val stopTs = epg.stop_timestamp?.toLongOrNull()
+    
+    if (startTs != null && stopTs != null) {
+        val startStr = outputFormat.format(Date(startTs * 1000))
+        val endStr = outputFormat.format(Date(stopTs * 1000))
+        return "$startStr - $endStr"
+    }
+    
+    // Prioridade 2: Tentar parsing do campo start/end como data formatada
+    return try {
+        val inputFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        val startStr = outputFormat.format(inputFormat.parse(epg.start)!!)
+        val endStr = outputFormat.format(inputFormat.parse(epg.end)!!)
+        "$startStr - $endStr"
+    } catch (e: Exception) {
+        // Fallback: extrair hora do campo start
+        try {
+            val startOnly = epg.start.takeLast(8).take(5)
+            startOnly
+        } catch (e2: Exception) { "" }
     }
 }

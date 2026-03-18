@@ -1,5 +1,6 @@
 package com.cinex.player.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -31,6 +32,8 @@ import com.cinex.player.data.model.Channel
 import com.cinex.player.ui.MainViewModel
 import com.cinex.player.ui.theme.DarkBackground
 
+enum class SeriesViewMode { LANDING, EPISODES }
+
 @Composable
 fun SeriesDetailsScreen(
     series: Channel,
@@ -39,12 +42,16 @@ fun SeriesDetailsScreen(
     onPlayEpisode: (Channel) -> Unit
 ) {
     val seasons by viewModel.getSeasonsForSeries(series.seriesName ?: "").collectAsState(initial = emptyList())
+    val sortedSeasons = seasons.filter { it > 0 }.sorted()
     var selectedSeason by remember { mutableStateOf(1) }
+    var viewMode by remember { mutableStateOf(SeriesViewMode.LANDING) }
     
     // Auto-select first season when available
-    LaunchedEffect(seasons) {
-        if (seasons.isNotEmpty() && selectedSeason !in seasons) {
-            selectedSeason = seasons.first()
+    LaunchedEffect(sortedSeasons) {
+        if (sortedSeasons.isNotEmpty()) {
+            if (selectedSeason !in sortedSeasons) {
+                selectedSeason = sortedSeasons.first()
+            }
         }
     }
 
@@ -61,9 +68,10 @@ fun SeriesDetailsScreen(
             contentDescription = null,
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop,
-            alpha = 0.5f
+            alpha = 0.3f
         )
         
+        // Degradês Cinematográficos
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -81,138 +89,207 @@ fun SeriesDetailsScreen(
                 .background(
                     Brush.horizontalGradient(
                         colors = listOf(DarkBackground, Color.Transparent),
-                        endX = 1000f
+                        endX = 1200f
                     )
                 )
         )
 
-        Column(modifier = Modifier.fillMaxSize().padding(horizontal = 40.dp, vertical = 24.dp)) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White)
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Barra Superior de Navegação
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = {
+                    if (viewMode == SeriesViewMode.EPISODES) {
+                        viewMode = SeriesViewMode.LANDING
+                    } else {
+                        onBack()
+                    }
+                }) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White)
+                }
+                Spacer(modifier = Modifier.width(16.dp))
+                Text(
+                    text = (series.seriesName ?: series.name).uppercase(),
+                    color = Color.White,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 1.sp
+                )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
-            Row(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                // Info Lado Esquerdo (Fixo)
-                Column(modifier = Modifier.weight(1f)) {
-                    // Botão de Trailer se disponível
-                    if (series.trailerUrl != null) {
-                        TextButton(
-                            onClick = { 
-                                val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(series.trailerUrl))
-                                context.startActivity(intent)
-                            },
-                            contentPadding = PaddingValues(0.dp)
-                        ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Assista ao Trailer", color = Color.White, fontSize = 14.sp)
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                    }
-
-                    Text(
-                        text = (series.seriesName ?: series.name).uppercase(),
-                        color = Color.White,
-                        fontSize = 32.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        lineHeight = 36.sp,
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            if (viewMode == SeriesViewMode.LANDING) {
+                // PASSO 1: LANDING PAGE (Estilo Netflix/Filmes)
+                Row(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 60.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Poster - Redimensionado para caber melhor
+                    AsyncImage(
+                        model = series.logoUrl,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .width(220.dp) // Reduzido de 280.dp
+                            .aspectRatio(2/3f)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color.DarkGray),
+                        contentScale = ContentScale.Crop
                     )
-                    
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically, 
-                        modifier = Modifier.padding(top = 8.dp).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        repeat(5) { index ->
-                            val rating = (series.tmdbRating ?: 0.0) / 2
-                            Icon(
-                                Icons.Default.Star,
-                                contentDescription = null,
-                                tint = if (index < rating.toInt()) Color.Yellow else Color.DarkGray,
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
+
+                    Spacer(modifier = Modifier.width(32.dp)) // Reduzido de 48.dp
+
+                    Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = String.format("%.1f", series.tmdbRating ?: 0.0),
+                            text = (series.seriesName ?: series.name).uppercase(),
                             color = Color.White,
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold
+                            fontSize = 32.sp, // Reduzido de 42.sp
+                            fontWeight = FontWeight.Black,
+                            lineHeight = 38.sp
                         )
-                        Spacer(modifier = Modifier.width(20.dp))
-                        Text(text = "|", color = Color.DarkGray, fontSize = 14.sp)
-                        Spacer(modifier = Modifier.width(20.dp))
-                        Text(text = series.tmdbYear ?: "N/A", color = Color.Gray, fontSize = 14.sp)
-                    }
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                repeat(5) { index ->
+                                    val rating = (series.tmdbRating ?: 0.0) / 2
+                                    Icon(
+                                        Icons.Default.Star,
+                                        contentDescription = null,
+                                        tint = if (index < rating.toInt()) Color.Yellow else Color.DarkGray,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = String.format("%.1f", series.tmdbRating ?: 0.0),
+                                    color = Color.White,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text(text = "•", color = Color.Gray)
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text(text = series.tmdbYear ?: "N/A", color = Color.Gray, fontSize = 16.sp)
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text(text = "•", color = Color.Gray)
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text(text = "${sortedSeasons.size} Temporadas", color = Color.Gray, fontSize = 16.sp)
+                        }
 
-                    // Sinopse com scroll interno
-                    Text(
-                        text = series.tmdbSynopsis ?: "Sem sinopse disponível.",
-                        color = Color.LightGray,
-                        fontSize = 15.sp,
-                        lineHeight = 22.sp,
-                        maxLines = 8,
-                        modifier = Modifier.verticalScroll(rememberScrollState())
-                    )
+                        Text(
+                            text = series.tmdbSynopsis ?: "Sem sinopse disponível.",
+                            color = Color.LightGray,
+                            fontSize = 16.sp,
+                            lineHeight = 24.sp,
+                            maxLines = 5,
+                            modifier = Modifier.padding(vertical = 16.dp)
+                        )
 
-                    if (!series.castMembers.isNullOrEmpty()) {
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text("ELENCO", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.ExtraBold)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        
-                        val castList = series.castMembers.split(", ").take(6)
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            items(castList) { actor ->
-                                CastItem(name = actor)
+                        Row(modifier = Modifier.padding(top = 24.dp, bottom = 32.dp)) {
+                            Button(
+                                onClick = { viewMode = SeriesViewMode.EPISODES },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.height(48.dp),
+                                contentPadding = PaddingValues(horizontal = 24.dp)
+                            ) {
+                                Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("ASSISTIR EPISÓDIOS", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            }
+                            
+                            if (series.trailerUrl != null) {
+                                Spacer(modifier = Modifier.width(16.dp))
+                                OutlinedButton(
+                                    onClick = { 
+                                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(series.trailerUrl))
+                                        context.startActivity(intent)
+                                    },
+                                    border = BorderStroke(2.dp, Color.White),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.height(48.dp).width(140.dp)
+                                ) {
+                                    Text("TRAILER", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                }
                             }
                         }
                     }
                 }
-
-                Spacer(modifier = Modifier.width(64.dp))
-
-                // Episódios Lado Direito
-                Column(modifier = Modifier.weight(1.2f)) {
-                    Text(
-                        text = "EPISÓDIOS",
-                        color = Color.White,
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
-                    
-                    ScrollableTabRow(
-                        selectedTabIndex = seasons.indexOf(selectedSeason).coerceAtLeast(0),
-                        containerColor = Color.Transparent,
-                        contentColor = Color.White,
-                        edgePadding = 0.dp,
-                        divider = {}
+            } else {
+                // PASSO 2: SELEÇÃO DE EPISÓDIOS (Painel Duplo)
+                Row(modifier = Modifier.fillMaxSize().padding(horizontal = 40.dp)) {
+                    // LADO ESQUERDO: Lista de Temporadas (Vertical)
+                    Column(
+                        modifier = Modifier
+                            .width(200.dp)
+                            .fillMaxHeight()
+                            .padding(top = 16.dp)
                     ) {
-                        seasons.sorted().forEach { seasonNum ->
-                            Tab(
-                                selected = selectedSeason == seasonNum,
-                                onClick = { selectedSeason = seasonNum },
-                                text = { Text("Temporada $seasonNum", fontSize = 16.sp) }
-                            )
+                        Text(
+                            text = "TEMPORADAS", 
+                            color = Color.Gray, 
+                            fontSize = 12.sp, 
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(bottom = 16.dp, start = 8.dp)
+                        )
+                        
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            items(sortedSeasons) { seasonNum ->
+                                val isSelected = selectedSeason == seasonNum
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(if (isSelected) Color.White.copy(alpha = 0.2f) else Color.Transparent)
+                                        .clickable { selectedSeason = seasonNum }
+                                        .padding(vertical = 12.dp, horizontal = 16.dp)
+                                ) {
+                                    Text(
+                                        text = "Temporada $seasonNum",
+                                        color = if (isSelected) Color.White else Color.Gray,
+                                        fontSize = 16.sp,
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                    )
+                                }
+                            }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.width(32.dp))
 
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        items(
-                            count = pagingItems.itemCount,
-                            key = pagingItems.itemKey { it.id }
-                        ) { index ->
-                            pagingItems[index]?.let { episode ->
-                                EpisodeItem(episode = episode, onClick = { onPlayEpisode(episode) })
+                    // LADO DIREITO: Lista de Episódios
+                    Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                        Text(
+                            text = "EPISÓDIOS - TEMPORADA $selectedSeason",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(bottom = 12.dp, top = 16.dp)
+                        )
+
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                            contentPadding = PaddingValues(bottom = 32.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            items(
+                                count = pagingItems.itemCount,
+                                key = pagingItems.itemKey { it.id }
+                            ) { index ->
+                                pagingItems[index]?.let { episode ->
+                                    EpisodeItem(
+                                        episode = episode, 
+                                        seriesPoster = series.bannerUrl ?: series.logoUrl,
+                                        onClick = { onPlayEpisode(episode) }
+                                    )
+                                }
                             }
                         }
                     }
@@ -223,26 +300,78 @@ fun SeriesDetailsScreen(
 }
 
 @Composable
-fun EpisodeItem(episode: Channel, onClick: () -> Unit) {
-    Row(
+fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: String?, onClick: () -> Unit) {
+    // Hierarquia de imagens: Still do Episódio (bannerUrl) > Poster da Série (posterUrl) > Logo original > Fallback passado
+    val imageModel = when {
+        !episode.bannerUrl.isNullOrBlank() -> episode.bannerUrl
+        !episode.posterUrl.isNullOrBlank() -> episode.posterUrl
+        !episode.logoUrl.isNullOrBlank() -> episode.logoUrl
+        else -> seriesPoster
+    }
+
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(Color(0x1AFFFFFF))
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White.copy(alpha = 0.05f))
             .clickable { onClick() }
-            .padding(12.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(12.dp)
     ) {
-        AsyncImage(
-            model = episode.logoUrl,
-            contentDescription = null,
-            modifier = Modifier.size(width = 100.dp, height = 60.dp).clip(RoundedCornerShape(4.dp)),
-            contentScale = ContentScale.Crop
-        )
-        Spacer(modifier = Modifier.width(16.dp))
-        Column {
-            Text(text = "E${episode.episodeNumber}: ${episode.name}", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-            Text(text = "Assista agora", color = Color.Gray, fontSize = 12.sp)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // Thumbnail do Episódio
+            Box(
+                modifier = Modifier
+                    .size(width = 160.dp, height = 90.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.DarkGray),
+                contentAlignment = Alignment.Center
+            ) {
+                AsyncImage(
+                    model = imageModel,
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = ContentScale.Crop
+                )
+                
+                // Overlay de Play
+                Box(
+                    modifier = Modifier
+                        .size(36.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(Color.Black.copy(alpha = 0.5f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    androidx.compose.material3.Icon(
+                        imageVector = androidx.compose.material.icons.Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+            }
+            
+            Spacer(modifier = Modifier.width(16.dp))
+            
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "E${episode.episodeNumber}: ${episode.name}",
+                    color = Color.White,
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 2
+                )
+                
+                if (!episode.tmdbSynopsis.isNullOrBlank()) {
+                    Text(
+                        text = episode.tmdbSynopsis!!,
+                        color = Color.White.copy(alpha = 0.6f),
+                        fontSize = 12.sp,
+                        maxLines = 2,
+                        lineHeight = 16.sp,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
+                }
+            }
         }
     }
 }

@@ -10,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -58,16 +59,27 @@ fun LoadingScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(DarkBackground),
+            .background(Color.Black),
         contentAlignment = Alignment.Center
     ) {
-        // Subtle Vignette
+        // Background image
+        Image(
+            painter = painterResource(id = com.cinex.player.R.drawable.bg_loading),
+            contentDescription = null,
+            modifier = Modifier
+                .fillMaxSize()
+                .blur(8.dp),
+            contentScale = ContentScale.Crop,
+            alpha = 0.4f
+        )
+
+        // Dark overlay for legibility
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.radialGradient(
-                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.5f)),
+                        colors = listOf(Color.Black.copy(alpha = 0.3f), Color.Black.copy(alpha = 0.7f)),
                         center = Offset.Unspecified,
                         radius = 2000f
                     )

@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.geometry.*
 import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.*
@@ -48,15 +49,26 @@ fun CinematicLoadingScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(bgGradient)
+            .background(Color.Black)
     ) {
-        // Subtle Vignette Effect (darkens borders smoothly)
+        // Background image
+        Image(
+            painter = painterResource(id = R.drawable.bg_loading),
+            contentDescription = null,
+            modifier = Modifier
+                .fillMaxSize()
+                .blur(8.dp),
+            contentScale = ContentScale.Crop,
+            alpha = 0.4f
+        )
+
+        // Dark overlay for legibility
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .background(
                     Brush.radialGradient(
-                        colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.5f)),
+                        colors = listOf(Color.Black.copy(alpha = 0.3f), Color.Black.copy(alpha = 0.7f)),
                         center = Offset.Unspecified,
                         radius = 2000f
                     )

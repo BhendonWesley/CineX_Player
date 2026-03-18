@@ -12,6 +12,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import com.cinex.player.data.network.XtreamCodesApi
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
@@ -115,6 +118,19 @@ class ChannelRepository @Inject constructor(
 
     fun activatePlaylist(url: String) {
         _activePlaylistUrl.value = url
+        // Trigger background enrichment for missing posters
+        repositoryScope.launch {
+            val movies = channelDao.getMoviesToEnrich(url)
+            val series = channelDao.getSeriesToEnrich(url)
+            val semaphore = Semaphore(5)
+            (movies + series).forEach { channel ->
+                launch {
+                    semaphore.withPermit {
+                        enrichChannelWithTmdb(channel)
+                    }
+                }
+            }
+        }
     }
 
     fun getEpisodesForSeries(seriesName: String): Flow<PagingData<Channel>> {
@@ -146,7 +162,12 @@ class ChannelRepository @Inject constructor(
     fun getPagedChannelsByCategory(categoryId: String): Flow<PagingData<Channel>> {
         return _activePlaylistUrl.flatMapLatest { url ->
             if (url == null) flowOf(PagingData.empty())
-            else Pager(PagingConfig(pageSize = 50)) {
+            else Pager(PagingConfig(
+                pageSize = 30,
+                initialLoadSize = 30,
+                prefetchDistance = 10,
+                enablePlaceholders = false
+            )) {
                 if (categoryId == "Tudo" || categoryId == "Favorito" || categoryId == "Favoritos") {
                     channelDao.getChannelsByCategory("LIVE_TV", url)
                 } else {
@@ -220,10 +241,30 @@ class ChannelRepository @Inject constructor(
             val (parsedChannels, epgUrl) = body.charStream().buffered().use { reader -> parser.parse(reader, url) }
             
             if (parsedChannels.isNotEmpty()) {
+                onProgress(50, 50, 50, "Sincronizando metadados...")
+                
+                // Preservar dados TMDB existentes
+                val existingTmdbData = channelDao.getAllByPlaylist(url).associateBy({ it.remoteId }, { it })
+
                 onProgress(50, 50, 50, "Limpando dados antigos...")
                 channelDao.clearByPlaylist(url)
                 categoryDao.clearByPlaylist(url) 
                 
+                val channelsWithOldData = parsedChannels.mapIndexed { index, channel ->
+                    val old = existingTmdbData[channel.remoteId]
+                    channel.copy(
+                        orderIndex = index,
+                        categoryId = channel.groupTitle,
+                        tmdbRating = old?.tmdbRating,
+                        tmdbSynopsis = old?.tmdbSynopsis,
+                        posterUrl = old?.posterUrl,
+                        bannerUrl = old?.bannerUrl,
+                        tmdbYear = old?.tmdbYear,
+                        castMembers = old?.castMembers,
+                        trailerUrl = old?.trailerUrl
+                    )
+                }
+
                 if (epgUrl != null) {
                     val currentPlaylist = playlistDao.getPlaylistByUrl(url)
                     if (currentPlaylist != null) {
@@ -245,13 +286,7 @@ class ChannelRepository @Inject constructor(
                 }
                 categoryDao.insertAll(m3uCategories)
 
-                val channelsWithOrder = parsedChannels.mapIndexed { index, channel ->
-                    channel.copy(
-                        orderIndex = index,
-                        categoryId = channel.groupTitle
-                    )
-                }
-                channelsWithOrder.chunked(1000).forEach { chunk -> channelDao.insertAll(chunk) }
+                channelsWithOldData.chunked(1000).forEach { chunk -> channelDao.insertAll(chunk) }
 
                 epgUrl?.let { syncEpg(it) }
 
@@ -270,39 +305,44 @@ class ChannelRepository @Inject constructor(
                 val moviesToEnrich = channelDao.getMoviesToEnrich(url)
                 val seriesToEnrich = channelDao.getSeriesToEnrich(url)
                 
-                val semaphore = Semaphore(10)
-                
                 val totalMovies = moviesToEnrich.size
                 if (totalMovies > 0) {
                     val movieCount = AtomicInteger(0)
-                    moviesToEnrich.forEach { channel ->
-                        launch {
-                            semaphore.withPermit {
-                                enrichChannelWithTmdb(channel)
-                                val current = movieCount.incrementAndGet()
-                                if (current % 10 == 0 || current == totalMovies) {
-                                    val pct = ((current.toDouble() / totalMovies.toDouble()) * 100.0).toInt()
-                                    onProgress(100, pct, 0, "Segundo plano: Filmes $pct%")
+                    // Processamento em blocos de 5 para não estourar memória
+                    moviesToEnrich.chunked(5).forEach { chunk ->
+                        coroutineScope {
+                            chunk.forEach { channel ->
+                                launch {
+                                    enrichChannelWithTmdb(channel)
+                                    val current = movieCount.incrementAndGet()
+                                    if (current % 10 == 0 || current == totalMovies) {
+                                        val pct = ((current.toDouble() / totalMovies.toDouble()) * 100.0).toInt()
+                                        onProgress(100, pct, 0, "Segundo plano: Filmes $pct%")
+                                    }
                                 }
                             }
                         }
+                        delay(200) // Pequeno fôlego entre blocos
                     }
                 }
 
                 val totalSeries = seriesToEnrich.size
                 if (totalSeries > 0) {
                     val seriesCount = AtomicInteger(0)
-                    seriesToEnrich.forEach { channel ->
-                        launch {
-                            semaphore.withPermit {
-                                enrichChannelWithTmdb(channel)
-                                val current = seriesCount.incrementAndGet()
-                                if (current % 5 == 0 || current == totalSeries) {
-                                    val pct = ((current.toDouble() / totalSeries.toDouble()) * 100.0).toInt()
-                                    onProgress(100, 100, pct, "Segundo plano: Séries $pct%")
+                    seriesToEnrich.chunked(5).forEach { chunk ->
+                        coroutineScope {
+                            chunk.forEach { channel ->
+                                launch {
+                                    enrichChannelWithTmdb(channel)
+                                    val current = seriesCount.incrementAndGet()
+                                    if (current % 5 == 0 || current == totalSeries) {
+                                        val pct = ((current.toDouble() / totalSeries.toDouble()) * 100.0).toInt()
+                                        onProgress(100, 100, pct, "Segundo plano: Séries $pct%")
+                                    }
                                 }
                             }
                         }
+                        delay(200)
                     }
                 }
             }
@@ -317,13 +357,13 @@ class ChannelRepository @Inject constructor(
         Result.success(Unit)
     }
 
-    private suspend fun syncXtream(
+    suspend fun syncXtream(
         baseUrl: String,
         user: String,
         pass: String,
         playlistUrl: String,
         onProgress: (livePct: Int, moviePct: Int, seriesPct: Int, status: String) -> Unit
-    ): Result<Unit> = withContext(Dispatchers.IO) {
+    ): Result<Unit> = coroutineScope {
         try {
             val api = Retrofit.Builder()
                 .baseUrl(baseUrl)
@@ -332,85 +372,140 @@ class ChannelRepository @Inject constructor(
                 .build()
                 .create(XtreamCodesApi::class.java)
             
-            onProgress(20, 20, 20, "Sincronizando categorias do painel...")
+            onProgress(10, 10, 10, "Conectando ao servidor...")
             
-            val liveCats = try { api.getLiveCategories(user, pass) } catch (_: Exception) { emptyList() }
-            val vodCats = try { api.getVodCategories(user, pass) } catch (_: Exception) { emptyList() }
-            val seriesCats = try { api.getSeriesCategories(user, pass) } catch (_: Exception) { emptyList() }
+            // Busca metadados existentes para preservar capas
+            val existingTmdbData = withContext(Dispatchers.IO) {
+                channelDao.getAllByPlaylist(playlistUrl).associateBy({ it.remoteId }, { it })
+            }
 
-            channelDao.clearByPlaylist(playlistUrl)
-            categoryDao.clearByPlaylist(playlistUrl)
+            // BUSCA PARALELA DE CATEGORIAS
+            val liveCatsDeferred = async { try { api.getLiveCategories(user, pass) } catch (_: Exception) { emptyList() } }
+            val vodCatsDeferred = async { try { api.getVodCategories(user, pass) } catch (_: Exception) { emptyList() } }
+            val seriesCatsDeferred = async { try { api.getSeriesCategories(user, pass) } catch (_: Exception) { emptyList() } }
 
-            val allCats = mutableListOf<com.cinex.player.data.model.Category>()
-            allCats += liveCats.mapIndexed { index, it -> com.cinex.player.data.model.Category(it.category_id, it.category_name, "LIVE_TV", playlistUrl, orderIndex = index) }
-            allCats += vodCats.mapIndexed { index, it -> com.cinex.player.data.model.Category(it.category_id, it.category_name, "MOVIE", playlistUrl, orderIndex = index) }
-            allCats += seriesCats.mapIndexed { index, it -> com.cinex.player.data.model.Category(it.category_id, it.category_name, "SERIES", playlistUrl, orderIndex = index) }
-            categoryDao.insertAll(allCats)
+            val liveCats = liveCatsDeferred.await()
+            val vodCats = vodCatsDeferred.await()
+            val seriesCats = seriesCatsDeferred.await()
+
+            onProgress(20, 20, 20, "Limpando cache antigo...")
+            withContext(Dispatchers.IO) {
+                channelDao.clearByPlaylist(playlistUrl)
+                categoryDao.clearByPlaylist(playlistUrl)
+                
+                val allCats = mutableListOf<com.cinex.player.data.model.Category>()
+                allCats += liveCats.mapIndexed { index, cat -> com.cinex.player.data.model.Category(cat.category_id, cat.category_name, "LIVE_TV", playlistUrl, orderIndex = index) }
+                allCats += vodCats.mapIndexed { index, cat -> com.cinex.player.data.model.Category(cat.category_id, cat.category_name, "MOVIE", playlistUrl, orderIndex = index) }
+                allCats += seriesCats.mapIndexed { index, cat -> com.cinex.player.data.model.Category(cat.category_id, cat.category_name, "SERIES", playlistUrl, orderIndex = index) }
+                categoryDao.insertAll(allCats)
+            }
 
             val liveCatsMap = liveCats.associateBy { it.category_id }
             val vodCatsMap = vodCats.associateBy { it.category_id }
             val seriesCatsMap = seriesCats.associateBy { it.category_id }
-            onProgress(40, 20, 20, "Buscando canais ao vivo...")
-            val liveStreams = api.getLiveStreams(user, pass)
+
+            onProgress(30, 30, 30, "Baixando conteúdo...")
+
+            // BUSCA PARALELA DE CONTEÚDO (Otimização Real de Velocidade)
+            val liveStreamsDeferred = async { api.getLiveStreams(user, pass) }
+            val vodStreamsDeferred = async { api.getVodStreams(user, pass) }
+            val seriesListDeferred = async { api.getSeries(user, pass) }
+
+            val liveStreams = liveStreamsDeferred.await()
+            val vodStreams = vodStreamsDeferred.await()
+            val seriesList = seriesListDeferred.await()
+
+            // MAPEAMENTO E INSERÇÃO (Sequencial para evitar lock de DB, mas os dados já estão na memória)
             
+            // 1. Canais ao Vivo
+            onProgress(50, 40, 40, "Salvando TV ao vivo...")
             val liveChannels = liveStreams.mapIndexed { index, stream ->
-                val catName = liveCatsMap[stream.category_id]?.category_name ?: "Live"
+                val old = existingTmdbData["live_${stream.stream_id}"]
                 Channel(
                     name = stream.name,
                     logoUrl = stream.stream_icon,
-                    groupTitle = catName,
+                    groupTitle = liveCatsMap[stream.category_id]?.category_name ?: "Live",
                     categoryId = stream.category_id,
                     streamUrl = "${baseUrl}live/$user/$pass/${stream.stream_id}.ts",
                     category = "LIVE_TV",
                     playlistUrl = playlistUrl,
                     orderIndex = index,
-                    remoteId = "live_${stream.stream_id}"
+                    remoteId = "live_${stream.stream_id}",
+                    tvgId = stream.epg_channel_id,
+                    tmdbRating = old?.tmdbRating,
+                    tmdbSynopsis = old?.tmdbSynopsis,
+                    posterUrl = old?.posterUrl,
+                    bannerUrl = old?.bannerUrl,
+                    tmdbYear = old?.tmdbYear,
+                    castMembers = old?.castMembers,
+                    trailerUrl = old?.trailerUrl
                 )
             }
-
             if (liveChannels.isNotEmpty()) {
-                liveChannels.chunked(500).forEach { channelDao.insertAll(it) }
+                withContext(Dispatchers.IO) { liveChannels.chunked(500).forEach { channelDao.insertAll(it) } }
             }
 
-            onProgress(100, 40, 20, "Buscando filmes...")
-            val vodStreams = api.getVodStreams(user, pass)
-            val movieChannels = vodStreams.mapIndexed { index, it ->
-                val ext = it.container_extension ?: "mp4"
+            // 2. Filmes (VOD)
+            onProgress(100, 70, 60, "Salvando Filmes...")
+                val movieStreams = vodStreams.mapIndexed { index, m ->
+                val ext = m.container_extension ?: "mp4"
+                val old = existingTmdbData["vod_${m.stream_id}"]
                 Channel(
-                    name = it.name,
-                    logoUrl = it.stream_icon,
-                    groupTitle = vodCatsMap[it.category_id]?.category_name ?: "VOD",
-                    categoryId = it.category_id,
-                    streamUrl = "${baseUrl}movie/$user/$pass/${it.stream_id}.$ext",
+                    name = m.name,
+                    logoUrl = m.stream_icon,
+                    groupTitle = vodCatsMap[m.category_id]?.category_name ?: "VOD",
+                    categoryId = m.category_id,
+                    streamUrl = "${baseUrl}movie/$user/$pass/${m.stream_id}.$ext",
                     category = "MOVIE",
                     playlistUrl = playlistUrl,
                     orderIndex = index,
-                    remoteId = "vod_${it.stream_id}"
+                    remoteId = "vod_${m.stream_id}",
+                    tmdbRating = old?.tmdbRating,
+                    tmdbSynopsis = old?.tmdbSynopsis,
+                    posterUrl = old?.posterUrl,
+                    bannerUrl = old?.bannerUrl,
+                    tmdbYear = old?.tmdbYear,
+                    castMembers = old?.castMembers,
+                    trailerUrl = old?.trailerUrl
                 )
             }
-            movieChannels.chunked(500).forEach { channelDao.insertAll(it) }
+            if (movieStreams.isNotEmpty()) {
+                withContext(Dispatchers.IO) { movieStreams.chunked(500).forEach { chunk -> channelDao.insertAll(chunk) } }
+            }
 
-            onProgress(100, 100, 40, "Buscando séries...")
-            val seriesList = api.getSeries(user, pass)
-            val seriesChannels = seriesList.mapIndexed { index, it ->
+            // 3. Séries
+            onProgress(100, 100, 90, "Salvando Séries...")
+            val seriesStreams = seriesList.mapIndexed { index, s ->
+                val old = existingTmdbData["series_${s.series_id}"]
                 Channel(
-                    name = it.name,
-                    logoUrl = it.cover,
-                    groupTitle = seriesCatsMap[it.category_id]?.category_name ?: "SÉRIES",
-                    categoryId = it.category_id,
+                    name = s.name,
+                    logoUrl = s.cover,
+                    groupTitle = seriesCatsMap[s.category_id]?.category_name ?: "SÉRIES",
+                    categoryId = s.category_id,
                     streamUrl = "",
                     category = "SERIES",
-                    seriesName = it.name,
+                    seriesName = s.name,
                     playlistUrl = playlistUrl,
                     orderIndex = index,
-                    remoteId = "series_${it.series_id}"
+                    remoteId = "series_${s.series_id}",
+                    tmdbRating = old?.tmdbRating,
+                    tmdbSynopsis = old?.tmdbSynopsis,
+                    posterUrl = old?.posterUrl,
+                    bannerUrl = old?.bannerUrl,
+                    tmdbYear = old?.tmdbYear,
+                    castMembers = old?.castMembers,
+                    trailerUrl = old?.trailerUrl
                 )
             }
-            seriesChannels.chunked(500).forEach { channelDao.insertAll(it) }
+            if (seriesStreams.isNotEmpty()) {
+                withContext(Dispatchers.IO) { seriesStreams.chunked(500).forEach { chunk -> channelDao.insertAll(chunk) } }
+            }
 
+            onProgress(100, 100, 100, "Concluído!")
             Result.success(Unit)
-        } catch (_: Exception) {
-            Result.failure(Exception("Failed to sync Xtream Codes playlist"))
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Result.failure(e)
         }
     }
 
@@ -426,18 +521,46 @@ class ChannelRepository @Inject constructor(
 
     suspend fun enrichChannelWithTmdb(channel: Channel) = withContext(Dispatchers.IO) {
         try {
-            val query = channel.name.replace(Regex("\\(\\d{4}\\)"), "").trim()
-            val result = if (channel.category == "MOVIE") {
-                tmdbApi.searchMovie(tmdbApiKey, query).results.firstOrNull()
+            val rawName = channel.name
+            
+            // Extrair ano (ex: 2003) se presente no título
+            val yearMatch = Regex("(?i)\\(?(\\d{4})\\)?").find(rawName)
+            val extractedYear = yearMatch?.groupValues?.get(1)
+
+            // Limpeza de query IPTV
+            val query = rawName
+                .replace(Regex("(?i)\\(?\\d{4}\\)?"), "") // Remove ano do título para a query de texto
+                .replace(Regex("(?i)\\b(fhd|hd|sd|4k|dual|legendado|dublado|multi|brrip|hdtv|web-dl|bluray|h264|h265|x264|x265|1080p|720p|480p)\\b"), "")
+                .replace(Regex("[|\\-\\[\\]]"), " ")
+                .trim()
+                .replace(Regex("\\s+"), " ")
+
+            val searchResponse = if (channel.category == "MOVIE") {
+                tmdbApi.searchMovie(tmdbApiKey, query, year = extractedYear)
             } else {
-                tmdbApi.searchSeries(tmdbApiKey, channel.seriesName ?: query).results.firstOrNull()
+                val seriesQuery = (channel.seriesName ?: query)
+                    .replace(Regex("(?i)s\\d+e\\d+.*"), "")
+                    .replace(Regex("(?i)\\(?\\d{4}\\)?"), "")
+                    .trim()
+                tmdbApi.searchSeries(tmdbApiKey, seriesQuery, year = extractedYear)
             }
 
-            result?.let { tmdbResult ->
+            // Validação rigorosa do resultado
+            val tmdbResult = if (extractedYear != null) {
+                // Se temos ano no título, procuramos o resultado que bate exatamente com esse ano
+                searchResponse.results.find { res ->
+                    val resYear = (res.release_date ?: res.first_air_date)?.take(4)
+                    resYear == extractedYear
+                } ?: searchResponse.results.firstOrNull() // Fallback se não achar exato (ou se o TMDB ignorou o filtro)
+            } else {
+                searchResponse.results.firstOrNull()
+            }
+
+            tmdbResult?.let { bestMatch ->
                 val details = if (channel.category == "MOVIE") {
-                    tmdbApi.getMovieDetails(tmdbResult.id, tmdbApiKey)
+                    tmdbApi.getMovieDetails(bestMatch.id, tmdbApiKey)
                 } else {
-                    tmdbApi.getTvDetails(tmdbResult.id, tmdbApiKey)
+                    tmdbApi.getTvDetails(bestMatch.id, tmdbApiKey)
                 }
 
                 val posterUrl = details.poster_path?.let { "https://image.tmdb.org/t/p/w500$it" }
@@ -462,6 +585,25 @@ class ChannelRepository @Inject constructor(
                             cast,
                             trailerUrl
                         )
+                    }
+                    
+                    // Busca thumbnails específicas de episódios (Stills)
+                    details.seasons?.forEach { season ->
+                        try {
+                            val seasonDetails = tmdbApi.getSeasonDetails(bestMatch.id, season.season_number, tmdbApiKey)
+                            seasonDetails.episodes.forEach { tmdbEp ->
+                                val stillUrl = tmdbEp.still_path?.let { "https://image.tmdb.org/t/p/w500$it" }
+                                if (stillUrl != null) {
+                                    channelDao.updateEpisodeStill(
+                                        channel.seriesName!!,
+                                        season.season_number,
+                                        tmdbEp.episode_number,
+                                        stillUrl,
+                                        channel.playlistUrl
+                                    )
+                                }
+                            }
+                        } catch (_: Exception) {}
                     }
                 } else {
                     channelDao.updateTmdbInfo(
@@ -553,5 +695,57 @@ class ChannelRepository @Inject constructor(
 
     suspend fun clearHistory() {
         channelDao.resetAllResumePositions()
+    }
+
+    suspend fun fetchAndStoreEpisodes(seriesId: Int, seriesName: String) = withContext(Dispatchers.IO) {
+        val url = _activePlaylistUrl.value ?: return@withContext
+        try {
+            val uri = android.net.Uri.parse(url)
+            val username = uri.getQueryParameter("username")
+            val password = uri.getQueryParameter("password")
+            val host = uri.host
+            val scheme = uri.scheme
+            val port = uri.port
+            
+            if (username != null && password != null && host != null) {
+                val baseUrl = "$scheme://$host${if (port != -1) ":$port" else ""}/"
+                val api = Retrofit.Builder()
+                    .baseUrl(baseUrl)
+                    .client(okHttpClient)
+                    .addConverterFactory(GsonConverterFactory.create())
+                    .build()
+                    .create(XtreamCodesApi::class.java)
+                
+                val response = api.getSeriesInfo(username, password, seriesId)
+                
+                response.episodes?.forEach { (seasonNumStr, episodeList) ->
+                    val seasonNum = seasonNumStr.toIntOrNull() ?: 1
+                    val channels = episodeList.map { ep ->
+                        val remoteId = "series_ep_${ep.id}"
+                        Channel(
+                            name = ep.title,
+                            logoUrl = ep.info?.movie_image,
+                            groupTitle = "Episódios",
+                            categoryId = "series_$seriesId",
+                            streamUrl = "${baseUrl}series/$username/$password/${ep.id}.${ep.container_extension ?: "mp4"}",
+                            category = "SERIES",
+                            seriesName = seriesName,
+                            seasonNumber = seasonNum,
+                            episodeNumber = ep.episode_num,
+                            playlistUrl = url,
+                            remoteId = remoteId,
+                            tmdbSynopsis = ep.info?.plot,
+                            tmdbRating = ep.info?.rating?.toDoubleOrNull(),
+                            tmdbYear = ep.info?.release_date?.take(4)
+                        )
+                    }
+                    
+                    // Inserir episódios (conflito REPLACE para atualizar metadados se já existirem)
+                    channelDao.insertAll(channels)
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 }

@@ -48,21 +48,8 @@ class MainViewModel @Inject constructor(
     private val _currentPlaylist = MutableStateFlow<com.cinex.player.data.model.Playlist?>(null)
     val currentPlaylist = _currentPlaylist.asStateFlow()
 
-    init {
-        generateAccountInfo()
-        viewModelScope.launch {
-            val playlists = repository.allPlaylists.first()
-            if (playlists.isNotEmpty()) {
-                playlists.maxByOrNull { it.lastUsed }?.let { lastUsed ->
-                    _currentPlaylist.value = lastUsed
-                    repository.activatePlaylist(lastUsed.url)
-                    fetchRealAccountInfo(lastUsed.url)
-                }
-            } else {
-                syncFromPanel()
-            }
-        }
-    }
+    private val _isInitializing = MutableStateFlow(true)
+    val isInitializing = _isInitializing.asStateFlow()
 
     private val _isLoading = MutableStateFlow(false)
     val isLoading = _isLoading.asStateFlow()
@@ -72,6 +59,9 @@ class MainViewModel @Inject constructor(
 
     private val _syncStatus = MutableStateFlow("Iniciando...")
     val syncStatus = _syncStatus.asStateFlow()
+
+    private val _isDeviceBlocked = MutableStateFlow(false)
+    val isDeviceBlocked = _isDeviceBlocked.asStateFlow()
 
     private val _homeReady = MutableStateFlow(false)
     val homeReady = _homeReady.asStateFlow()
@@ -88,6 +78,29 @@ class MainViewModel @Inject constructor(
 
     private val _seriesProgress = MutableStateFlow(0)
     val seriesProgress = _seriesProgress.asStateFlow()
+
+    private val _accountInfo = MutableStateFlow<AccountInfo?>(generateAccountInfoInternal())
+    val accountInfo = _accountInfo.asStateFlow()
+
+    init {
+        generateAccountInfo()
+        viewModelScope.launch {
+            val playlists = repository.allPlaylists.first()
+            if (playlists.isNotEmpty()) {
+                playlists.maxByOrNull { it.lastUsed }?.let { lastUsed ->
+                    _currentPlaylist.value = lastUsed
+                    repository.activatePlaylist(lastUsed.url)
+                    fetchRealAccountInfo(lastUsed.url)
+                }
+                // Busca datas e status atualizados do painel
+                refreshAccountFromPanel()
+                _isInitializing.value = false
+            } else {
+                syncFromPanel()
+            }
+        }
+    }
+
 
     private val phrases = listOf(
         "Carregando seus conteúdos...",
@@ -108,6 +121,10 @@ class MainViewModel @Inject constructor(
         _homeReady.value = false
         if (playlist == null) flowOf(emptyList())
         else repository.getFeaturedContent(playlist.url)
+            .transformLatest { list ->
+                emit(list)
+                    kotlinx.coroutines.delay(1000)
+            }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -142,6 +159,19 @@ class MainViewModel @Inject constructor(
         )
         specials + cats
     }
+
+    // Categoria ao vivo selecionada — usar StateFlow para troca instantânea
+    private val _liveCategoryId = MutableStateFlow("Tudo")
+    val liveCategoryId = _liveCategoryId.asStateFlow()
+
+    fun setLiveCategory(categoryId: String) {
+        _liveCategoryId.value = categoryId
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val liveTvPagingData: Flow<PagingData<Channel>> = _liveCategoryId.flatMapLatest { group ->
+        repository.getPagedChannelsByCategory(group)
+    }.cachedIn(viewModelScope)
 
     fun getPagedChannelsByCategory(group: String): Flow<PagingData<Channel>> = 
         repository.getPagedChannelsByCategory(group).cachedIn(viewModelScope)
@@ -224,11 +254,13 @@ class MainViewModel @Inject constructor(
 
     fun updateSelectedChannel(channel: Channel?) {
         _selectedChannelTvgId.value = channel?.tvgId
-        if (channel != null && channel.tvgId == null) {
-            val streamId = try { channel.remoteId.replace("live_", "").toInt() } catch (e: Exception) { -1 }
+        _epgListings.value = emptyList()
+        // SEMPRE tenta buscar EPG via Xtream Short EPG como fonte principal
+        if (channel != null) {
+            val streamId = try {
+                channel.remoteId.replace("live_", "").toInt()
+            } catch (e: Exception) { -1 }
             if (streamId != -1) fetchEpg(streamId)
-        } else {
-            _epgListings.value = emptyList()
         }
     }
 
@@ -260,8 +292,6 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch { repository.syncEpg(epgUrl) }
     }
 
-    private val _accountInfo = MutableStateFlow<AccountInfo?>(null)
-    val accountInfo = _accountInfo.asStateFlow()
 
     val deviceMacAddress: String
         get() {
@@ -278,7 +308,7 @@ class MainViewModel @Inject constructor(
                 val scheme = uri.scheme
                 val host = uri.host
                 val port = uri.port
-                
+
                 if (username != null && password != null && host != null) {
                     val baseUrl = "$scheme://$host${if (port != -1) ":$port" else ""}/"
                     val api = Retrofit.Builder()
@@ -287,22 +317,28 @@ class MainViewModel @Inject constructor(
                         .addConverterFactory(GsonConverterFactory.create())
                         .build()
                         .create(XtreamCodesApi::class.java)
-                    
+
                     val response = api.getAccountInfo(username, password)
                     response.user_info?.let { info ->
+                        val dateFormat = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+
+                        val createdDateStr = if (info.created_at != null && info.created_at != "null") {
+                            try {
+                                val timestamp = info.created_at.toLong() * 1000
+                                dateFormat.format(Date(timestamp))
+                            } catch (e: Exception) { "N/A" }
+                        } else "N/A"
+
                         val expDateStr = if (info.exp_date != null && info.exp_date != "null") {
                             try {
                                 val timestamp = info.exp_date.toLong() * 1000
-                                SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(Date(timestamp))
-                            } catch (e: Exception) {
-                                "N/A"
-                            }
-                        } else {
-                            "ILIMITADO"
-                        }
+                                dateFormat.format(Date(timestamp))
+                            } catch (e: Exception) { "N/A" }
+                        } else "ILIMITADO"
 
                         _accountInfo.value = _accountInfo.value?.copy(
                             accountStatus = info.status?.uppercase() ?: "ATIVADO",
+                            activationDate = createdDateStr,
                             playlistExpiration = expDateStr
                         )
                     }
@@ -313,26 +349,79 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    private fun generateAccountInfo() {
-        try {
-            val simulatedMac = deviceMacAddress
+    private fun generateAccountInfoInternal(): AccountInfo {
+        return try {
+            val simulatedMac = getDeviceMacAddressInternal()
             val androidId = Settings.Secure.getString(app.contentResolver, Settings.Secure.ANDROID_ID) ?: "000000000000"
             val deviceKey = (androidId.hashCode().toLong() and 0xFFFFFF).toString()
 
-            _accountInfo.value = AccountInfo(
+            AccountInfo(
                 macAddress = simulatedMac,
                 deviceKey = deviceKey,
-                accountStatus = "ATIVADO (PREMIUM)",
-                activationDate = "2026-11-10",
-                playlistExpiration = "03/05/2027"
+                accountStatus = "CONECTANDO...",
+                activationDate = "...",
+                playlistExpiration = "..."
             )
         } catch (e: Exception) {
-            e.printStackTrace()
+            AccountInfo("00:00:00:00:00:00", "000000", "ERRO", "N/A", "N/A")
         }
+    }
+
+    private fun getDeviceMacAddressInternal(): String {
+        val androidId = Settings.Secure.getString(app.contentResolver, Settings.Secure.ANDROID_ID) ?: "000000000000"
+        return androidId.chunked(2).take(6).joinToString(":").uppercase()
+    }
+
+    private fun generateAccountInfo() {
+        _accountInfo.value = generateAccountInfoInternal()
     }
 
     companion object {
         private const val PANEL_BASE_URL = "https://gerencia-cine-x.vercel.app"
+    }
+
+    // Verifica o status do dispositivo no painel do revendedor (bloqueio)
+    fun refreshAccountFromPanel() {
+        viewModelScope.launch {
+            try {
+                val mac = deviceMacAddress
+                val apiUrl = "$PANEL_BASE_URL/api/device/${mac}"
+                val (responseCode, body) = withContext(Dispatchers.IO) {
+                    val request = okhttp3.Request.Builder().url(apiUrl).get().build()
+                    val response = okHttpClient.newCall(request).execute()
+                    Pair(response.code, response.body?.string() ?: "")
+                }
+
+                if (responseCode == 403) {
+                    _isDeviceBlocked.value = true
+                    _accountInfo.value = _accountInfo.value?.copy(
+                        accountStatus = "BLOQUEADO"
+                    )
+                    return@launch
+                }
+
+                if (responseCode == 200) {
+                    val json = org.json.JSONObject(body)
+                    val status = json.optString("status", "")
+
+                    if (status == "Bloqueado") {
+                        _isDeviceBlocked.value = true
+                        _accountInfo.value = _accountInfo.value?.copy(
+                            accountStatus = "BLOQUEADO"
+                        )
+                    } else {
+                        _isDeviceBlocked.value = false
+                    }
+                }
+
+                // Atualiza datas da conta via Xtream API (fonte real)
+                if (!_isDeviceBlocked.value) {
+                    _currentPlaylist.value?.url?.let { fetchRealAccountInfo(it) }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     fun syncFromPanel() {
@@ -385,6 +474,7 @@ class MainViewModel @Inject constructor(
                 when (type) {
                     "m3u" -> {
                         val url = playlist.getString("url")
+
                         if (url.isBlank()) {
                             _errorMessage.value = "URL da lista M3U não configurada no painel."
                             _isLoading.value = false
@@ -404,6 +494,7 @@ class MainViewModel @Inject constructor(
                             _currentPlaylist.value = savedPlaylist ?: com.cinex.player.data.model.Playlist(
                                 name = "CineX Panel", url = url, lastUsed = System.currentTimeMillis()
                             )
+                            fetchRealAccountInfo(url)
                         }.onFailure {
                             _errorMessage.value = it.message ?: "Erro ao carregar lista M3U"
                         }
@@ -412,6 +503,7 @@ class MainViewModel @Inject constructor(
                         val dns = playlist.getString("dns")
                         val user = playlist.getString("user")
                         val pass = playlist.getString("pass")
+
                         if (dns.isBlank() || user.isBlank() || pass.isBlank()) {
                             _errorMessage.value = "Credenciais Xtream não configuradas no painel."
                             _isLoading.value = false
@@ -430,6 +522,7 @@ class MainViewModel @Inject constructor(
                             _currentPlaylist.value = com.cinex.player.data.model.Playlist(
                                 name = "CineX Panel (Xtream)", url = xtreamUrl, lastUsed = System.currentTimeMillis()
                             )
+                            fetchRealAccountInfo(xtreamUrl)
                         }.onFailure {
                             _errorMessage.value = it.message ?: "Erro ao carregar lista Xtream"
                         }
@@ -443,6 +536,7 @@ class MainViewModel @Inject constructor(
             } finally {
                 rotateJob.cancel()
                 _isLoading.value = false
+                _isInitializing.value = false
             }
         }
     }
@@ -476,6 +570,12 @@ class MainViewModel @Inject constructor(
     private fun enrichChannelMetadata(channel: Channel) {
         viewModelScope.launch {
             repository.enrichChannelWithTmdb(channel)
+            if (channel.category == "SERIES") {
+                val seriesId = try { channel.remoteId.replace("series_", "").toInt() } catch (e: Exception) { -1 }
+                if (seriesId != -1) {
+                    repository.fetchAndStoreEpisodes(seriesId, channel.seriesName ?: channel.name)
+                }
+            }
         }
     }
 
@@ -548,6 +648,7 @@ class MainViewModel @Inject constructor(
     }
 
     fun refreshPlaylist() {
+        refreshAccountFromPanel()
         val playlist = _currentPlaylist.value ?: return
         loadPlaylist(playlist.url)
     }
@@ -639,6 +740,34 @@ class MainViewModel @Inject constructor(
                 _isLoading.value = false
                 _errorMessage.value = null
             }
+        }
+    }
+    private fun formatPanelDate(dateStr: String): String {
+        return try {
+            if (dateStr == "N/A") return "N/A"
+            // Exemplo: 2026-03-06T00:07:00.000Z -> 06/03/2026
+            val inputFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault())
+            val date = inputFormat.parse(dateStr)
+            SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()).format(date!!)
+        } catch (e: Exception) {
+            dateStr.split("T").firstOrNull() ?: dateStr
+        }
+    }
+
+    fun playLiveChannel(channel: Channel) {
+        val currentMediaItem = liveTvPlayer.currentMediaItem
+        val newUri = android.net.Uri.parse(channel.streamUrl)
+        
+        // Só recarrega se o canal for diferente
+        if (currentMediaItem?.localConfiguration?.uri != newUri) {
+            liveTvPlayer.stop()
+            liveTvPlayer.clearMediaItems()
+            val mediaItem = androidx.media3.common.MediaItem.fromUri(newUri)
+            liveTvPlayer.setMediaItem(mediaItem)
+            liveTvPlayer.prepare()
+            liveTvPlayer.play()
+        } else if (!liveTvPlayer.isPlaying) {
+            liveTvPlayer.play()
         }
     }
 }

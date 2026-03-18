@@ -187,7 +187,7 @@ fun PlaylistSelectionScreen(
             Spacer(modifier = Modifier.height(8.dp))
             
             Text(
-                text = "cine-x-player.vercel.app", 
+                text = "gerencia-cine-x.vercel.app", 
                 color = CineX_LightGold.copy(alpha = 0.8f), 
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,

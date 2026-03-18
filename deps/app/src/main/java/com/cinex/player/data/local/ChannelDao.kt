@@ -106,6 +106,9 @@ interface ChannelDao {
 
     @Query("SELECT category, COUNT(*) as count FROM channels WHERE playlistUrl = :url AND isFavorite = 1 GROUP BY category")
     fun getFavoriteCounts(url: String): Flow<List<TypeCount>>
+
+    @Query("UPDATE channels SET bannerUrl = :stillUrl WHERE seriesName = :seriesName AND seasonNumber = :season AND episodeNumber = :episode AND playlistUrl = :url")
+    suspend fun updateEpisodeStill(seriesName: String, season: Int, episode: Int, stillUrl: String, url: String)
 }
 
 data class CategoryCount(

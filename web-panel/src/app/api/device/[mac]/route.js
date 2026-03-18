@@ -40,6 +40,9 @@ export async function GET(request, { params }) {
     return NextResponse.json({
         mac: device.mac_address,
         sync_status: 'success',
+        status: device.status,
+        created_at: device.created_at,
+        expires_at: device.expires_at || null,
         playlist: {
             type: device.playlist_type,
             ...(device.playlist_config || {})

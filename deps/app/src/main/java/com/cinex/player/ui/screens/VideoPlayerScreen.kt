@@ -274,16 +274,31 @@ fun VideoPlayerScreen(
                     }
                 }
 
-                Box(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
-                    // Slider de Brilho (Esquerda)
+                // Sliders de Brilho (Esquerda) e Volume (Direita) — Grandes, como app profissional
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 24.dp, vertical = 80.dp) // Padding do topo/base para não sobrepor botões
+                ) {
+                    // Brilho (Esquerda)
                     Column(
-                        modifier = Modifier.align(Alignment.CenterStart),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .fillMaxHeight(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
                     ) {
-                        Box(contentAlignment = Alignment.Center, modifier = Modifier.height(200.dp).width(40.dp)) {
+                        Icon(Icons.Default.LightMode, contentDescription = "Brilho", tint = Color.White, modifier = Modifier.size(28.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .fillMaxHeight(0.75f)
+                                .width(48.dp)
+                        ) {
                             Slider(
-                                value = currentBrightness, 
-                                onValueChange = { 
+                                value = currentBrightness,
+                                onValueChange = {
                                     currentBrightness = it
                                     activity?.let { act ->
                                         val lp = act.window.attributes
@@ -292,11 +307,9 @@ fun VideoPlayerScreen(
                                     }
                                 },
                                 modifier = Modifier
-                                    .width(200.dp)
-                                    .height(40.dp)
-                                    .graphicsLayer { 
-                                        rotationZ = -90f
-                                    },
+                                    .requiredWidth(500.dp)
+                                    .height(48.dp)
+                                    .graphicsLayer { rotationZ = -90f },
                                 colors = SliderDefaults.colors(
                                     thumbColor = DeepRed,
                                     activeTrackColor = DeepRed,
@@ -304,29 +317,35 @@ fun VideoPlayerScreen(
                                 )
                             )
                         }
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Icon(Icons.Default.LightMode, contentDescription = "Brilho", tint = Color.White, modifier = Modifier.size(24.dp))
                     }
 
-                    // Slider de Volume (Direita)
+                    // Volume (Direita)
                     Column(
-                        modifier = Modifier.align(Alignment.CenterEnd),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .fillMaxHeight(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
                     ) {
-                        Box(contentAlignment = Alignment.Center, modifier = Modifier.height(200.dp).width(40.dp)) {
+                        Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Volume", tint = Color.White, modifier = Modifier.size(28.dp))
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .fillMaxHeight(0.75f)
+                                .width(48.dp)
+                        ) {
                             Slider(
-                                value = currentVolume, 
+                                value = currentVolume,
                                 onValueChange = {
                                     currentVolume = it
                                     val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
                                     audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (it * maxVol).toInt(), 0)
                                 },
                                 modifier = Modifier
-                                    .width(200.dp)
-                                    .height(40.dp)
-                                    .graphicsLayer { 
-                                        rotationZ = -90f
-                                    },
+                                    .requiredWidth(500.dp)
+                                    .height(48.dp)
+                                    .graphicsLayer { rotationZ = -90f },
                                 colors = SliderDefaults.colors(
                                     thumbColor = DeepRed,
                                     activeTrackColor = DeepRed,
@@ -334,8 +353,6 @@ fun VideoPlayerScreen(
                                 )
                             )
                         }
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Volume", tint = Color.White, modifier = Modifier.size(24.dp))
                     }
                 }
 

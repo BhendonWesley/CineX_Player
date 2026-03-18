@@ -26,7 +26,15 @@ data class TmdbDetailsResponse(
     val poster_path: String?,
     val backdrop_path: String?,
     val credits: TmdbCredits?,
-    val videos: TmdbVideoResponse?
+    val videos: TmdbVideoResponse?,
+    val seasons: List<TmdbSeason>? = null
+)
+
+data class TmdbSeason(
+    val id: Int,
+    val season_number: Int,
+    val episode_count: Int,
+    val poster_path: String?
 )
 
 data class TmdbVideoResponse(
@@ -54,14 +62,16 @@ interface TmdbApi {
     suspend fun searchMovie(
         @Query("api_key") apiKey: String,
         @Query("query") query: String,
-        @Query("language") language: String = "pt-BR"
+        @Query("language") language: String = "pt-BR",
+        @Query("year") year: String? = null
     ): TmdbSearchResponse
     
     @GET("search/tv")
     suspend fun searchSeries(
         @Query("api_key") apiKey: String,
         @Query("query") query: String,
-        @Query("language") language: String = "pt-BR"
+        @Query("language") language: String = "pt-BR",
+        @Query("first_air_date_year") year: String? = null
     ): TmdbSearchResponse
 
     @GET("movie/{movie_id}")
@@ -79,4 +89,26 @@ interface TmdbApi {
         @Query("append_to_response") appendToResponse: String = "credits,videos",
         @Query("language") language: String = "pt-BR"
     ): TmdbDetailsResponse
+
+    @GET("tv/{tv_id}/season/{season_number}")
+    suspend fun getSeasonDetails(
+        @retrofit2.http.Path("tv_id") tvId: Int,
+        @retrofit2.http.Path("season_number") seasonNumber: Int,
+        @Query("api_key") apiKey: String,
+        @Query("language") language: String = "pt-BR"
+    ): TmdbSeasonResponse
 }
+
+data class TmdbSeasonResponse(
+    val id: Int,
+    val episodes: List<TmdbEpisode>
+)
+
+data class TmdbEpisode(
+    val id: Int,
+    val episode_number: Int,
+    val name: String,
+    val overview: String?,
+    val still_path: String?,
+    val vote_average: Double
+)

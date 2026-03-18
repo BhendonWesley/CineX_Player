@@ -5,7 +5,13 @@ import androidx.room.PrimaryKey
 
 @Entity(
     tableName = "channels",
-    indices = [androidx.room.Index(value = ["remoteId", "playlistUrl"], unique = true)]
+    indices = [
+        androidx.room.Index(value = ["remoteId", "playlistUrl"], unique = true),
+        androidx.room.Index(value = ["categoryId", "playlistUrl"]),
+        androidx.room.Index(value = ["category", "playlistUrl"]),
+        androidx.room.Index(value = ["isFavorite", "category"]),
+        androidx.room.Index(value = ["seriesName", "playlistUrl"])
+    ]
 )
 data class Channel(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
