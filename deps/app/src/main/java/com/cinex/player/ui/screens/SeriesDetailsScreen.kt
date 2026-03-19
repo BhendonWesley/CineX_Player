@@ -122,30 +122,35 @@ fun SeriesDetailsScreen(
             if (viewMode == SeriesViewMode.LANDING) {
                 // PASSO 1: LANDING PAGE (Estilo Netflix/Filmes)
                 Row(
-                    modifier = Modifier.fillMaxSize().padding(horizontal = 60.dp),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 60.dp, vertical = 16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Poster - Redimensionado para caber melhor
                     AsyncImage(
-                        model = series.logoUrl,
+                        model = series.posterUrl?.takeIf { it.isNotEmpty() } ?: series.logoUrl,
                         contentDescription = null,
                         modifier = Modifier
-                            .width(220.dp) // Reduzido de 280.dp
-                            .aspectRatio(2/3f)
+                            .width(160.dp)
+                            .aspectRatio(2f / 3f)
                             .clip(RoundedCornerShape(12.dp))
                             .background(Color.DarkGray),
                         contentScale = ContentScale.Crop
                     )
 
-                    Spacer(modifier = Modifier.width(32.dp)) // Reduzido de 48.dp
+                    Spacer(modifier = Modifier.width(32.dp))
 
-                    Column(modifier = Modifier.weight(1f)) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState())
+                    ) {
                         Text(
                             text = (series.seriesName ?: series.name).uppercase(),
                             color = Color.White,
-                            fontSize = 32.sp, // Reduzido de 42.sp
+                            fontSize = 28.sp,
                             fontWeight = FontWeight.Black,
-                            lineHeight = 38.sp
+                            lineHeight = 34.sp
                         )
 
                         Row(
@@ -183,38 +188,55 @@ fun SeriesDetailsScreen(
                         Text(
                             text = series.tmdbSynopsis ?: "Sem sinopse disponível.",
                             color = Color.LightGray,
-                            fontSize = 16.sp,
-                            lineHeight = 24.sp,
-                            maxLines = 5,
-                            modifier = Modifier.padding(vertical = 16.dp)
+                            fontSize = 15.sp,
+                            lineHeight = 22.sp,
+                            maxLines = 4,
+                            modifier = Modifier.padding(vertical = 12.dp)
                         )
 
-                        Row(modifier = Modifier.padding(top = 24.dp, bottom = 32.dp)) {
+                        Row(
+                            modifier = Modifier.padding(top = 16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Button(
                                 onClick = { viewMode = SeriesViewMode.EPISODES },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color.White),
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.height(48.dp),
+                                modifier = Modifier.height(52.dp),
                                 contentPadding = PaddingValues(horizontal = 24.dp)
                             ) {
                                 Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text("ASSISTIR EPISÓDIOS", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                             }
-                            
-                            if (series.trailerUrl != null) {
-                                Spacer(modifier = Modifier.width(16.dp))
-                                OutlinedButton(
-                                    onClick = { 
-                                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(series.trailerUrl))
-                                        context.startActivity(intent)
-                                    },
-                                    border = BorderStroke(2.dp, Color.White),
-                                    shape = RoundedCornerShape(8.dp),
-                                    modifier = Modifier.height(48.dp).width(140.dp)
-                                ) {
-                                    Text("TRAILER", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                }
+
+                            Spacer(modifier = Modifier.width(16.dp))
+
+                            OutlinedButton(
+                                onClick = {
+                                    series.trailerUrl?.let { url ->
+                                        val uri = android.net.Uri.parse(url)
+                                        val youtubeIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri).apply {
+                                            setPackage("com.google.android.youtube")
+                                        }
+                                        try {
+                                            context.startActivity(youtubeIntent)
+                                        } catch (e: android.content.ActivityNotFoundException) {
+                                            context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, uri))
+                                        }
+                                    }
+                                },
+                                enabled = series.trailerUrl != null,
+                                border = BorderStroke(2.dp, if (series.trailerUrl != null) Color.White else Color.Gray),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.height(52.dp).width(140.dp)
+                            ) {
+                                Text(
+                                    "TRAILER",
+                                    color = if (series.trailerUrl != null) Color.White else Color.Gray,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
                             }
                         }
                     }

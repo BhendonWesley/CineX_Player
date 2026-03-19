@@ -10,10 +10,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+
+private val ActiveRed  = Color(0xFFE11D2E)
+private val ActiveGold = Color(0xFFF59E0B)
+private val ActiveGradient = listOf(ActiveRed, ActiveGold)
 
 @Composable
 fun CategoryItem(
@@ -22,17 +27,22 @@ fun CategoryItem(
     isSelected: Boolean,
     onClick: () -> Unit
 ) {
+    val shape = RoundedCornerShape(8.dp)
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(4.dp))
-            .background(if (isSelected) Color(0xFF2D2D3A) else Color.Transparent)
-            .let { 
-                if (isSelected) it.border(2.dp, Color(0xFFFFCC00), RoundedCornerShape(4.dp))
-                else it
-            }
+            .clip(shape)
+            .then(
+                if (isSelected)
+                    Modifier
+                        .background(Color(0x1AFFFFFF))
+                        .border(2.dp, Brush.linearGradient(ActiveGradient), shape)
+                else
+                    Modifier.background(Color.Transparent)
+            )
             .clickable { onClick() }
-            .padding(horizontal = 16.dp, vertical = 14.dp)
+            .padding(horizontal = 16.dp, vertical = 13.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -41,17 +51,19 @@ fun CategoryItem(
         ) {
             Text(
                 text = name,
-                color = if (isSelected) Color.White else Color.LightGray,
+                color = if (isSelected) Color.White else Color(0xFF9CA3AF),
                 fontSize = 14.sp,
                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                 modifier = Modifier.weight(1f)
             )
-            Text(
-                text = count.toString(),
-                color = if (isSelected) Color(0xFFFFCC00) else Color.LightGray,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold
-            )
+            if (count > 0) {
+                Text(
+                    text = count.toString(),
+                    color = if (isSelected) ActiveGold else Color(0xFF6B7280),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
         }
     }
 }

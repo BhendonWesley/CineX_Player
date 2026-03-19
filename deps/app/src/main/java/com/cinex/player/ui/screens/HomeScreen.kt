@@ -55,8 +55,8 @@ fun HomeScreen(
     modifier: Modifier = Modifier
 ) {
     // ESTADOS ESSENCIAIS (Corrigindo Unresolved Reference)
-    var showInitialLoading by remember { mutableStateOf(true) }
-    var isFirstBannerReady by remember { mutableStateOf(false) }
+    var showInitialLoading by remember { mutableStateOf(!isHomeReady) }
+    var isFirstBannerReady by remember { mutableStateOf(isHomeReady) }
     var showAccountDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
 

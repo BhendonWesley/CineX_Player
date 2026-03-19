@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -n \"^    }$\\\\|^    } //\" \"c:\\\\Users\\\\Bhendon Wesley\\\\Desktop\\\\CineX Player\\\\deps\\\\app\\\\src\\\\main\\\\java\\\\com\\\\cinex\\\\player\\\\ui\\\\screens\\\\LiveTvScreen.kt\")"
+    ]
+  }
+}

@@ -59,7 +59,7 @@ fun LoadingScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color.Black),
+            .background(Color(0xFF0A0F1E)),
         contentAlignment = Alignment.Center
     ) {
         // Background image
@@ -68,22 +68,16 @@ fun LoadingScreen(
             contentDescription = null,
             modifier = Modifier
                 .fillMaxSize()
-                .blur(8.dp),
+                .blur(2.dp),
             contentScale = ContentScale.Crop,
-            alpha = 0.4f
+            alpha = 0.7f
         )
 
-        // Dark overlay for legibility
+        // Overlay leve
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(Color.Black.copy(alpha = 0.3f), Color.Black.copy(alpha = 0.7f)),
-                        center = Offset.Unspecified,
-                        radius = 2000f
-                    )
-                )
+                .background(Color(0x990A0F1E))
         )
 
         Column(
@@ -164,11 +158,14 @@ fun LoadingScreen(
                 Text(
                     text = msg.uppercase(),
                     color = Color.White,
-                    fontSize = 22.sp,
+                    fontSize = 16.sp,
                     fontWeight = FontWeight.ExtraBold,
                     textAlign = TextAlign.Center,
-                    letterSpacing = 1.5.sp,
-                    modifier = Modifier.padding(horizontal = 40.dp)
+                    letterSpacing = 0.5.sp,
+                    lineHeight = 22.sp,
+                    modifier = Modifier
+                        .padding(horizontal = 40.dp)
+                        .heightIn(min = 50.dp),
                 )
             }
 
@@ -178,7 +175,8 @@ fun LoadingScreen(
                 text = "Aguarde enquanto preparamos sua experiência CineX",
                 color = Color.Gray.copy(alpha = 0.7f),
                 fontSize = 14.sp,
-                textAlign = TextAlign.Center
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 40.dp)
             )
         }
     }

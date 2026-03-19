@@ -21,6 +21,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -73,6 +74,13 @@ fun MainScreen(
 
     val continueWatching by viewModel.continueWatching.collectAsState()
     val isDeviceBlocked by viewModel.isDeviceBlocked.collectAsState()
+
+    // Para o player ao trocar de aba (imediato, sem depender do onDispose do LiveTvScreen)
+    LaunchedEffect(selectedTab) {
+        if (selectedTab != 1) {
+            viewModel.stopLiveTv()
+        }
+    }
 
     // Para o player quando o app vai para background (botão Home, notificações, etc.)
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -167,12 +175,13 @@ fun MainScreen(
             if (selectedTab != 0 || searchQuery.isNotEmpty()) {
                 TopNavigationBar(
                     selectedTab = selectedTab,
-                    onTabSelected = { 
+                    onTabSelected = {
                         selectedTab = it
-                        viewModel.updateSearchQuery("") // Limpa busca ao trocar aba
+                        viewModel.updateSearchQuery("")
                     },
                     searchQuery = searchQuery,
                     onSearchChange = { viewModel.updateSearchQuery(it) },
+                    onMenuClick = { isSettingsOpen = true },
                     showLive = !isLiveHidden,
                     showMovies = !isMoviesHidden,
                     showSeries = !isSeriesHidden
@@ -182,45 +191,47 @@ fun MainScreen(
             val featuredMovies by viewModel.featuredMovies.collectAsState()
             val isHomeReady by viewModel.homeReady.collectAsState()
 
-            if (searchQuery.isNotEmpty()) {
-                // TELA DE BUSCA GLOBAL
-                VodScreen(
-                    channels = searchResults,
-                    type = "SEARCH", // Opcional: tratar como busca
-                    viewModel = viewModel,
-                    title = "RESULTADOS PARA: ${searchQuery.uppercase()}",
-                    continueWatching = emptyList(),
-                    onVideoClick = { viewModel.selectChannelForDetails(it) }
-                )
-            } else {
-                when (selectedTab) {
-                    0 -> HomeScreen(
-                        featuredMovies = featuredMovies,
-                        isHomeReady = isHomeReady,
-                        onHomeReady = { viewModel.setHomeReady(true) },
-                        onNavigate = { selectedTab = it },
-                        onSettingsClick = { isSettingsOpen = true },
-                        onRefresh = { viewModel.refreshPlaylist() },
-                        accountInfo = accountInfo,
-                        onAccountOpen = { viewModel.refreshAccountFromPanel() }
-                    )
-                    1 -> LiveTvScreen(
+            Box(modifier = Modifier.weight(1f).clipToBounds()) {
+                if (searchQuery.isNotEmpty()) {
+                    // TELA DE BUSCA GLOBAL
+                    VodScreen(
+                        channels = searchResults,
+                        type = "SEARCH",
                         viewModel = viewModel,
-                        onChannelExpand = { playingChannel = it }
-                    )
-                    2 -> VodScreen(
-                        type = "MOVIE",
-                        viewModel = viewModel,
-                        title = "FILMES",
-                        continueWatching = continueWatching,
+                        title = "RESULTADOS PARA: ${searchQuery.uppercase()}",
+                        continueWatching = emptyList(),
                         onVideoClick = { viewModel.selectChannelForDetails(it) }
                     )
-                    3 -> VodScreen(
-                        type = "SERIES",
-                        viewModel = viewModel,
-                        title = "SÉRIES",
-                        onVideoClick = { viewModel.selectChannelForDetails(it) }
-                    )
+                } else {
+                    when (selectedTab) {
+                        0 -> HomeScreen(
+                            featuredMovies = featuredMovies,
+                            isHomeReady = isHomeReady,
+                            onHomeReady = { viewModel.setHomeReady(true) },
+                            onNavigate = { selectedTab = it },
+                            onSettingsClick = { isSettingsOpen = true },
+                            onRefresh = { viewModel.refreshPlaylist() },
+                            accountInfo = accountInfo,
+                            onAccountOpen = { viewModel.refreshAccountFromPanel() }
+                        )
+                        1 -> LiveTvScreen(
+                            viewModel = viewModel,
+                            onChannelExpand = { playingChannel = it }
+                        )
+                        2 -> VodScreen(
+                            type = "MOVIE",
+                            viewModel = viewModel,
+                            title = "FILMES",
+                            continueWatching = continueWatching,
+                            onVideoClick = { viewModel.selectChannelForDetails(it) }
+                        )
+                        3 -> VodScreen(
+                            type = "SERIES",
+                            viewModel = viewModel,
+                            title = "SÉRIES",
+                            onVideoClick = { viewModel.selectChannelForDetails(it) }
+                        )
+                    }
                 }
             }
         }

@@ -1,28 +1,36 @@
 package com.cinex.player.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.ScrollState
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.paging.compose.collectAsLazyPagingItems
@@ -34,25 +42,110 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import androidx.paging.PagingData
 
+private val AccentGold = Color(0xFFD8A63A)
+private val AccentRed  = Color(0xFFE11D2E)
+
+private fun Modifier.cornerAccents(
+    color: Color = AccentGold,
+    length: Dp = 26.dp,
+    stroke: Dp = 2.dp,
+    cornerRadius: Dp = 16.dp
+): Modifier = drawWithContent {
+    drawContent()
+    val l  = length.toPx()
+    val sw = stroke.toPx()
+    val r  = cornerRadius.toPx()
+    val w  = size.width
+    val h  = size.height
+    val style = Stroke(width = sw, join = StrokeJoin.Miter, cap = StrokeCap.Square)
+
+    // Canto superior-esquerdo: linha horizontal → arco → linha vertical
+    drawPath(Path().apply {
+        moveTo(r + l, sw / 2)
+        lineTo(r, sw / 2)
+        arcTo(
+            rect = androidx.compose.ui.geometry.Rect(sw / 2, sw / 2, r * 2, r * 2),
+            startAngleDegrees = 270f,
+            sweepAngleDegrees = -90f,
+            forceMoveTo = false
+        )
+        lineTo(sw / 2, r + l)
+    }, color, style = style)
+
+    // Canto inferior-direito: linha horizontal → arco → linha vertical
+    drawPath(Path().apply {
+        moveTo(w - r - l, h - sw / 2)
+        lineTo(w - r, h - sw / 2)
+        arcTo(
+            rect = androidx.compose.ui.geometry.Rect(w - r * 2, h - r * 2, w - sw / 2, h - sw / 2),
+            startAngleDegrees = 90f,
+            sweepAngleDegrees = -90f,
+            forceMoveTo = false
+        )
+        lineTo(w - sw / 2, h - r - l)
+    }, color, style = style)
+}
+
+private fun Modifier.verticalScrollbar(
+    scrollState: ScrollState,
+    trackColor: Color = Color.White.copy(alpha = 0.08f),
+    thumbColor: Color = AccentGold,
+    width: Dp = 3.dp,
+    minThumbHeight: Dp = 32.dp
+): Modifier = drawWithContent {
+    drawContent()
+    val maxScroll = scrollState.maxValue.toFloat()
+    if (maxScroll <= 0f) return@drawWithContent
+
+    val viewportH = size.height
+    val totalH = maxScroll + viewportH
+    val thumbH = (viewportH / totalH * viewportH).coerceAtLeast(minThumbHeight.toPx())
+    val thumbTop = (scrollState.value / maxScroll) * (viewportH - thumbH)
+    val trackW = width.toPx()
+    val x = size.width - trackW - 2.dp.toPx()
+    val r = CornerRadius(trackW / 2f)
+
+    // Track
+    drawRoundRect(
+        color = trackColor,
+        topLeft = Offset(x, 0f),
+        size = Size(trackW, viewportH),
+        cornerRadius = r
+    )
+    // Thumb
+    drawRoundRect(
+        color = thumbColor,
+        topLeft = Offset(x, thumbTop),
+        size = Size(trackW, thumbH),
+        cornerRadius = r
+    )
+}
+
 @Composable
 fun VodScreen(
-    type: String = "MOVIE", // "MOVIE", "SERIES" ou "SEARCH"
+    type: String = "MOVIE",
     viewModel: com.cinex.player.ui.MainViewModel,
     title: String,
-    channels: Flow<PagingData<Channel>>? = null, // Adicionado para suportar busca
+    channels: Flow<PagingData<Channel>>? = null,
     continueWatching: List<Channel> = emptyList(),
     onVideoClick: (Channel) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val categoriesFlow = when (type) {
-        "MOVIE" -> viewModel.movieCategories
+        "MOVIE"  -> viewModel.movieCategories
         "SERIES" -> viewModel.seriesCategories
-        else -> flowOf(emptyList())
+        else     -> flowOf(emptyList())
     }
     val categories by categoriesFlow.collectAsState(initial = emptyList())
-    
-    var selectedCategory by remember { mutableStateOf("Tudo") }
-    
+
+    val selectedMovieCategory  by viewModel.selectedMovieCategory.collectAsState()
+    val selectedSeriesCategory by viewModel.selectedSeriesCategory.collectAsState()
+    val selectedCategory = when (type) {
+        "MOVIE"  -> selectedMovieCategory
+        "SERIES" -> selectedSeriesCategory
+        else     -> "Tudo"
+    }
+
     val pagingItems = if (channels != null) {
         channels.collectAsLazyPagingItems()
     } else {
@@ -61,74 +154,106 @@ fun VodScreen(
             else viewModel.getPagedSeriesByCategory(selectedCategory)
         }.collectAsLazyPagingItems()
     }
-    
-    Row(
+
+    Box(
         modifier = modifier
             .fillMaxSize()
-            .padding(top = 16.dp)
+            .background(Color(0xFF0F172A))
     ) {
-        // Só mostramos a coluna de categorias se não for uma busca global
+        // Imagem de fundo com blur (mesma da tela de loading)
+        Image(
+            painter = painterResource(id = com.cinex.player.R.drawable.bg_loading),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize().blur(2.dp),
+            contentScale = ContentScale.Crop,
+            alpha = 0.55f
+        )
+        // Overlay escuro para garantir legibilidade
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xBB0A0F1E))
+        )
+
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = 12.dp)
+        ) {
         if (type != "SEARCH") {
-            // Coluna Esquerda: Categorias / Menu Vertical (COM SCROLL)
+            // ── SIDEBAR DE CATEGORIAS ──────────────────────────────
+            val sidebarScrollState = rememberScrollState()
             Column(
                 modifier = Modifier
                     .width(260.dp)
                     .fillMaxHeight()
-                    .background(Color(0x1AFFFFFF))
-                    .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
-                horizontalAlignment = androidx.compose.ui.Alignment.CenterHorizontally
+                    .padding(start = 16.dp, end = 8.dp, bottom = 16.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(Color(0x0DFFFFFF))
+                    .border(1.dp, Color(0x1AFFFFFF), RoundedCornerShape(16.dp))
+                    .cornerAccents()
+                    .verticalScrollbar(sidebarScrollState)
+                    .verticalScroll(sidebarScrollState)
+                    .padding(16.dp)
             ) {
+                // Cabeçalho do sidebar
                 Text(
                     text = title.uppercase(),
-                    color = Color.White, 
-                    fontSize = 20.sp, 
+                    color = Color.White,
+                    fontSize = 18.sp,
                     fontWeight = FontWeight.ExtraBold,
-                    modifier = Modifier.padding(bottom = 24.dp),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    letterSpacing = 1.sp,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 20.dp)
                 )
-                
-                val counts by viewModel.categoryCounts.collectAsState()
+
+                val counts    by viewModel.categoryCounts.collectAsState()
                 val typeCounts by viewModel.typeCounts.collectAsState()
-                val favCounts by viewModel.favoriteCounts.collectAsState()
+                val favCounts  by viewModel.favoriteCounts.collectAsState()
 
                 categories.forEach { category ->
-                    val countByCat = when (category.id) {
-                        "Tudo" -> typeCounts[type] ?: 0
+                    val count = when (category.id) {
+                        "Tudo"     -> typeCounts[type] ?: 0
                         "Favorito" -> favCounts[type] ?: 0
-                        else -> counts[category.id] ?: 0
+                        else       -> counts[category.id] ?: 0
                     }
                     CategoryItem(
-                        name = category.name, 
-                        count = countByCat, 
+                        name = category.name,
+                        count = count,
                         isSelected = selectedCategory == category.id,
-                        onClick = { selectedCategory = category.id }
+                        onClick = {
+                            if (type == "MOVIE") viewModel.setMovieCategory(category.id)
+                            else viewModel.setSeriesCategory(category.id)
+                        }
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(Modifier.height(6.dp))
                 }
-                
-                // Opção "Continuar Assistindo" no final se houver itens (opcional, ou manter no topo)
+
                 if (continueWatching.isNotEmpty()) {
                     CategoryItem(
-                        name = "Visualizados recentemente", 
-                        count = continueWatching.size, 
+                        name = "Visualizados recentemente",
+                        count = continueWatching.size,
                         isSelected = selectedCategory == "Continuar Assistindo",
-                        onClick = { selectedCategory = "Continuar Assistindo" }
+                        onClick = {
+                            if (type == "MOVIE") viewModel.setMovieCategory("Continuar Assistindo")
+                            else viewModel.setSeriesCategory("Continuar Assistindo")
+                        }
                     )
-                    Spacer(modifier = Modifier.height(8.dp))
                 }
             }
-            Spacer(modifier = Modifier.width(16.dp))
-        } else {
-            // Se for busca, podemos mostrar apenas o título no topo da grade
-            // Ou o MainScreen já trata o título. No VodScreen atual o título está na barra lateral.
-            // Para "SEARCH", vamos adicionar um título no topo se necessário, mas o LazyVerticalGrid ocupará tudo.
         }
 
+        // ── GRID DE CONTEÚDO ──────────────────────────────────────
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 130.dp),
-            modifier = Modifier.weight(1f).padding(end = 16.dp),
-            contentPadding = PaddingValues(bottom = 32.dp)
+            columns = GridCells.Fixed(4),
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 12.dp, vertical = 0.dp),
+            contentPadding = PaddingValues(bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(
                 count = pagingItems.itemCount,
@@ -140,11 +265,11 @@ fun VodScreen(
                     }
                     VodPosterItem(
                         channel = channel,
-                        modifier = Modifier.padding(8.dp),
                         onClick = { onVideoClick(channel) }
                     )
                 }
             }
         }
-    }
+        } // fecha Row
+    } // fecha Box
 }

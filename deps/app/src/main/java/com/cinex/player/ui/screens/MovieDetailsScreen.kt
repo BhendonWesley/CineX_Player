@@ -1,9 +1,8 @@
 package com.cinex.player.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -19,6 +18,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -32,66 +32,65 @@ fun MovieDetailsScreen(
     onBack: () -> Unit,
     onPlay: (Channel) -> Unit
 ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(DarkBackground)
-    ) {
-        // Backdrop em tela cheia com Scrim
+    Box(modifier = Modifier.fillMaxSize().background(DarkBackground)) {
+
+        // Backdrop com gradientes cinematográficos
         AsyncImage(
             model = movie.bannerUrl ?: movie.logoUrl,
             contentDescription = null,
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop,
-            alpha = 0.5f
+            alpha = 0.3f
         )
-        
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(Color.Transparent, DarkBackground),
-                        startY = 0f
-                    )
-                )
+            modifier = Modifier.fillMaxSize().background(
+                Brush.verticalGradient(listOf(Color.Transparent, DarkBackground), startY = 0f)
+            )
         )
-        
         Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.horizontalGradient(
-                        colors = listOf(DarkBackground, Color.Transparent),
-                        endX = 1000f
-                    )
-                )
+            modifier = Modifier.fillMaxSize().background(
+                Brush.horizontalGradient(listOf(DarkBackground, Color.Transparent), endX = 1200f)
+            )
         )
 
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 40.dp, vertical = 24.dp)
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White)
+        Column(modifier = Modifier.fillMaxSize()) {
+
+            // Top bar
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White)
+                }
+                Spacer(modifier = Modifier.width(16.dp))
+                val cleanTitleBar = movie.name
+                    .replace(Regex("(?i)\\s*\\(\\d{4}\\)\\s*"), " ").trim().uppercase()
+                Text(
+                    text = cleanTitleBar,
+                    color = Color.White,
+                    fontSize = 24.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    letterSpacing = 1.sp
+                )
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
-
+            // Conteúdo principal
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.Top
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 60.dp, vertical = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // Poster à esquerda
+                // Poster
                 AsyncImage(
-                    model = movie.logoUrl,
+                    model = movie.posterUrl?.takeIf { it.isNotEmpty() } ?: movie.logoUrl,
                     contentDescription = null,
                     modifier = Modifier
-                        .width(180.dp)
-                        .aspectRatio(2/3f)
+                        .width(160.dp)
+                        .aspectRatio(2f / 3f)
                         .clip(RoundedCornerShape(12.dp))
                         .background(Color.DarkGray),
                     contentScale = ContentScale.Crop
@@ -99,33 +98,27 @@ fun MovieDetailsScreen(
 
                 Spacer(modifier = Modifier.width(32.dp))
 
-                // Informações à direita
-                Column(modifier = Modifier.weight(1f)) {
-                    // Título
+                // Informações
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    val cleanTitle = movie.name
+                        .replace(Regex("(?i)\\s*\\(\\d{4}\\)\\s*"), " ").trim().uppercase()
                     Text(
-                        text = "${movie.name.uppercase()}${if (movie.tmdbYear != null) " (${movie.tmdbYear})" else ""}",
+                        text = "$cleanTitle${if (movie.tmdbYear != null) " (${movie.tmdbYear})" else ""}",
                         color = Color.White,
-                        fontSize = 32.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        lineHeight = 36.sp,
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Black,
+                        lineHeight = 34.sp
                     )
 
-                    // Metadados + Estrelas + Rating (Linha Única para economizar espaço)
+                    // Rating + ano + gênero
                     Row(
-                        verticalAlignment = Alignment.CenterVertically, 
-                        modifier = Modifier.padding(top = 8.dp).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(vertical = 8.dp)
                     ) {
-                        Text(text = movie.tmdbYear ?: "N/A", color = Color.Gray, fontSize = 14.sp)
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(text = "|", color = Color.DarkGray, fontSize = 14.sp)
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(text = movie.groupTitle, color = Color.Gray, fontSize = 14.sp)
-                        
-                        Spacer(modifier = Modifier.width(24.dp))
-                        
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             repeat(5) { index ->
                                 val rating = (movie.tmdbRating ?: 0.0) / 2
@@ -144,52 +137,17 @@ fun MovieDetailsScreen(
                                 fontWeight = FontWeight.Bold
                             )
                         }
-                    }
-
-                    Text(
-                        text = "ADICIONADO EM: 08/03/2026",
-                        color = Color.Gray,
-                        fontSize = 13.sp,
-                        modifier = Modifier.padding(top = 4.dp).fillMaxWidth(),
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                    )
-
-                    // Botões de Ação
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(top = 16.dp).fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center
-                    ) {
-                        Button(
-                            onClick = { onPlay(movie) },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color.White),
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp)
-                        ) {
-                            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black)
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("ASSISTA AGORA", color = Color.Black, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
-                        }
-                        
-                        if (movie.trailerUrl != null) {
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text("•", color = Color.Gray)
+                        Spacer(modifier = Modifier.width(16.dp))
+                        Text(movie.tmdbYear ?: "N/A", color = Color.Gray, fontSize = 16.sp)
+                        if (!movie.groupTitle.isNullOrBlank()) {
                             Spacer(modifier = Modifier.width(16.dp))
-                            
-                            TextButton(
-                                onClick = { 
-                                    movie.trailerUrl.let { url ->
-                                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
-                                        context.startActivity(intent)
-                                    }
-                                }
-                            ) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text("TRAILER", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.ExtraBold)
-                            }
+                            Text("•", color = Color.Gray)
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Text(movie.groupTitle, color = Color.Gray, fontSize = 16.sp)
                         }
                     }
-
-                    Spacer(modifier = Modifier.height(16.dp))
 
                     // Sinopse
                     Text(
@@ -197,38 +155,72 @@ fun MovieDetailsScreen(
                         color = Color.LightGray,
                         fontSize = 15.sp,
                         lineHeight = 22.sp,
-                        maxLines = 6, // Limita para garantir que caiba caso não role
-                        modifier = Modifier.verticalScroll(rememberScrollState())
+                        maxLines = 4,
+                        modifier = Modifier.padding(vertical = 12.dp)
                     )
 
-                    if (!movie.castMembers.isNullOrEmpty()) {
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Text("Elenco", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        Spacer(modifier = Modifier.height(8.dp))
-                        
-                        val castList = movie.castMembers.split(", ").take(6)
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                            items(castList) { actor ->
-                                CastItem(name = actor)
-                            }
+                    // Botões
+                    Row(
+                        modifier = Modifier.padding(top = 16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Button(
+                            onClick = { onPlay(movie) },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.height(52.dp),
+                            contentPadding = PaddingValues(horizontal = 24.dp)
+                        ) {
+                            Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("ASSISTA AGORA", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         }
+
+                        Spacer(modifier = Modifier.width(16.dp))
+
+                        OutlinedButton(
+                            onClick = {
+                                movie.trailerUrl?.let { url ->
+                                    val uri = android.net.Uri.parse(url)
+                                    val youtubeIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri).apply {
+                                        setPackage("com.google.android.youtube")
+                                    }
+                                    try {
+                                        context.startActivity(youtubeIntent)
+                                    } catch (e: android.content.ActivityNotFoundException) {
+                                        context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, uri))
+                                    }
+                                }
+                            },
+                            enabled = movie.trailerUrl != null,
+                            border = BorderStroke(2.dp, if (movie.trailerUrl != null) Color.White else Color.Gray),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.height(52.dp).width(140.dp)
+                        ) {
+                            Text(
+                                "TRAILER",
+                                color = if (movie.trailerUrl != null) Color.White else Color.Gray,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                        }
+                    }
+
+                    // Elenco
+                    if (!movie.castMembers.isNullOrEmpty()) {
+                        Spacer(modifier = Modifier.height(20.dp))
+                        Text("Elenco", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = movie.castMembers,
+                            color = Color.Gray,
+                            fontSize = 13.sp,
+                            lineHeight = 20.sp,
+                            maxLines = 3
+                        )
                     }
                 }
             }
         }
-    }
-}
-
-@Composable
-fun CastItem(name: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            modifier = Modifier
-                .size(80.dp)
-                .clip(RoundedCornerShape(40.dp))
-                .background(Color.Gray)
-        )
-        Spacer(modifier = Modifier.height(8.dp))
-        Text(text = name, color = Color.White, fontSize = 12.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
     }
 }

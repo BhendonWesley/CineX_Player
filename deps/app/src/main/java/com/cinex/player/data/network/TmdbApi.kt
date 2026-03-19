@@ -44,7 +44,9 @@ data class TmdbVideoResponse(
 data class TmdbVideo(
     val key: String,
     val site: String,
-    val type: String
+    val type: String,
+    val name: String = "",
+    val iso_639_1: String = ""
 )
 
 data class TmdbCredits(
@@ -89,6 +91,22 @@ interface TmdbApi {
         @Query("append_to_response") appendToResponse: String = "credits,videos",
         @Query("language") language: String = "pt-BR"
     ): TmdbDetailsResponse
+
+    @GET("movie/{movie_id}/videos")
+    suspend fun getMovieVideos(
+        @retrofit2.http.Path("movie_id") movieId: Int,
+        @Query("api_key") apiKey: String,
+        @Query("language") language: String = "pt-BR",
+        @Query("include_video_language") includeLanguages: String = "pt-BR,en-US"
+    ): TmdbVideoResponse
+
+    @GET("tv/{tv_id}/videos")
+    suspend fun getTvVideos(
+        @retrofit2.http.Path("tv_id") tvId: Int,
+        @Query("api_key") apiKey: String,
+        @Query("language") language: String = "pt-BR",
+        @Query("include_video_language") includeLanguages: String = "pt-BR,en-US"
+    ): TmdbVideoResponse
 
     @GET("tv/{tv_id}/season/{season_number}")
     suspend fun getSeasonDetails(

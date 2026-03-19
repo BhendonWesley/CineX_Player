@@ -176,14 +176,35 @@ class MainViewModel @Inject constructor(
     fun getPagedChannelsByCategory(group: String): Flow<PagingData<Channel>> = 
         repository.getPagedChannelsByCategory(group).cachedIn(viewModelScope)
 
-    fun getPagedMoviesByCategory(group: String): Flow<PagingData<Channel>> = 
-        repository.getPagedMoviesByCategory(group).cachedIn(viewModelScope)
+    private val movieFlowCache = mutableMapOf<String, Flow<PagingData<Channel>>>()
+    private val seriesFlowCache = mutableMapOf<String, Flow<PagingData<Channel>>>()
 
-    fun getPagedSeriesByCategory(group: String): Flow<PagingData<Channel>> = 
-        repository.getPagedSeriesByCategory(group).cachedIn(viewModelScope)
+    private val _selectedMovieCategory = MutableStateFlow("Tudo")
+    val selectedMovieCategory = _selectedMovieCategory.asStateFlow()
+
+    private val _selectedSeriesCategory = MutableStateFlow("Tudo")
+    val selectedSeriesCategory = _selectedSeriesCategory.asStateFlow()
+
+    fun setMovieCategory(id: String) { _selectedMovieCategory.value = id }
+    fun setSeriesCategory(id: String) { _selectedSeriesCategory.value = id }
+
+    fun getPagedMoviesByCategory(group: String): Flow<PagingData<Channel>> =
+        movieFlowCache.getOrPut(group) {
+            repository.getPagedMoviesByCategory(group).cachedIn(viewModelScope)
+        }
+
+    fun getPagedSeriesByCategory(group: String): Flow<PagingData<Channel>> =
+        seriesFlowCache.getOrPut(group) {
+            repository.getPagedSeriesByCategory(group).cachedIn(viewModelScope)
+        }
+
+    private val enrichingIds = mutableSetOf<Int>()
 
     fun onChannelVisible(channel: Channel) {
-        if (channel.category != "LIVE_TV" && (channel.posterUrl.isNullOrEmpty() || channel.tmdbSynopsis.isNullOrEmpty())) {
+        if (channel.category != "LIVE_TV"
+            && channel.tmdbSynopsis.isNullOrEmpty()
+            && enrichingIds.add(channel.id)
+        ) {
             viewModelScope.launch {
                 repository.enrichChannelWithTmdb(channel)
             }
@@ -235,6 +256,10 @@ class MainViewModel @Inject constructor(
         initialValue = emptyMap()
     )
 
+    // Canal atualmente selecionado no Live TV (persiste entre recomposições do LiveTvScreen)
+    private val _selectedLiveChannel = MutableStateFlow<Channel?>(null)
+    val selectedLiveChannel = _selectedLiveChannel.asStateFlow()
+
     private val _selectedChannelTvgId = MutableStateFlow<String?>(null)
     
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -253,8 +278,14 @@ class MainViewModel @Inject constructor(
     val epgListings = _epgListings.asStateFlow()
 
     fun updateSelectedChannel(channel: Channel?) {
+        val previous = _selectedLiveChannel.value
+        _selectedLiveChannel.value = channel
         _selectedChannelTvgId.value = channel?.tvgId
         _epgListings.value = emptyList()
+        // Para o player se deselecionou o canal (troca de categoria)
+        if (channel == null && previous != null) {
+            stopLiveTv()
+        }
         // SEMPRE tenta buscar EPG via Xtream Short EPG como fonte principal
         if (channel != null) {
             val streamId = try {
@@ -588,11 +619,9 @@ class MainViewModel @Inject constructor(
     }
 
     fun stopLiveTv() {
-        if (liveTvPlayer.isPlaying) {
-            liveTvPlayer.pause()
-            liveTvPlayer.stop()
-            liveTvPlayer.clearMediaItems()
-        }
+        liveTvPlayer.pause()
+        liveTvPlayer.stop()
+        liveTvPlayer.clearMediaItems()
     }
 
     override fun onCleared() {

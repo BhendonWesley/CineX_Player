@@ -3,7 +3,11 @@ package com.cinex.player.ui.screens
 import android.app.Activity
 import android.media.AudioManager
 import android.net.Uri
+import android.os.Build
+import android.view.View
 import android.view.ViewGroup
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.widget.FrameLayout
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
@@ -22,8 +26,10 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -56,6 +62,41 @@ fun VideoPlayerScreen(
     val audioManager = remember { context.getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager }
     val activity = context as? Activity
     
+    // Ativa modo imersivo (tela cheia real, sem barras de sistema)
+    DisposableEffect(activity) {
+        activity?.let { act ->
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                act.window.insetsController?.let { controller ->
+                    controller.hide(WindowInsets.Type.systemBars())
+                    controller.systemBarsBehavior =
+                        WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                act.window.decorView.systemUiVisibility = (
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        or View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        or View.SYSTEM_UI_FLAG_FULLSCREEN
+                )
+            }
+        }
+        onDispose {
+            activity?.let { act ->
+                // Restaura brilho automático
+                val lp = act.window.attributes
+                lp.screenBrightness = -1f
+                act.window.attributes = lp
+                // Re-aplica modo imersivo (MainActivity já esconde as barras, garantimos que continua)
+                val controller = androidx.core.view.WindowCompat.getInsetsController(act.window, act.window.decorView)
+                controller.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                controller.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
+
     val isLiveTv = channel.category == "LIVE_TV"
     
     val localPlayer = remember {
@@ -71,14 +112,32 @@ fun VideoPlayerScreen(
     var isPlaying by remember { mutableStateOf(false) }
     var currentPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
-    var isControlsVisible by remember { mutableStateOf(true) }
-    var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FIT) }
+    var isControlsVisible by remember { mutableStateOf(false) }
+    var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FILL) }
     
     var currentVolume by remember { 
         mutableFloatStateOf(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC))
     }
-    var currentBrightness by remember { 
-        mutableFloatStateOf(activity?.window?.attributes?.screenBrightness?.takeIf { it >= 0 } ?: 0.5f)
+    var currentBrightness by remember {
+        val windowBrightness = activity?.window?.attributes?.screenBrightness?.takeIf { it >= 0 }
+        val systemBrightness = try {
+            android.provider.Settings.System.getInt(
+                context.contentResolver,
+                android.provider.Settings.System.SCREEN_BRIGHTNESS
+            ) / 255f
+        } catch (_: Exception) { 0.5f }
+        mutableFloatStateOf(windowBrightness ?: systemBrightness)
+    }
+
+    // Aplica o brilho inicial na janela para garantir que o slider tenha efeito
+    LaunchedEffect(Unit) {
+        activity?.let { act ->
+            if (act.window.attributes.screenBrightness < 0) {
+                val lp = act.window.attributes
+                lp.screenBrightness = currentBrightness
+                act.window.attributes = lp
+            }
+        }
     }
 
     var showResumeDialog by remember { mutableStateOf(channel.resumePosition > 0L && !isLiveTv) }
@@ -239,11 +298,14 @@ fun VideoPlayerScreen(
                         }
                         
                         IconButton(onClick = {
-                            resizeMode = if (resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FIT) 
-                                AspectRatioFrameLayout.RESIZE_MODE_FILL 
-                            else AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            resizeMode = if (resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FILL)
+                                AspectRatioFrameLayout.RESIZE_MODE_FIT
+                            else AspectRatioFrameLayout.RESIZE_MODE_FILL
                         }) {
-                            Icon(Icons.Default.Fullscreen, contentDescription = "Tela Cheia", tint = Color.White, modifier = Modifier.size(24.dp))
+                            Icon(
+                                imageVector = if (resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FILL) Icons.Default.FitScreen else Icons.Default.Fullscreen,
+                                contentDescription = "Tela Cheia", tint = Color.White, modifier = Modifier.size(24.dp)
+                            )
                         }
                     }
                 }
@@ -274,27 +336,30 @@ fun VideoPlayerScreen(
                     }
                 }
 
-                // Sliders de Brilho (Esquerda) e Volume (Direita) — Grandes, como app profissional
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 24.dp, vertical = 80.dp) // Padding do topo/base para não sobrepor botões
-                ) {
+                // Sliders de Brilho (Esquerda) e Volume (Direita)
+                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                    val sliderHeight = maxHeight * 0.45f
+
                     // Brilho (Esquerda)
                     Column(
                         modifier = Modifier
                             .align(Alignment.CenterStart)
-                            .fillMaxHeight(),
+                            .padding(start = 20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
-                        Icon(Icons.Default.LightMode, contentDescription = "Brilho", tint = Color.White, modifier = Modifier.size(28.dp))
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Icon(
+                            Icons.Default.LightMode,
+                            contentDescription = "Brilho",
+                            tint = Color.White.copy(alpha = 0.9f),
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
                         Box(
                             contentAlignment = Alignment.Center,
                             modifier = Modifier
-                                .fillMaxHeight(0.75f)
-                                .width(48.dp)
+                                .height(sliderHeight)
+                                .width(44.dp)
                         ) {
                             Slider(
                                 value = currentBrightness,
@@ -307,8 +372,8 @@ fun VideoPlayerScreen(
                                     }
                                 },
                                 modifier = Modifier
-                                    .requiredWidth(500.dp)
-                                    .height(48.dp)
+                                    .requiredWidth(sliderHeight)
+                                    .height(44.dp)
                                     .graphicsLayer { rotationZ = -90f },
                                 colors = SliderDefaults.colors(
                                     thumbColor = DeepRed,
@@ -323,17 +388,22 @@ fun VideoPlayerScreen(
                     Column(
                         modifier = Modifier
                             .align(Alignment.CenterEnd)
-                            .fillMaxHeight(),
+                            .padding(end = 20.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = "Volume", tint = Color.White, modifier = Modifier.size(28.dp))
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Icon(
+                            Icons.AutoMirrored.Filled.VolumeUp,
+                            contentDescription = "Volume",
+                            tint = Color.White.copy(alpha = 0.9f),
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
                         Box(
                             contentAlignment = Alignment.Center,
                             modifier = Modifier
-                                .fillMaxHeight(0.75f)
-                                .width(48.dp)
+                                .height(sliderHeight)
+                                .width(44.dp)
                         ) {
                             Slider(
                                 value = currentVolume,
@@ -343,8 +413,8 @@ fun VideoPlayerScreen(
                                     audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (it * maxVol).toInt(), 0)
                                 },
                                 modifier = Modifier
-                                    .requiredWidth(500.dp)
-                                    .height(48.dp)
+                                    .requiredWidth(sliderHeight)
+                                    .height(44.dp)
                                     .graphicsLayer { rotationZ = -90f },
                                 colors = SliderDefaults.colors(
                                     thumbColor = DeepRed,

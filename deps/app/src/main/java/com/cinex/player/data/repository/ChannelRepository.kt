@@ -118,19 +118,8 @@ class ChannelRepository @Inject constructor(
 
     fun activatePlaylist(url: String) {
         _activePlaylistUrl.value = url
-        // Trigger background enrichment for missing posters
-        repositoryScope.launch {
-            val movies = channelDao.getMoviesToEnrich(url)
-            val series = channelDao.getSeriesToEnrich(url)
-            val semaphore = Semaphore(5)
-            (movies + series).forEach { channel ->
-                launch {
-                    semaphore.withPermit {
-                        enrichChannelWithTmdb(channel)
-                    }
-                }
-            }
-        }
+        // Enriquecimento lazy: feito por demanda via onChannelVisible no ViewModel
+        // O enriquecimento em massa acontece apenas durante syncPlaylist (primeiro uso)
     }
 
     fun getEpisodesForSeries(seriesName: String): Flow<PagingData<Channel>> {
@@ -519,6 +508,27 @@ class ChannelRepository @Inject constructor(
         channelDao.updateResumePosition(channelId, position, duration)
     }
 
+    private fun pickBestTrailer(videos: List<com.cinex.player.data.network.TmdbVideo>): String? {
+        val yt = videos.filter { it.site == "YouTube" }
+        // 1. Trailer dublado (PT-BR)
+        yt.find { it.type == "Trailer" && it.name.contains("dublado", ignoreCase = true) }
+            ?.let { return "https://www.youtube.com/watch?v=${it.key}" }
+        // 2. Qualquer vídeo dublado
+        yt.find { it.name.contains("dublado", ignoreCase = true) }
+            ?.let { return "https://www.youtube.com/watch?v=${it.key}" }
+        // 3. Trailer em PT-BR pelo código de idioma
+        yt.find { it.type == "Trailer" && it.iso_639_1 == "pt" }
+            ?.let { return "https://www.youtube.com/watch?v=${it.key}" }
+        // 4. Trailer legendado
+        yt.find { it.type == "Trailer" && it.name.contains("legendado", ignoreCase = true) }
+            ?.let { return "https://www.youtube.com/watch?v=${it.key}" }
+        // 5. Qualquer trailer
+        yt.find { it.type == "Trailer" }
+            ?.let { return "https://www.youtube.com/watch?v=${it.key}" }
+        // 6. Qualquer vídeo YouTube como fallback
+        return yt.firstOrNull()?.let { "https://www.youtube.com/watch?v=${it.key}" }
+    }
+
     suspend fun enrichChannelWithTmdb(channel: Channel) = withContext(Dispatchers.IO) {
         try {
             val rawName = channel.name
@@ -535,23 +545,40 @@ class ChannelRepository @Inject constructor(
                 .trim()
                 .replace(Regex("\\s+"), " ")
 
-            val searchResponse = if (channel.category == "MOVIE") {
-                tmdbApi.searchMovie(tmdbApiKey, query, year = extractedYear)
-            } else {
-                val seriesQuery = (channel.seriesName ?: query)
+            val isMovie = channel.category == "MOVIE"
+            val seriesQuery = if (!isMovie) {
+                (channel.seriesName ?: query)
                     .replace(Regex("(?i)s\\d+e\\d+.*"), "")
                     .replace(Regex("(?i)\\(?\\d{4}\\)?"), "")
                     .trim()
+            } else query
+
+            val searchResponse = if (isMovie) {
+                tmdbApi.searchMovie(tmdbApiKey, query, year = extractedYear)
+            } else {
                 tmdbApi.searchSeries(tmdbApiKey, seriesQuery, year = extractedYear)
             }
 
-            // Validação rigorosa do resultado
-            val tmdbResult = if (extractedYear != null) {
-                // Se temos ano no título, procuramos o resultado que bate exatamente com esse ano
-                searchResponse.results.find { res ->
+            // Busca o resultado com ano exato
+            fun findExactYear(results: List<com.cinex.player.data.network.TmdbMovieResult>): com.cinex.player.data.network.TmdbMovieResult? =
+                results.find { res ->
                     val resYear = (res.release_date ?: res.first_air_date)?.take(4)
                     resYear == extractedYear
-                } ?: searchResponse.results.firstOrNull() // Fallback se não achar exato (ou se o TMDB ignorou o filtro)
+                }
+
+            val tmdbResult = if (extractedYear != null) {
+                // 1ª tentativa: busca com filtro de ano (TMDB pode ignorar o filtro)
+                findExactYear(searchResponse.results)
+                    ?: run {
+                        // 2ª tentativa: busca sem filtro de ano + filtragem rigorosa no cliente
+                        val retryResponse = if (isMovie) {
+                            tmdbApi.searchMovie(tmdbApiKey, query)
+                        } else {
+                            tmdbApi.searchSeries(tmdbApiKey, seriesQuery)
+                        }
+                        findExactYear(retryResponse.results)
+                        // Se ainda não encontrou, retorna null — melhor sem dados que com dados errados
+                    }
             } else {
                 searchResponse.results.firstOrNull()
             }
@@ -568,9 +595,17 @@ class ChannelRepository @Inject constructor(
                 val cast = details.credits?.cast?.take(10)?.joinToString(", ") { it.name }
                 val year = tmdbResult.release_date?.take(4) ?: tmdbResult.first_air_date?.take(4)
                 
-                val trailerKey = details.videos?.results?.find { it.site == "YouTube" && it.type == "Trailer" }?.key 
-                    ?: details.videos?.results?.find { it.site == "YouTube" }?.key
-                val trailerUrl = if (trailerKey != null) "https://www.youtube.com/watch?v=$trailerKey" else null
+                // Busca vídeos com pt-BR + en-US para melhor cobertura de trailers
+                val allVideos = try {
+                    if (channel.category == "MOVIE") {
+                        tmdbApi.getMovieVideos(bestMatch.id, tmdbApiKey).results
+                    } else {
+                        tmdbApi.getTvVideos(bestMatch.id, tmdbApiKey).results
+                    }
+                } catch (_: Exception) {
+                    details.videos?.results ?: emptyList()
+                }
+                val trailerUrl = pickBestTrailer(allVideos)
 
                 if (channel.category == "SERIES" && channel.seriesName != null) {
                     val episodes = channelDao.getEpisodesForSeriesList(channel.seriesName, channel.playlistUrl)

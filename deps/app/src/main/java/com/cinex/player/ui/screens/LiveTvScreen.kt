@@ -1,5 +1,6 @@
 package com.cinex.player.ui.screens
 
+import android.view.LayoutInflater
 import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.util.Base64
@@ -8,18 +9,29 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Text
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -27,28 +39,75 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import com.cinex.player.data.model.Channel
+import com.cinex.player.ui.MainViewModel
 import com.cinex.player.ui.components.CategoryItem
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.delay
+
+private val LiveGold = Color(0xFFD8A63A)
+
+private fun Modifier.lazyScrollbar(
+    listState: LazyListState,
+    trackColor: Color = Color.White.copy(alpha = 0.08f),
+    thumbColor: Color = LiveGold,
+    width: Dp = 3.dp,
+    minThumbHeight: Dp = 32.dp
+): Modifier = drawWithContent {
+    drawContent()
+    val totalItems = listState.layoutInfo.totalItemsCount
+    if (totalItems <= 0) return@drawWithContent
+    val visibleItems = listState.layoutInfo.visibleItemsInfo
+    if (visibleItems.isEmpty()) return@drawWithContent
+
+    val viewportH = size.height
+    val firstVisible = listState.firstVisibleItemIndex
+    val firstOffset = listState.firstVisibleItemScrollOffset
+    val avgItemH = visibleItems.sumOf { it.size } / visibleItems.size.toFloat()
+    val totalContentH = avgItemH * totalItems
+    if (totalContentH <= viewportH) return@drawWithContent
+
+    val scrolled = firstVisible * avgItemH + firstOffset
+    val maxScroll = totalContentH - viewportH
+    val fraction = (scrolled / maxScroll).coerceIn(0f, 1f)
+
+    val thumbH = (viewportH / totalContentH * viewportH).coerceAtLeast(minThumbHeight.toPx())
+    val thumbTop = fraction * (viewportH - thumbH)
+    val trackW = width.toPx()
+    val x = size.width - trackW - 2.dp.toPx()
+    val r = CornerRadius(trackW / 2f)
+
+    drawRoundRect(color = trackColor, topLeft = Offset(x, 0f), size = Size(trackW, viewportH), cornerRadius = r)
+    drawRoundRect(color = thumbColor, topLeft = Offset(x, thumbTop), size = Size(trackW, thumbH), cornerRadius = r)
+}
 
 @OptIn(UnstableApi::class)
 @Composable
 fun LiveTvScreen(
-    viewModel: com.cinex.player.ui.MainViewModel,
-    onChannelExpand: (Channel) -> Unit,
+    viewModel: MainViewModel,
+    onChannelExpand: (Channel) -> Unit, // reserved for future use
     modifier: Modifier = Modifier
 ) {
+    val previewPlayerViewRef = remember { mutableStateOf<PlayerView?>(null) }
+
+    // Desconecta o player do preview PlayerView quando o composable sai de composição,
+    // para que o VideoPlayerScreen possa assumir o player sem conflito de surface.
+    DisposableEffect(Unit) {
+        onDispose {
+            previewPlayerViewRef.value?.player = null
+        }
+    }
     val categories by viewModel.liveCategories.collectAsState(initial = emptyList())
     val selectedCategory by viewModel.liveCategoryId.collectAsState()
     
     val pagingItems = viewModel.liveTvPagingData.collectAsLazyPagingItems()
 
-    var selectedChannel by remember { mutableStateOf<Channel?>(null) }
-    val context = LocalContext.current
-    
+    // Canal selecionado vive no ViewModel para persistir entre fullscreen ↔ preview
+    val selectedChannel by viewModel.selectedLiveChannel.collectAsState()
+
     val currentProgram by viewModel.currentProgram.collectAsState()
     val upcomingPrograms by viewModel.upcomingPrograms.collectAsState()
     val epgListings by viewModel.epgListings.collectAsState() // Fallback Xtream
@@ -58,36 +117,48 @@ fun LiveTvScreen(
     val typeCounts by viewModel.typeCounts.collectAsState()
     val favoriteCounts by viewModel.favoriteCounts.collectAsState()
 
-    // Para o player quando a tela sair da composição (troca de aba, etc.)
-    DisposableEffect(Unit) {
-        onDispose {
-            viewModel.stopLiveTv()
-        }
-    }
-
-    // Auto-play: seleciona o primeiro canal quando a lista carrega
+    // Auto-play: seleciona o primeiro canal quando a lista carrega (só se nenhum estiver selecionado)
     LaunchedEffect(pagingItems.itemCount, selectedCategory) {
         if (pagingItems.itemCount > 0 && selectedChannel == null) {
-            selectedChannel = pagingItems[0]
             viewModel.updateSelectedChannel(pagingItems[0])
         }
     }
 
+    // Toca o canal quando muda (playLiveChannel já verifica se é o mesmo URI)
     LaunchedEffect(selectedChannel) {
         selectedChannel?.let { channel ->
             if (channel.streamUrl.isNotEmpty()) {
                 viewModel.playLiveChannel(channel)
             }
-        } ?: viewModel.stopLiveTv()
+        }
     }
 
-    Row(modifier = modifier.fillMaxSize()) {
+    Box(modifier = modifier.fillMaxSize()) {
+        // Imagem de fundo com blur
+        androidx.compose.foundation.Image(
+            painter = androidx.compose.ui.res.painterResource(id = com.cinex.player.R.drawable.bg_loading),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize().blur(2.dp),
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            alpha = 0.55f
+        )
+        // Overlay escuro
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xBB0A0F1E))
+        )
+        // Conteúdo por cima do fundo
+    Row(modifier = Modifier.fillMaxSize()) {
         // 1. Coluna de Categorias
+        val catListState = rememberLazyListState()
         LazyColumn(
+            state = catListState,
             modifier = Modifier
                 .width(200.dp)
                 .fillMaxHeight()
-                .background(Color(0xFF151515))
+                .background(Color(0xCC0D1117))
+                .lazyScrollbar(catListState)
                 .padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -103,7 +174,7 @@ fun LiveTvScreen(
                     count = countByCat,
                     isSelected = selectedCategory == category.id,
                     onClick = {
-                        selectedChannel = null
+                        viewModel.updateSelectedChannel(null)
                         viewModel.setLiveCategory(category.id)
                     }
                 )
@@ -116,7 +187,7 @@ fun LiveTvScreen(
             modifier = Modifier
                 .width(280.dp)
                 .fillMaxHeight()
-                .background(Color(0xFF1A1A1A))
+                .background(Color(0xCC111827))
         ) {
             if (pagingItems.itemCount == 0) {
                 // Loading indicator
@@ -128,7 +199,13 @@ fun LiveTvScreen(
                     strokeWidth = 3.dp
                 )
             }
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
+            val channelListState = rememberLazyListState()
+            LazyColumn(
+                state = channelListState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .lazyScrollbar(channelListState, thumbColor = Color(0xFFC62828))
+            ) {
                 items(
                     count = pagingItems.itemCount,
                     key = pagingItems.itemKey { it.id }
@@ -140,10 +217,9 @@ fun LiveTvScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .background(if (isSelected) Color(0xFFC62828).copy(alpha = 0.2f) else Color.Transparent)
-                                .clickable { 
-                                    selectedChannel = channel
+                                .clickable {
                                     viewModel.updateSelectedChannel(channel)
-                                } 
+                                }
                                 .padding(horizontal = 16.dp, vertical = 12.dp)
                         ) {
                             Text(
@@ -164,7 +240,7 @@ fun LiveTvScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
-                .background(Color(0xFF0D0D0D))
+                .background(Color(0xBB080E18))
         ) {
             // Player (proporção fixa, sem consumir toda a altura)
             Box(
@@ -178,7 +254,9 @@ fun LiveTvScreen(
                 if (selectedChannel != null) {
                     AndroidView(
                         factory = { ctx ->
-                            PlayerView(ctx).apply {
+                            (LayoutInflater.from(ctx).inflate(
+                                com.cinex.player.R.layout.player_view_texture, null
+                            ) as PlayerView).apply {
                                 player = viewModel.liveTvPlayer
                                 useController = false
                                 resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
@@ -186,6 +264,7 @@ fun LiveTvScreen(
                                     ViewGroup.LayoutParams.MATCH_PARENT,
                                     ViewGroup.LayoutParams.MATCH_PARENT
                                 )
+                                previewPlayerViewRef.value = this
                             }
                         },
                         modifier = Modifier.fillMaxSize()
@@ -359,7 +438,10 @@ fun LiveTvScreen(
                 }
             }
         }
-    }
+    } // fim Row
+
+    // Fullscreen agora é via VideoPlayerScreen (MainScreen.playingChannel)
+    } // fim Box
 }
 
 @Composable

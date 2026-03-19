@@ -49,7 +49,7 @@ fun CinematicLoadingScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
+            .background(Color(0xFF0A0F1E))
     ) {
         // Background image
         Image(
@@ -57,22 +57,16 @@ fun CinematicLoadingScreen(
             contentDescription = null,
             modifier = Modifier
                 .fillMaxSize()
-                .blur(8.dp),
+                .blur(2.dp),
             contentScale = ContentScale.Crop,
-            alpha = 0.4f
+            alpha = 0.7f
         )
 
-        // Dark overlay for legibility
+        // Overlay leve
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(Color.Black.copy(alpha = 0.3f), Color.Black.copy(alpha = 0.7f)),
-                        center = Offset.Unspecified,
-                        radius = 2000f
-                    )
-                )
+                .background(Color(0x990A0F1E))
         )
 
         Row(
