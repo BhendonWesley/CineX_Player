@@ -145,7 +145,7 @@ fun LiveTvScreen(
         androidx.compose.foundation.Image(
             painter = androidx.compose.ui.res.painterResource(id = com.cinex.player.R.drawable.bg_loading),
             contentDescription = null,
-            modifier = Modifier.fillMaxSize().blur(2.dp),
+            modifier = Modifier.fillMaxSize().blur(4.dp),
             contentScale = androidx.compose.ui.layout.ContentScale.Crop,
             alpha = 0.55f
         )

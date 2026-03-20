@@ -68,7 +68,7 @@ fun LoadingScreen(
             contentDescription = null,
             modifier = Modifier
                 .fillMaxSize()
-                .blur(2.dp),
+                .blur(4.dp),
             contentScale = ContentScale.Crop,
             alpha = 0.7f
         )

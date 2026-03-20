@@ -136,7 +136,7 @@ fun VodScreen(
         Image(
             painter = painterResource(id = com.cinex.player.R.drawable.bg_loading),
             contentDescription = null,
-            modifier = Modifier.fillMaxSize().blur(2.dp),
+            modifier = Modifier.fillMaxSize().blur(4.dp),
             contentScale = ContentScale.Crop,
             alpha = 0.55f
         )

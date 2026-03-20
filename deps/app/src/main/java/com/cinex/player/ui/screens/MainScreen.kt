@@ -342,7 +342,7 @@ fun DeviceBlockedScreen(macAddress: String, onRetry: () -> Unit = {}) {
             contentDescription = null,
             modifier = Modifier
                 .fillMaxSize()
-                .blur(12.dp),
+                .blur(4.dp),
             contentScale = ContentScale.Crop,
             alpha = 0.2f
         )
