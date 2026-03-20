@@ -240,7 +240,7 @@ fun PlaylistSelectionScreen(
             
             // Aviso legal
             Text(
-                text = "O CineX Player não vende playlists ou assinaturas.\nO CineX Player é um reprodutor de mídia geral e não inclui nenhum conteúdo ou playlists.",
+                text = "O CineX Player é um reprodutor de mídia geral. Não vende, fornece ou inclui playlists, assinaturas ou conteúdo.",
                 color = CineX_TextMuted,
                 fontSize = 9.sp,
                 textAlign = TextAlign.Center,
