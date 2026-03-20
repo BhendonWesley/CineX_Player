@@ -10,13 +10,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Icon
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.geometry.*
 import androidx.compose.ui.graphics.*
@@ -24,9 +24,26 @@ import androidx.compose.ui.graphics.drawscope.*
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cinex.player.R
+
+private fun Modifier.gradientBorder(
+    brush: Brush,
+    borderWidth: Dp = 1.5.dp,
+    cornerRadius: Dp = 16.dp
+): Modifier = drawWithContent {
+    drawContent()
+    val strokeW = borderWidth.toPx()
+    drawRoundRect(
+        brush = brush,
+        topLeft = Offset(strokeW / 2, strokeW / 2),
+        size = Size(size.width - strokeW, size.height - strokeW),
+        cornerRadius = CornerRadius(cornerRadius.toPx()),
+        style = Stroke(width = strokeW, cap = StrokeCap.Round)
+    )
+}
 
 @Composable
 fun CinematicLoadingScreen(
@@ -193,10 +210,18 @@ fun CinematicLoadingScreen(
 
 @Composable
 fun ProgressCard(title: String, progress: Float) {
-    Surface(
-        color = Color(0xFFFFFFFF).copy(alpha = 0.04f),
-        shape = RoundedCornerShape(16.dp),
-        modifier = Modifier.fillMaxWidth()
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color(0xFFFFFFFF).copy(alpha = 0.04f))
+            .gradientBorder(
+                brush = Brush.horizontalGradient(
+                    listOf(Color(0xFFE11D2E), Color(0xFFF59E0B))
+                ),
+                borderWidth = 1.5.dp,
+                cornerRadius = 16.dp
+            )
     ) {
         Column(
             modifier = Modifier.padding(horizontal = 24.dp, vertical = 20.dp)

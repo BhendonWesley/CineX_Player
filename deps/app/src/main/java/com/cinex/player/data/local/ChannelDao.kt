@@ -41,7 +41,16 @@ interface ChannelDao {
     @Query("SELECT * FROM channels WHERE categoryId = :categoryId AND category = 'SERIES' AND playlistUrl = :url GROUP BY seriesName ORDER BY orderIndex ASC")
     fun getUniqueSeriesByCategoryId(categoryId: String, url: String): PagingSource<Int, Channel>
 
-    @Query("SELECT * FROM channels WHERE category IN ('MOVIE', 'SERIES') AND playlistUrl = :url AND bannerUrl IS NOT NULL AND bannerUrl != '' AND bannerUrl NOT LIKE '%null' ORDER BY id DESC LIMIT 20")
+    @Query("""
+        SELECT * FROM channels
+        WHERE category IN ('MOVIE', 'SERIES')
+        AND playlistUrl = :url
+        AND bannerUrl IS NOT NULL AND bannerUrl != '' AND bannerUrl NOT LIKE '%null'
+        AND tmdbSynopsis IS NOT NULL AND tmdbSynopsis != ''
+        GROUP BY CASE WHEN category = 'SERIES' THEN seriesName ELSE name END
+        ORDER BY RANDOM()
+        LIMIT 20
+    """)
     fun getFeaturedContent(url: String): Flow<List<Channel>>
 
     // Retorna todos os episódios de uma série específica, ordenados
@@ -57,7 +66,13 @@ interface ChannelDao {
     @Query("SELECT * FROM channels WHERE category = 'SERIES' AND seriesName = :seriesName AND seasonNumber = :season AND playlistUrl = :url ORDER BY episodeNumber ASC")
     fun getEpisodesBySeasonPaged(seriesName: String, season: Int, url: String): PagingSource<Int, Channel>
 
-    @Query("SELECT * FROM channels WHERE name LIKE '%' || :query || '%' AND playlistUrl = :url ORDER BY orderIndex ASC")
+    @Query("""
+        SELECT * FROM channels
+        WHERE playlistUrl = :url
+        AND REPLACE(REPLACE(REPLACE(REPLACE(LOWER(name), '-', ' '), '.', ' '), '_', ' '), ':', ' ')
+            LIKE '%' || REPLACE(REPLACE(REPLACE(REPLACE(LOWER(:query), '-', ' '), '.', ' '), '_', ' '), ':', ' ') || '%'
+        ORDER BY orderIndex ASC
+    """)
     fun searchChannels(query: String, url: String): PagingSource<Int, Channel>
 
     // ---- Funções Premium (XC / IBO) ---- //
@@ -72,6 +87,12 @@ interface ChannelDao {
 
     @Query("SELECT * FROM channels WHERE isFavorite = 1 AND playlistUrl = :url")
     fun getFavorites(url: String): Flow<List<Channel>>
+
+    @Query("SELECT * FROM channels WHERE isFavorite = 1 AND category = :category AND playlistUrl = :url ORDER BY orderIndex ASC")
+    fun getFavoritesPaged(category: String, url: String): PagingSource<Int, Channel>
+
+    @Query("SELECT * FROM channels WHERE isFavorite = 1 AND category = 'SERIES' AND playlistUrl = :url GROUP BY seriesName ORDER BY orderIndex ASC")
+    fun getFavoriteSeriesPaged(url: String): PagingSource<Int, Channel>
 
     // Atualiza metadados do TMDB
     @Query("UPDATE channels SET tmdbRating = :rating, tmdbSynopsis = :synopsis, posterUrl = :posterUrl, bannerUrl = :bannerUrl, tmdbYear = :year, castMembers = :cast, trailerUrl = :trailer WHERE id = :channelId")
@@ -109,6 +130,23 @@ interface ChannelDao {
 
     @Query("UPDATE channels SET bannerUrl = :stillUrl WHERE seriesName = :seriesName AND seasonNumber = :season AND episodeNumber = :episode AND playlistUrl = :url")
     suspend fun updateEpisodeStill(seriesName: String, season: Int, episode: Int, stillUrl: String, url: String)
+
+    @Query("UPDATE channels SET bannerUrl = CASE WHEN :stillUrl IS NOT NULL AND :stillUrl != '' THEN :stillUrl ELSE bannerUrl END, tmdbSynopsis = CASE WHEN :synopsis IS NOT NULL AND :synopsis != '' THEN :synopsis ELSE tmdbSynopsis END WHERE seriesName = :seriesName AND seasonNumber = :season AND episodeNumber = :episode AND playlistUrl = :url")
+    suspend fun updateEpisodeStillAndSynopsis(seriesName: String, season: Int, episode: Int, stillUrl: String?, synopsis: String?, url: String)
+
+    @Query("""
+        SELECT * FROM channels
+        WHERE category = 'SERIES'
+        AND seriesName = :seriesName
+        AND playlistUrl = :url
+        AND (
+            (seasonNumber = :currentSeason AND episodeNumber = :currentEpisode + 1) OR
+            (seasonNumber = :currentSeason + 1 AND episodeNumber = 1)
+        )
+        ORDER BY seasonNumber ASC, episodeNumber ASC
+        LIMIT 1
+    """)
+    suspend fun getNextEpisode(seriesName: String, currentSeason: Int, currentEpisode: Int, url: String): Channel?
 }
 
 data class CategoryCount(

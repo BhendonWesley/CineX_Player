@@ -11,11 +11,18 @@ import android.view.WindowInsetsController
 import android.widget.FrameLayout
 import androidx.annotation.OptIn
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -30,9 +37,12 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -41,11 +51,14 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import androidx.compose.ui.res.painterResource
 import com.cinex.player.data.model.Channel
+import kotlinx.coroutines.delay
 import com.cinex.player.ui.MainViewModel
 import com.cinex.player.ui.theme.DeepRed
 import kotlinx.coroutines.delay
@@ -55,6 +68,7 @@ import kotlinx.coroutines.delay
 fun VideoPlayerScreen(
     channel: Channel,
     onBack: () -> Unit,
+    onPlayNext: (Channel) -> Unit = {},
     modifier: Modifier = Modifier,
     viewModel: MainViewModel = hiltViewModel()
 ) {
@@ -98,12 +112,18 @@ fun VideoPlayerScreen(
     }
 
     val isLiveTv = channel.category == "LIVE_TV"
-    
+
     val localPlayer = remember {
         if (!isLiveTv) {
-            ExoPlayer.Builder(context).build().apply {
-                playWhenReady = true
-            }
+            val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
+                .setBufferDurationsMs(15_000, 50_000, 2_000, 5_000)
+                .setPrioritizeTimeOverSizeThresholds(true)
+                .build()
+            ExoPlayer.Builder(context)
+                .setLoadControl(loadControl)
+                .build().apply {
+                    playWhenReady = true
+                }
         } else null
     }
 
@@ -113,7 +133,11 @@ fun VideoPlayerScreen(
     var currentPosition by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
     var isControlsVisible by remember { mutableStateOf(false) }
-    var resizeMode by remember { mutableIntStateOf(AspectRatioFrameLayout.RESIZE_MODE_FILL) }
+    // Live TV: FIT para não cortar a imagem. VOD: FILL para preencher tela
+    var resizeMode by remember { mutableIntStateOf(
+        if (isLiveTv) AspectRatioFrameLayout.RESIZE_MODE_FIT
+        else AspectRatioFrameLayout.RESIZE_MODE_FILL
+    ) }
     
     var currentVolume by remember { 
         mutableFloatStateOf(audioManager.getStreamVolume(AudioManager.STREAM_MUSIC).toFloat() / audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC))
@@ -142,6 +166,50 @@ fun VideoPlayerScreen(
 
     var showResumeDialog by remember { mutableStateOf(channel.resumePosition > 0L && !isLiveTv) }
     var showExitDialog by remember { mutableStateOf(false) }
+    var isVideoEnded by remember(channel.id) { mutableStateOf(false) }
+    var showNextEpisodeOverlay by remember(channel.id) { mutableStateOf(false) }
+    var nextEpisode by remember(channel.id) { mutableStateOf<Channel?>(null) }
+
+    // Pré-busca o próximo episódio assim que o vídeo começa (para ter pronto)
+    LaunchedEffect(channel.id) {
+        if (channel.category == "SERIES") {
+            nextEpisode = viewModel.getNextEpisode(channel)
+        }
+    }
+
+    // Detecta fim do vídeo via Player.Listener
+    DisposableEffect(exoPlayer) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_ENDED && !isLiveTv) {
+                    isVideoEnded = true
+                    showNextEpisodeOverlay = true
+                }
+            }
+        }
+        exoPlayer.addListener(listener)
+        onDispose { exoPlayer.removeListener(listener) }
+    }
+
+    // Detecção de créditos: mostra overlay quando faltam ~90s ou 95% do vídeo
+    LaunchedEffect(channel.id) {
+        if (isLiveTv || channel.category != "SERIES") return@LaunchedEffect
+        while (true) {
+            delay(2000)
+            val dur = exoPlayer.duration
+            val pos = exoPlayer.currentPosition
+            if (dur > 120_000 && pos > 0) { // só se vídeo tem mais de 2 min
+                val remaining = dur - pos
+                val percentage = pos.toFloat() / dur.toFloat()
+                if (remaining <= 90_000 || percentage >= 0.95f) {
+                    if (nextEpisode != null && !showNextEpisodeOverlay && !isVideoEnded) {
+                        showNextEpisodeOverlay = true
+                    }
+                    break
+                }
+            }
+        }
+    }
 
     LaunchedEffect(channel) {
         if (!isLiveTv) {
@@ -233,19 +301,34 @@ fun VideoPlayerScreen(
                 }
             }
     ) {
+        val fullscreenPlayerViewRef = remember { mutableStateOf<PlayerView?>(null) }
+
+        DisposableEffect(Unit) {
+            onDispose {
+                // Desconecta o player da surface fullscreen para que o preview reclaim imediatamente
+                if (isLiveTv) {
+                    fullscreenPlayerViewRef.value?.player = null
+                }
+            }
+        }
+
         AndroidView(
-            factory = {
-                PlayerView(it).apply {
+            factory = { context ->
+                val view = android.view.LayoutInflater.from(context)
+                    .inflate(com.cinex.player.R.layout.player_view_texture, null, false) as PlayerView
+                view.apply {
                     player = exoPlayer
-                    useController = false 
+                    useController = false
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
+                    fullscreenPlayerViewRef.value = this
                 }
             },
-            update = { 
+            update = {
                 it.resizeMode = resizeMode
+                it.player = exoPlayer
             },
             modifier = Modifier.fillMaxSize()
         )
@@ -361,7 +444,7 @@ fun VideoPlayerScreen(
                                 .height(sliderHeight)
                                 .width(44.dp)
                         ) {
-                            Slider(
+                            VerticalSlider(
                                 value = currentBrightness,
                                 onValueChange = {
                                     currentBrightness = it
@@ -372,14 +455,11 @@ fun VideoPlayerScreen(
                                     }
                                 },
                                 modifier = Modifier
-                                    .requiredWidth(sliderHeight)
-                                    .height(44.dp)
-                                    .graphicsLayer { rotationZ = -90f },
-                                colors = SliderDefaults.colors(
-                                    thumbColor = DeepRed,
-                                    activeTrackColor = DeepRed,
-                                    inactiveTrackColor = Color.White.copy(alpha = 0.3f)
-                                )
+                                    .fillMaxHeight()
+                                    .width(44.dp),
+                                thumbColor = DeepRed,
+                                activeTrackColor = DeepRed,
+                                inactiveTrackColor = Color.White.copy(alpha = 0.3f)
                             )
                         }
                     }
@@ -405,7 +485,7 @@ fun VideoPlayerScreen(
                                 .height(sliderHeight)
                                 .width(44.dp)
                         ) {
-                            Slider(
+                            VerticalSlider(
                                 value = currentVolume,
                                 onValueChange = {
                                     currentVolume = it
@@ -413,14 +493,11 @@ fun VideoPlayerScreen(
                                     audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (it * maxVol).toInt(), 0)
                                 },
                                 modifier = Modifier
-                                    .requiredWidth(sliderHeight)
-                                    .height(44.dp)
-                                    .graphicsLayer { rotationZ = -90f },
-                                colors = SliderDefaults.colors(
-                                    thumbColor = DeepRed,
-                                    activeTrackColor = DeepRed,
-                                    inactiveTrackColor = Color.White.copy(alpha = 0.3f)
-                                )
+                                    .fillMaxHeight()
+                                    .width(44.dp),
+                                thumbColor = DeepRed,
+                                activeTrackColor = DeepRed,
+                                inactiveTrackColor = Color.White.copy(alpha = 0.3f)
                             )
                         }
                     }
@@ -442,6 +519,22 @@ fun VideoPlayerScreen(
                     Text(formatTime(duration), color = Color.White, fontSize = 14.sp)
                 }
             }
+        }
+
+        // Overlay de Próximo Episódio (estilo Netflix)
+        if (showNextEpisodeOverlay && nextEpisode != null) {
+            NextEpisodeOverlay(
+                nextEpisode = nextEpisode!!,
+                isVideoEnded = isVideoEnded,
+                onPlayNext = {
+                    showNextEpisodeOverlay = false
+                    onPlayNext(nextEpisode!!)
+                },
+                onDismiss = {
+                    showNextEpisodeOverlay = false
+                },
+                onBack = onBack
+            )
         }
 
         if (showResumeDialog) {
@@ -539,5 +632,233 @@ fun PlayerDialog(
                 }
             }
         }
+    }
+}
+
+@Composable
+fun NextEpisodeOverlay(
+    nextEpisode: Channel,
+    isVideoEnded: Boolean,
+    onPlayNext: () -> Unit,
+    onDismiss: () -> Unit,
+    onBack: () -> Unit
+) {
+    val progress = remember { Animatable(0f) }
+    val autoPlayDuration = if (isVideoEnded) 10_000 else 30_000 // 10s se acabou, 30s durante créditos
+
+    LaunchedEffect(isVideoEnded) {
+        progress.snapTo(0f)
+        progress.animateTo(
+            targetValue = 1f,
+            animationSpec = tween(durationMillis = autoPlayDuration, easing = LinearEasing)
+        )
+        onPlayNext()
+    }
+
+    val seasonEp = buildString {
+        nextEpisode.seasonNumber?.let { append("T$it") }
+        nextEpisode.episodeNumber?.let {
+            if (isNotEmpty()) append(" · ")
+            append("E$it")
+        }
+    }
+
+    val accentRed = Color(0xFFE11D2E)
+    val accentGold = Color(0xFFF59E0B)
+
+    if (isVideoEnded) {
+        // Tela cheia quando o vídeo terminou
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color(0xEE000000)),
+            contentAlignment = Alignment.Center
+        ) {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Image(
+                    painter = painterResource(id = com.cinex.player.R.drawable.logo_cinex),
+                    contentDescription = "CineX",
+                    modifier = Modifier.height(80.dp)
+                )
+
+                Spacer(modifier = Modifier.height(40.dp))
+
+                Text(
+                    text = nextEpisode.seriesName ?: nextEpisode.name,
+                    color = Color.White,
+                    fontSize = 22.sp,
+                    fontWeight = FontWeight.Bold,
+                    textAlign = TextAlign.Center
+                )
+                if (seasonEp.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(text = seasonEp, color = accentGold, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                }
+
+                Spacer(modifier = Modifier.height(32.dp))
+                NextEpisodeButton(progress = progress.value, accentColor = accentRed, onClick = onPlayNext)
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(
+                    text = "Voltar",
+                    color = Color.White.copy(alpha = 0.4f),
+                    fontSize = 14.sp,
+                    modifier = Modifier.clickable { onBack() }
+                )
+            }
+        }
+    } else {
+        // Mini overlay no canto inferior direito durante os créditos
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(end = 32.dp, bottom = 80.dp),
+            contentAlignment = Alignment.BottomEnd
+        ) {
+            Column(
+                modifier = Modifier
+                    .width(280.dp)
+                    .border(1.dp, accentRed.copy(alpha = 0.3f), RoundedCornerShape(12.dp))
+                    .background(Color(0xF0101010), RoundedCornerShape(12.dp))
+                    .padding(14.dp),
+                horizontalAlignment = Alignment.Start
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column {
+                        Text(
+                            text = nextEpisode.seriesName ?: nextEpisode.name,
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
+                        )
+                        if (seasonEp.isNotEmpty()) {
+                            Text(text = seasonEp, color = accentGold, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                        }
+                    }
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Fechar",
+                        tint = Color.White.copy(alpha = 0.4f),
+                        modifier = Modifier.size(18.dp).clickable { onDismiss() }
+                    )
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+                NextEpisodeButton(progress = progress.value, accentColor = accentRed, onClick = onPlayNext)
+            }
+        }
+    }
+}
+
+@Composable
+private fun NextEpisodeButton(progress: Float, accentColor: Color, onClick: () -> Unit) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(44.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(Color(0xFF1A1A1A))
+            .clickable { onClick() },
+        contentAlignment = Alignment.CenterStart
+    ) {
+        // Barra de progresso com cor do sistema
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .fillMaxWidth(progress)
+                .background(accentColor.copy(alpha = 0.7f))
+        )
+        Row(
+            modifier = Modifier.fillMaxSize(),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.PlayArrow, contentDescription = "Play", tint = Color.White, modifier = Modifier.size(22.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text("Próximo episódio", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        }
+    }
+}
+
+@Composable
+fun VerticalSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+    thumbColor: Color,
+    activeTrackColor: Color,
+    inactiveTrackColor: Color
+) {
+    var heightPx by remember { androidx.compose.runtime.mutableFloatStateOf(0f) }
+
+    Canvas(
+        modifier = modifier
+            .onSizeChanged { heightPx = it.height.toFloat() }
+            .pointerInput(Unit) {
+                detectDragGestures(
+                    onDragStart = { offset ->
+                        if (heightPx > 0) {
+                            val newValue = 1f - (offset.y / heightPx).coerceIn(0f, 1f)
+                            onValueChange(newValue)
+                        }
+                    }
+                ) { change, _ ->
+                    change.consume()
+                    if (heightPx > 0) {
+                        val newValue = 1f - (change.position.y / heightPx).coerceIn(0f, 1f)
+                        onValueChange(newValue)
+                    }
+                }
+            }
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = { offset ->
+                        if (heightPx > 0) {
+                            val newValue = 1f - (offset.y / heightPx).coerceIn(0f, 1f)
+                            onValueChange(newValue)
+                        }
+                    }
+                )
+            }
+    ) {
+        val trackWidth = 4.dp.toPx()
+        val thumbRadius = 10.dp.toPx()
+        val centerY = size.width / 2
+
+        // Fundo (Barra inativa)
+        drawLine(
+            color = inactiveTrackColor,
+            start = Offset(centerY, thumbRadius),
+            end = Offset(centerY, size.height - thumbRadius),
+            strokeWidth = trackWidth,
+            cap = StrokeCap.Round
+        )
+
+        // Posição Y do thumb
+        val trackHeight = size.height - (2 * thumbRadius)
+        // Y cresce para baixo, então inverte
+        val thumbY = thumbRadius + trackHeight * (1f - value)
+
+        // Barra ativa (da base até o thumb)
+        drawLine(
+            color = activeTrackColor,
+            start = Offset(centerY, size.height - thumbRadius),
+            end = Offset(centerY, thumbY),
+            strokeWidth = trackWidth,
+            cap = StrokeCap.Round
+        )
+
+        // Bolinha (Thumb)
+        drawCircle(
+            color = thumbColor,
+            radius = thumbRadius,
+            center = Offset(centerY, thumbY)
+        )
     }
 }

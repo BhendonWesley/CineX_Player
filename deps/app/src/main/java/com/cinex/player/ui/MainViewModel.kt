@@ -17,6 +17,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.common.PlaybackException
+import androidx.media3.common.Player
 import com.cinex.player.data.network.XtreamCodesApi
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
@@ -60,8 +62,14 @@ class MainViewModel @Inject constructor(
     private val _syncStatus = MutableStateFlow("Iniciando...")
     val syncStatus = _syncStatus.asStateFlow()
 
+    private val _syncCompletedEvent = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val syncCompletedEvent: SharedFlow<String> = _syncCompletedEvent.asSharedFlow()
+
     private val _isDeviceBlocked = MutableStateFlow(false)
     val isDeviceBlocked = _isDeviceBlocked.asStateFlow()
+
+    private val _isLoadingEpisodes = MutableStateFlow(false)
+    val isLoadingEpisodes = _isLoadingEpisodes.asStateFlow()
 
     private val _homeReady = MutableStateFlow(false)
     val homeReady = _homeReady.asStateFlow()
@@ -82,7 +90,47 @@ class MainViewModel @Inject constructor(
     private val _accountInfo = MutableStateFlow<AccountInfo?>(generateAccountInfoInternal())
     val accountInfo = _accountInfo.asStateFlow()
 
+    private var liveRetryCount = 0
+    private val maxLiveRetries = 3
+
     init {
+        // Listener para recuperação automática do player de Live TV
+        liveTvPlayer.addListener(object : Player.Listener {
+            override fun onPlayerError(error: PlaybackException) {
+                // Reconecta automaticamente ao mesmo canal
+                val lastChannel = _selectedLiveChannel.value
+                if (lastChannel != null && liveRetryCount < maxLiveRetries) {
+                    liveRetryCount++
+                    viewModelScope.launch {
+                        kotlinx.coroutines.delay(1500L * liveRetryCount) // backoff progressivo
+                        liveTvPlayer.stop()
+                        liveTvPlayer.clearMediaItems()
+                        val mediaItem = androidx.media3.common.MediaItem.Builder()
+                            .setUri(lastChannel.streamUrl)
+                            .setLiveConfiguration(
+                                androidx.media3.common.MediaItem.LiveConfiguration.Builder()
+                                    .setMaxPlaybackSpeed(1.04f)
+                                    .setMaxOffsetMs(12_000)
+                                    .setMinOffsetMs(3_000)
+                                    .setTargetOffsetMs(6_000)
+                                    .build()
+                            )
+                            .build()
+                        liveTvPlayer.setMediaItem(mediaItem)
+                        liveTvPlayer.prepare()
+                        liveTvPlayer.play()
+                    }
+                }
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                if (playbackState == Player.STATE_READY) {
+                    // Reset retry counter quando volta a reproduzir com sucesso
+                    liveRetryCount = 0
+                }
+            }
+        })
+
         generateAccountInfo()
         viewModelScope.launch {
             val playlists = repository.allPlaylists.first()
@@ -176,8 +224,9 @@ class MainViewModel @Inject constructor(
     fun getPagedChannelsByCategory(group: String): Flow<PagingData<Channel>> = 
         repository.getPagedChannelsByCategory(group).cachedIn(viewModelScope)
 
-    private val movieFlowCache = mutableMapOf<String, Flow<PagingData<Channel>>>()
-    private val seriesFlowCache = mutableMapOf<String, Flow<PagingData<Channel>>>()
+    private val movieFlowCache = LinkedHashMap<String, Flow<PagingData<Channel>>>()
+    private val seriesFlowCache = LinkedHashMap<String, Flow<PagingData<Channel>>>()
+    private val MAX_CACHE_SIZE = 50
 
     private val _selectedMovieCategory = MutableStateFlow("Tudo")
     val selectedMovieCategory = _selectedMovieCategory.asStateFlow()
@@ -190,13 +239,25 @@ class MainViewModel @Inject constructor(
 
     fun getPagedMoviesByCategory(group: String): Flow<PagingData<Channel>> =
         movieFlowCache.getOrPut(group) {
+            if (movieFlowCache.size >= MAX_CACHE_SIZE) {
+                movieFlowCache.remove(movieFlowCache.keys.first())
+            }
             repository.getPagedMoviesByCategory(group).cachedIn(viewModelScope)
         }
 
     fun getPagedSeriesByCategory(group: String): Flow<PagingData<Channel>> =
         seriesFlowCache.getOrPut(group) {
+            if (seriesFlowCache.size >= MAX_CACHE_SIZE) {
+                seriesFlowCache.remove(seriesFlowCache.keys.first())
+            }
             repository.getPagedSeriesByCategory(group).cachedIn(viewModelScope)
         }
+
+    fun clearPagingCaches() {
+        movieFlowCache.clear()
+        seriesFlowCache.clear()
+        enrichingIds.clear()
+    }
 
     private val enrichingIds = mutableSetOf<Int>()
 
@@ -277,16 +338,19 @@ class MainViewModel @Inject constructor(
     private val _epgListings = MutableStateFlow<List<com.cinex.player.data.network.EpgListing>>(emptyList())
     val epgListings = _epgListings.asStateFlow()
 
+    // Cache de EPG por streamId com TTL de 30 minutos
+    private data class EpgCacheEntry(
+        val listings: List<com.cinex.player.data.network.EpgListing>,
+        val timestamp: Long
+    )
+    private val epgCache = mutableMapOf<Int, EpgCacheEntry>()
+    private val EPG_CACHE_TTL = 30 * 60 * 1000L // 30 minutos
+
     fun updateSelectedChannel(channel: Channel?) {
-        val previous = _selectedLiveChannel.value
         _selectedLiveChannel.value = channel
         _selectedChannelTvgId.value = channel?.tvgId
         _epgListings.value = emptyList()
-        // Para o player se deselecionou o canal (troca de categoria)
-        if (channel == null && previous != null) {
-            stopLiveTv()
-        }
-        // SEMPRE tenta buscar EPG via Xtream Short EPG como fonte principal
+        // Busca EPG com cache
         if (channel != null) {
             val streamId = try {
                 channel.remoteId.replace("live_", "").toInt()
@@ -296,9 +360,23 @@ class MainViewModel @Inject constructor(
     }
 
     fun fetchEpg(streamId: Int) {
+        // Verifica cache primeiro
+        val cached = epgCache[streamId]
+        if (cached != null && (System.currentTimeMillis() - cached.timestamp) < EPG_CACHE_TTL) {
+            _epgListings.value = cached.listings
+            return
+        }
+
         viewModelScope.launch {
             repository.getShortEpg(streamId).onSuccess { response ->
-                _epgListings.value = response.epg_listings ?: emptyList()
+                val listings = response.epg_listings ?: emptyList()
+                _epgListings.value = listings
+                epgCache[streamId] = EpgCacheEntry(listings, System.currentTimeMillis())
+                // Limpa entradas antigas para não crescer infinitamente
+                if (epgCache.size > 50) {
+                    val oldest = epgCache.entries.minByOrNull { it.value.timestamp }?.key
+                    oldest?.let { epgCache.remove(it) }
+                }
             }.onFailure {
                 _epgListings.value = emptyList()
             }
@@ -600,12 +678,17 @@ class MainViewModel @Inject constructor(
 
     private fun enrichChannelMetadata(channel: Channel) {
         viewModelScope.launch {
-            repository.enrichChannelWithTmdb(channel)
             if (channel.category == "SERIES") {
+                _isLoadingEpisodes.value = true
+                // Primeiro carrega episódios do servidor, DEPOIS enriquece com TMDB
                 val seriesId = try { channel.remoteId.replace("series_", "").toInt() } catch (e: Exception) { -1 }
                 if (seriesId != -1) {
                     repository.fetchAndStoreEpisodes(seriesId, channel.seriesName ?: channel.name)
                 }
+                repository.enrichChannelWithTmdb(channel)
+                _isLoadingEpisodes.value = false
+            } else {
+                repository.enrichChannelWithTmdb(channel)
             }
         }
     }
@@ -678,12 +761,14 @@ class MainViewModel @Inject constructor(
 
     fun refreshPlaylist() {
         refreshAccountFromPanel()
+        clearPagingCaches()
         val playlist = _currentPlaylist.value ?: return
         loadPlaylist(playlist.url)
     }
 
     fun loadPlaylist(url: String) {
         viewModelScope.launch {
+            clearPagingCaches()
             _isLoading.value = true
             _errorMessage.value = null
             
@@ -705,10 +790,11 @@ class MainViewModel @Inject constructor(
             result.onSuccess {
                 _syncStatus.value = "Finalizado!"
                 fetchRealAccountInfo(url)
+                _syncCompletedEvent.tryEmit("Servidor resincronizado com sucesso!")
             }.onFailure {
                 _errorMessage.value = it.message ?: "Erro desconhecido ao carregar lista"
             }
-            
+
             rotateJob.cancel()
             _isLoading.value = false
         }
@@ -717,6 +803,11 @@ class MainViewModel @Inject constructor(
     fun updateFavorite(channelId: Int, isFav: Boolean) {
         viewModelScope.launch {
             repository.updateFavorite(channelId, isFav)
+            // Atualiza o canal selecionado localmente para refletir na UI
+            val current = _selectedLiveChannel.value
+            if (current != null && current.id == channelId) {
+                _selectedLiveChannel.value = current.copy(isFavorite = isFav)
+            }
         }
     }
 
@@ -783,19 +874,39 @@ class MainViewModel @Inject constructor(
         }
     }
 
+    suspend fun getNextEpisode(channel: Channel): Channel? {
+        return repository.getNextEpisode(channel)
+    }
+
     fun playLiveChannel(channel: Channel) {
         val currentMediaItem = liveTvPlayer.currentMediaItem
         val newUri = android.net.Uri.parse(channel.streamUrl)
-        
+
         // Só recarrega se o canal for diferente
         if (currentMediaItem?.localConfiguration?.uri != newUri) {
+            liveRetryCount = 0
             liveTvPlayer.stop()
             liveTvPlayer.clearMediaItems()
-            val mediaItem = androidx.media3.common.MediaItem.fromUri(newUri)
+
+            // MediaItem com LiveConfiguration para manter o player perto do live edge
+            val mediaItem = androidx.media3.common.MediaItem.Builder()
+                .setUri(newUri)
+                .setLiveConfiguration(
+                    androidx.media3.common.MediaItem.LiveConfiguration.Builder()
+                        .setMaxPlaybackSpeed(1.04f)   // acelera suavemente para alcançar o live edge
+                        .setMaxOffsetMs(12_000)        // máximo 12s atrás do live
+                        .setMinOffsetMs(3_000)         // mínimo 3s atrás (margem de segurança)
+                        .setTargetOffsetMs(6_000)      // alvo: 6s atrás do live edge
+                        .build()
+                )
+                .build()
+
             liveTvPlayer.setMediaItem(mediaItem)
             liveTvPlayer.prepare()
             liveTvPlayer.play()
         } else if (!liveTvPlayer.isPlaying) {
+            // Mesmo canal — retoma e busca o live edge para não ficar dessincronizado
+            liveTvPlayer.seekToDefaultPosition()
             liveTvPlayer.play()
         }
     }

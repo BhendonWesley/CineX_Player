@@ -157,39 +157,39 @@ class ChannelRepository @Inject constructor(
                 prefetchDistance = 10,
                 enablePlaceholders = false
             )) {
-                if (categoryId == "Tudo" || categoryId == "Favorito" || categoryId == "Favoritos") {
-                    channelDao.getChannelsByCategory("LIVE_TV", url)
-                } else {
-                    channelDao.getChannelsByCategoryIdPaged(categoryId, url)
+                when (categoryId) {
+                    "Tudo" -> channelDao.getChannelsByCategory("LIVE_TV", url)
+                    "Favorito", "Favoritos" -> channelDao.getFavoritesPaged("LIVE_TV", url)
+                    else -> channelDao.getChannelsByCategoryIdPaged(categoryId, url)
                 }
             }.flow
-        }.cachedIn(repositoryScope)
+        }
     }
 
     fun getPagedMoviesByCategory(categoryId: String): Flow<PagingData<Channel>> {
         return _activePlaylistUrl.flatMapLatest { url ->
             if (url == null) flowOf(PagingData.empty())
             else Pager(PagingConfig(pageSize = 50)) {
-                if (categoryId == "Tudo" || categoryId == "Favorito" || categoryId == "Favoritos") {
-                    channelDao.getChannelsByCategory("MOVIE", url)
-                } else {
-                    channelDao.getChannelsByCategoryIdPaged(categoryId, url)
+                when (categoryId) {
+                    "Tudo" -> channelDao.getChannelsByCategory("MOVIE", url)
+                    "Favorito", "Favoritos" -> channelDao.getFavoritesPaged("MOVIE", url)
+                    else -> channelDao.getChannelsByCategoryIdPaged(categoryId, url)
                 }
             }.flow
-        }.cachedIn(repositoryScope)
+        }
     }
 
     fun getPagedSeriesByCategory(categoryId: String): Flow<PagingData<Channel>> {
         return _activePlaylistUrl.flatMapLatest { url ->
             if (url == null) flowOf(PagingData.empty())
             else Pager(PagingConfig(pageSize = 50)) {
-                if (categoryId == "Tudo" || categoryId == "Favorito" || categoryId == "Favoritos") {
-                    channelDao.getUniqueSeries(url)
-                } else {
-                    channelDao.getUniqueSeriesByCategoryId(categoryId, url)
+                when (categoryId) {
+                    "Tudo" -> channelDao.getUniqueSeries(url)
+                    "Favorito", "Favoritos" -> channelDao.getFavoriteSeriesPaged(url)
+                    else -> channelDao.getUniqueSeriesByCategoryId(categoryId, url)
                 }
             }.flow
-        }.cachedIn(repositoryScope)
+        }
     }
 
     fun getFeaturedContent(url: String): Flow<List<Channel>> {
@@ -612,28 +612,39 @@ class ChannelRepository @Inject constructor(
                     episodes.forEach { ep ->
                         channelDao.updateTmdbInfo(
                             ep.id,
-                            tmdbResult.vote_average,
-                            details.overview,
-                            posterUrl,
-                            backdropUrl,
-                            year,
+                            ep.tmdbRating ?: tmdbResult.vote_average,
+                            ep.tmdbSynopsis ?: details.overview, // preserva sinopse individual do episódio
+                            ep.posterUrl ?: posterUrl, // preserva poster individual se existir
+                            ep.bannerUrl, // preserva o still individual do episódio
+                            ep.tmdbYear ?: year,
                             cast,
                             trailerUrl
                         )
                     }
                     
-                    // Busca thumbnails específicas de episódios (Stills)
+                    // Busca thumbnails e sinopses específicas de episódios
                     details.seasons?.forEach { season ->
                         try {
                             val seasonDetails = tmdbApi.getSeasonDetails(bestMatch.id, season.season_number, tmdbApiKey)
                             seasonDetails.episodes.forEach { tmdbEp ->
                                 val stillUrl = tmdbEp.still_path?.let { "https://image.tmdb.org/t/p/w500$it" }
                                 if (stillUrl != null) {
-                                    channelDao.updateEpisodeStill(
+                                    channelDao.updateEpisodeStillAndSynopsis(
                                         channel.seriesName!!,
                                         season.season_number,
                                         tmdbEp.episode_number,
                                         stillUrl,
+                                        tmdbEp.overview,
+                                        channel.playlistUrl
+                                    )
+                                } else if (!tmdbEp.overview.isNullOrBlank()) {
+                                    // Mesmo sem still, salva a sinopse do episódio
+                                    channelDao.updateEpisodeStillAndSynopsis(
+                                        channel.seriesName!!,
+                                        season.season_number,
+                                        tmdbEp.episode_number,
+                                        "",
+                                        tmdbEp.overview,
                                         channel.playlistUrl
                                     )
                                 }
@@ -732,6 +743,16 @@ class ChannelRepository @Inject constructor(
         channelDao.resetAllResumePositions()
     }
 
+    suspend fun getNextEpisode(channel: Channel): Channel? {
+        if (channel.category != "SERIES" || channel.seriesName == null) return null
+        return channelDao.getNextEpisode(
+            seriesName = channel.seriesName,
+            currentSeason = channel.seasonNumber ?: 1,
+            currentEpisode = channel.episodeNumber ?: 0,
+            url = channel.playlistUrl
+        )
+    }
+
     suspend fun fetchAndStoreEpisodes(seriesId: Int, seriesName: String) = withContext(Dispatchers.IO) {
         val url = _activePlaylistUrl.value ?: return@withContext
         try {
@@ -752,11 +773,16 @@ class ChannelRepository @Inject constructor(
                     .create(XtreamCodesApi::class.java)
                 
                 val response = api.getSeriesInfo(username, password, seriesId)
-                
+
+                // Preservar dados TMDB existentes (stills, posters, etc.)
+                val existingEpisodes = channelDao.getEpisodesForSeriesList(seriesName, url)
+                    .associateBy { it.remoteId }
+
                 response.episodes?.forEach { (seasonNumStr, episodeList) ->
                     val seasonNum = seasonNumStr.toIntOrNull() ?: 1
                     val channels = episodeList.map { ep ->
                         val remoteId = "series_ep_${ep.id}"
+                        val old = existingEpisodes[remoteId]
                         Channel(
                             name = ep.title,
                             logoUrl = ep.info?.movie_image,
@@ -769,12 +795,16 @@ class ChannelRepository @Inject constructor(
                             episodeNumber = ep.episode_num,
                             playlistUrl = url,
                             remoteId = remoteId,
-                            tmdbSynopsis = ep.info?.plot,
-                            tmdbRating = ep.info?.rating?.toDoubleOrNull(),
-                            tmdbYear = ep.info?.release_date?.take(4)
+                            tmdbSynopsis = ep.info?.plot ?: old?.tmdbSynopsis,
+                            tmdbRating = ep.info?.rating?.toDoubleOrNull() ?: old?.tmdbRating,
+                            tmdbYear = ep.info?.release_date?.take(4) ?: old?.tmdbYear,
+                            bannerUrl = old?.bannerUrl,
+                            posterUrl = old?.posterUrl,
+                            castMembers = old?.castMembers,
+                            trailerUrl = old?.trailerUrl
                         )
                     }
-                    
+
                     // Inserir episódios (conflito REPLACE para atualizar metadados se já existirem)
                     channelDao.insertAll(channels)
                 }

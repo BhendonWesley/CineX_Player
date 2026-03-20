@@ -6,7 +6,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
@@ -44,6 +46,7 @@ fun TopNavigationBar(
     showMovies: Boolean = true,
     showSeries: Boolean = true
 ) {
+    val keyboardController = LocalSoftwareKeyboardController.current
     val allTabs = listOf(
         "INÍCIO"     to 0,
         "TV AO VIVO" to 1,
@@ -176,6 +179,7 @@ fun TopNavigationBar(
                         cursorBrush = SolidColor(NavWhite),
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() }),
                         modifier = Modifier.fillMaxWidth()
                     )
                 }

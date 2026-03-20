@@ -9,6 +9,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material3.Icon
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -20,6 +24,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
@@ -75,18 +80,33 @@ fun MainScreen(
     val continueWatching by viewModel.continueWatching.collectAsState()
     val isDeviceBlocked by viewModel.isDeviceBlocked.collectAsState()
 
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(Unit) {
+        viewModel.syncCompletedEvent.collect { message ->
+            snackbarHostState.showSnackbar(message, duration = SnackbarDuration.Short)
+        }
+    }
+
     // Para o player ao trocar de aba (imediato, sem depender do onDispose do LiveTvScreen)
     LaunchedEffect(selectedTab) {
-        if (selectedTab != 1) {
+        if (selectedTab != 1 && playingChannel == null) {
+            viewModel.stopLiveTv()
+        }
+    }
+
+    // Para o player ao abrir tela de detalhes (filme/série) — o usuário saiu do Live TV
+    LaunchedEffect(selectedDetailsChannel) {
+        if (selectedDetailsChannel != null && playingChannel == null) {
             viewModel.stopLiveTv()
         }
     }
 
     // Para o player quando o app vai para background (botão Home, notificações, etc.)
+    // Não para se estiver em fullscreen (playingChannel != null)
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE) {
+            if (event == Lifecycle.Event.ON_PAUSE && playingChannel == null) {
                 viewModel.stopLiveTv()
             }
         }
@@ -108,10 +128,14 @@ fun MainScreen(
             moviesProgress = movieProgress / 100f,
             seriesProgress = seriesProgress / 100f
         )
-    } else if (playingChannel != null) {
+    } else if (playingChannel != null && playingChannel!!.category != "LIVE_TV") {
+        // Para filmes/séries, substitui a tela inteira
         VideoPlayerScreen(
             channel = playingChannel!!,
-            onBack = { playingChannel = null }
+            onBack = { playingChannel = null },
+            onPlayNext = { nextChannel ->
+                playingChannel = nextChannel
+            }
         )
     } else if (selectedDetailsChannel != null) {
         // Tela de Detalhes (Premium)
@@ -167,8 +191,9 @@ fun MainScreen(
             }
         )
     } else {
+        Box(modifier = modifier.fillMaxSize()) {
         Column(
-            modifier = modifier
+            modifier = Modifier
                 .fillMaxSize()
                 .background(DarkBackground)
         ) {
@@ -200,41 +225,96 @@ fun MainScreen(
                         viewModel = viewModel,
                         title = "RESULTADOS PARA: ${searchQuery.uppercase()}",
                         continueWatching = emptyList(),
-                        onVideoClick = { viewModel.selectChannelForDetails(it) }
+                        onVideoClick = { channel ->
+                            if (channel.category == "LIVE_TV") {
+                                // Leva direto para o preview na aba TV ao Vivo, na categoria correta
+                                if (channel.categoryId.isNotEmpty()) {
+                                    viewModel.setLiveCategory(channel.categoryId)
+                                }
+                                viewModel.updateSelectedChannel(channel)
+                                viewModel.playLiveChannel(channel)
+                                viewModel.updateSearchQuery("")
+                                selectedTab = 1
+                            } else {
+                                viewModel.selectChannelForDetails(channel)
+                            }
+                        }
                     )
                 } else {
-                    when (selectedTab) {
-                        0 -> HomeScreen(
-                            featuredMovies = featuredMovies,
-                            isHomeReady = isHomeReady,
-                            onHomeReady = { viewModel.setHomeReady(true) },
-                            onNavigate = { selectedTab = it },
-                            onSettingsClick = { isSettingsOpen = true },
-                            onRefresh = { viewModel.refreshPlaylist() },
-                            accountInfo = accountInfo,
-                            onAccountOpen = { viewModel.refreshAccountFromPanel() }
-                        )
-                        1 -> LiveTvScreen(
-                            viewModel = viewModel,
-                            onChannelExpand = { playingChannel = it }
-                        )
-                        2 -> VodScreen(
-                            type = "MOVIE",
-                            viewModel = viewModel,
-                            title = "FILMES",
-                            continueWatching = continueWatching,
-                            onVideoClick = { viewModel.selectChannelForDetails(it) }
-                        )
-                        3 -> VodScreen(
-                            type = "SERIES",
-                            viewModel = viewModel,
-                            title = "SÉRIES",
-                            onVideoClick = { viewModel.selectChannelForDetails(it) }
-                        )
+                    // Mantém todas as telas compostas para preservar o estado do Paging.
+                    // Apenas a aba ativa é visível e recebe input.
+                    fun Modifier.tabVisibility(tabIndex: Int): Modifier = this
+                        .alpha(if (selectedTab == tabIndex) 1f else 0f)
+                        .then(if (selectedTab != tabIndex) Modifier.size(0.dp) else Modifier.fillMaxSize())
+
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        Box(modifier = Modifier.tabVisibility(0)) {
+                            HomeScreen(
+                                featuredMovies = featuredMovies,
+                                isHomeReady = isHomeReady,
+                                onHomeReady = { viewModel.setHomeReady(true) },
+                                onNavigate = { selectedTab = it },
+                                onSettingsClick = { isSettingsOpen = true },
+                                onRefresh = { viewModel.refreshPlaylist() },
+                                accountInfo = accountInfo,
+                                onAccountOpen = { viewModel.refreshAccountFromPanel() }
+                            )
+                        }
+                        Box(modifier = Modifier.tabVisibility(1)) {
+                            LiveTvScreen(
+                                viewModel = viewModel,
+                                onChannelExpand = { playingChannel = it },
+                                isActive = selectedTab == 1
+                            )
+                        }
+                        Box(modifier = Modifier.tabVisibility(2)) {
+                            VodScreen(
+                                type = "MOVIE",
+                                viewModel = viewModel,
+                                title = "FILMES",
+                                continueWatching = continueWatching,
+                                onVideoClick = { viewModel.selectChannelForDetails(it) }
+                            )
+                        }
+                        Box(modifier = Modifier.tabVisibility(3)) {
+                            VodScreen(
+                                type = "SERIES",
+                                viewModel = viewModel,
+                                title = "SÉRIES",
+                                onVideoClick = { viewModel.selectChannelForDetails(it) }
+                            )
+                        }
                     }
                 }
             }
         }
+
+        // Live TV fullscreen: overlay sobre o conteúdo para não destruir o LiveTvScreen
+        if (playingChannel != null && playingChannel!!.category == "LIVE_TV") {
+            VideoPlayerScreen(
+                channel = playingChannel!!,
+                onBack = { playingChannel = null },
+                onPlayNext = { nextChannel ->
+                    playingChannel = nextChannel
+                }
+            )
+        }
+
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(bottom = 24.dp),
+            snackbar = { data ->
+                Snackbar(
+                    snackbarData = data,
+                    containerColor = Color(0xFF282B30),
+                    contentColor = Color.White,
+                    shape = RoundedCornerShape(12.dp)
+                )
+            }
+        )
+        } // fim Box
     }
 }
 

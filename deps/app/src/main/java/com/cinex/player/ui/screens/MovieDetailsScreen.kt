@@ -3,9 +3,7 @@ package com.cinex.player.ui.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PlayArrow
@@ -22,6 +20,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import coil.compose.AsyncImage
 import com.cinex.player.data.model.Channel
 import com.cinex.player.ui.theme.DarkBackground
@@ -98,11 +98,9 @@ fun MovieDetailsScreen(
 
                 Spacer(modifier = Modifier.width(32.dp))
 
-                // Informações
+                // Informações — layout fixo: título + rating sempre visíveis, sinopse com scroll, botões fixos embaixo
                 Column(
-                    modifier = Modifier
-                        .weight(1f)
-                        .verticalScroll(rememberScrollState())
+                    modifier = Modifier.weight(1f)
                 ) {
                     val cleanTitle = movie.name
                         .replace(Regex("(?i)\\s*\\(\\d{4}\\)\\s*"), " ").trim().uppercase()
@@ -149,19 +147,24 @@ fun MovieDetailsScreen(
                         }
                     }
 
-                    // Sinopse
-                    Text(
-                        text = movie.tmdbSynopsis ?: "Sem sinopse disponível.",
-                        color = Color.LightGray,
-                        fontSize = 15.sp,
-                        lineHeight = 22.sp,
-                        maxLines = 4,
-                        modifier = Modifier.padding(vertical = 12.dp)
-                    )
+                    // Sinopse — scroll próprio, ocupa o espaço disponível entre rating e botões
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(vertical = 8.dp)
+                    ) {
+                        Text(
+                            text = movie.tmdbSynopsis ?: "Sem sinopse disponível.",
+                            color = Color.LightGray,
+                            fontSize = 15.sp,
+                            lineHeight = 22.sp,
+                            modifier = Modifier.verticalScroll(rememberScrollState())
+                        )
+                    }
 
-                    // Botões
+                    // Botões — sempre fixos e visíveis na parte inferior
                     Row(
-                        modifier = Modifier.padding(top = 16.dp),
+                        modifier = Modifier.padding(bottom = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Button(
@@ -206,19 +209,6 @@ fun MovieDetailsScreen(
                         }
                     }
 
-                    // Elenco
-                    if (!movie.castMembers.isNullOrEmpty()) {
-                        Spacer(modifier = Modifier.height(20.dp))
-                        Text("Elenco", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = movie.castMembers,
-                            color = Color.Gray,
-                            fontSize = 13.sp,
-                            lineHeight = 20.sp,
-                            maxLines = 3
-                        )
-                    }
                 }
             }
         }

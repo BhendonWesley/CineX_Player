@@ -2,7 +2,6 @@ package com.cinex.player.ui.screens
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -24,9 +23,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -45,45 +42,20 @@ import androidx.paging.PagingData
 private val AccentGold = Color(0xFFD8A63A)
 private val AccentRed  = Color(0xFFE11D2E)
 
-private fun Modifier.cornerAccents(
-    color: Color = AccentGold,
-    length: Dp = 26.dp,
-    stroke: Dp = 2.dp,
+private fun Modifier.gradientBorder(
+    brush: Brush,
+    borderWidth: Dp = 1.5.dp,
     cornerRadius: Dp = 16.dp
 ): Modifier = drawWithContent {
     drawContent()
-    val l  = length.toPx()
-    val sw = stroke.toPx()
-    val r  = cornerRadius.toPx()
-    val w  = size.width
-    val h  = size.height
-    val style = Stroke(width = sw, join = StrokeJoin.Miter, cap = StrokeCap.Square)
-
-    // Canto superior-esquerdo: linha horizontal → arco → linha vertical
-    drawPath(Path().apply {
-        moveTo(r + l, sw / 2)
-        lineTo(r, sw / 2)
-        arcTo(
-            rect = androidx.compose.ui.geometry.Rect(sw / 2, sw / 2, r * 2, r * 2),
-            startAngleDegrees = 270f,
-            sweepAngleDegrees = -90f,
-            forceMoveTo = false
-        )
-        lineTo(sw / 2, r + l)
-    }, color, style = style)
-
-    // Canto inferior-direito: linha horizontal → arco → linha vertical
-    drawPath(Path().apply {
-        moveTo(w - r - l, h - sw / 2)
-        lineTo(w - r, h - sw / 2)
-        arcTo(
-            rect = androidx.compose.ui.geometry.Rect(w - r * 2, h - r * 2, w - sw / 2, h - sw / 2),
-            startAngleDegrees = 90f,
-            sweepAngleDegrees = -90f,
-            forceMoveTo = false
-        )
-        lineTo(w - sw / 2, h - r - l)
-    }, color, style = style)
+    val strokeW = borderWidth.toPx()
+    drawRoundRect(
+        brush = brush,
+        topLeft = Offset(strokeW / 2, strokeW / 2),
+        size = Size(size.width - strokeW, size.height - strokeW),
+        cornerRadius = CornerRadius(cornerRadius.toPx()),
+        style = Stroke(width = strokeW, cap = StrokeCap.Round)
+    )
 }
 
 private fun Modifier.verticalScrollbar(
@@ -190,8 +162,11 @@ fun VodScreen(
                     .padding(start = 16.dp, end = 8.dp, bottom = 16.dp)
                     .clip(RoundedCornerShape(16.dp))
                     .background(Color(0x0DFFFFFF))
-                    .border(1.dp, Color(0x1AFFFFFF), RoundedCornerShape(16.dp))
-                    .cornerAccents()
+                    .gradientBorder(
+                        brush = Brush.linearGradient(listOf(AccentRed, AccentGold)),
+                        borderWidth = 1.5.dp,
+                        cornerRadius = 16.dp
+                    )
                     .verticalScrollbar(sidebarScrollState)
                     .verticalScroll(sidebarScrollState)
                     .padding(16.dp)

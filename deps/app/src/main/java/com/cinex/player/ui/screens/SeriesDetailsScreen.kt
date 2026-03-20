@@ -55,6 +55,8 @@ fun SeriesDetailsScreen(
         }
     }
 
+
+
     val episodesFlow = remember(series.seriesName, selectedSeason) {
         viewModel.getEpisodesBySeasonPaged(series.seriesName ?: "", selectedSeason)
     }
@@ -141,9 +143,7 @@ fun SeriesDetailsScreen(
                     Spacer(modifier = Modifier.width(32.dp))
 
                     Column(
-                        modifier = Modifier
-                            .weight(1f)
-                            .verticalScroll(rememberScrollState())
+                        modifier = Modifier.weight(1f)
                     ) {
                         Text(
                             text = (series.seriesName ?: series.name).uppercase(),
@@ -185,17 +185,24 @@ fun SeriesDetailsScreen(
                             Text(text = "${sortedSeasons.size} Temporadas", color = Color.Gray, fontSize = 16.sp)
                         }
 
-                        Text(
-                            text = series.tmdbSynopsis ?: "Sem sinopse disponível.",
-                            color = Color.LightGray,
-                            fontSize = 15.sp,
-                            lineHeight = 22.sp,
-                            maxLines = 4,
-                            modifier = Modifier.padding(vertical = 12.dp)
-                        )
+                        // Sinopse — scroll próprio, ocupa espaço entre rating e botões
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(vertical = 8.dp)
+                        ) {
+                            Text(
+                                text = series.tmdbSynopsis ?: "Sem sinopse disponível.",
+                                color = Color.LightGray,
+                                fontSize = 15.sp,
+                                lineHeight = 22.sp,
+                                modifier = Modifier.verticalScroll(rememberScrollState())
+                            )
+                        }
 
+                        // Botões — sempre fixos e visíveis na parte inferior
                         Row(
-                            modifier = Modifier.padding(top = 16.dp),
+                            modifier = Modifier.padding(bottom = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Button(
@@ -307,7 +314,7 @@ fun SeriesDetailsScreen(
                             ) { index ->
                                 pagingItems[index]?.let { episode ->
                                     EpisodeItem(
-                                        episode = episode, 
+                                        episode = episode,
                                         seriesPoster = series.bannerUrl ?: series.logoUrl,
                                         onClick = { onPlayEpisode(episode) }
                                     )
@@ -323,11 +330,11 @@ fun SeriesDetailsScreen(
 
 @Composable
 fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: String?, onClick: () -> Unit) {
-    // Hierarquia de imagens: Still do Episódio (bannerUrl) > Poster da Série (posterUrl) > Logo original > Fallback passado
+    // Hierarquia de imagens: Still TMDB > Logo original (Xtream movie_image) > Poster série > Fallback
     val imageModel = when {
         !episode.bannerUrl.isNullOrBlank() -> episode.bannerUrl
-        !episode.posterUrl.isNullOrBlank() -> episode.posterUrl
         !episode.logoUrl.isNullOrBlank() -> episode.logoUrl
+        !episode.posterUrl.isNullOrBlank() -> episode.posterUrl
         else -> seriesPoster
     }
 
@@ -348,13 +355,15 @@ fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: Stri
                     .background(Color.DarkGray),
                 contentAlignment = Alignment.Center
             ) {
-                AsyncImage(
-                    model = imageModel,
-                    contentDescription = null,
-                    modifier = Modifier.fillMaxSize(),
-                    contentScale = ContentScale.Crop
-                )
-                
+                if (imageModel != null) {
+                    AsyncImage(
+                        model = imageModel,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+
                 // Overlay de Play
                 Box(
                     modifier = Modifier
@@ -371,9 +380,9 @@ fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: Stri
                     )
                 }
             }
-            
+
             Spacer(modifier = Modifier.width(16.dp))
-            
+
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "E${episode.episodeNumber}: ${episode.name}",
@@ -382,7 +391,7 @@ fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: Stri
                     fontWeight = FontWeight.Bold,
                     maxLines = 2
                 )
-                
+
                 if (!episode.tmdbSynopsis.isNullOrBlank()) {
                     Text(
                         text = episode.tmdbSynopsis!!,
@@ -397,3 +406,4 @@ fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: Stri
         }
     }
 }
+

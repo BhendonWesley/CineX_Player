@@ -89,17 +89,11 @@ private fun Modifier.lazyScrollbar(
 fun LiveTvScreen(
     viewModel: MainViewModel,
     onChannelExpand: (Channel) -> Unit, // reserved for future use
+    isActive: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val previewPlayerViewRef = remember { mutableStateOf<PlayerView?>(null) }
 
-    // Desconecta o player do preview PlayerView quando o composable sai de composição,
-    // para que o VideoPlayerScreen possa assumir o player sem conflito de surface.
-    DisposableEffect(Unit) {
-        onDispose {
-            previewPlayerViewRef.value?.player = null
-        }
-    }
     val categories by viewModel.liveCategories.collectAsState(initial = emptyList())
     val selectedCategory by viewModel.liveCategoryId.collectAsState()
     
@@ -117,14 +111,16 @@ fun LiveTvScreen(
     val typeCounts by viewModel.typeCounts.collectAsState()
     val favoriteCounts by viewModel.favoriteCounts.collectAsState()
 
-    // Auto-play: seleciona o primeiro canal quando a lista carrega (só se nenhum estiver selecionado)
-    LaunchedEffect(pagingItems.itemCount, selectedCategory) {
-        if (pagingItems.itemCount > 0 && selectedChannel == null) {
-            viewModel.updateSelectedChannel(pagingItems[0])
+    // Auto-seleciona o primeiro canal apenas quando a aba Live TV está visível
+    LaunchedEffect(pagingItems.itemCount, isActive) {
+        if (isActive && selectedChannel == null && pagingItems.itemCount > 0) {
+            pagingItems[0]?.let { firstChannel ->
+                viewModel.updateSelectedChannel(firstChannel)
+            }
         }
     }
 
-    // Toca o canal quando muda (playLiveChannel já verifica se é o mesmo URI)
+    // Toca o canal somente quando o usuário seleciona manualmente
     LaunchedEffect(selectedChannel) {
         selectedChannel?.let { channel ->
             if (channel.streamUrl.isNotEmpty()) {
@@ -146,7 +142,7 @@ fun LiveTvScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xBB0A0F1E))
+                .background(Color(0xBB101010))
         )
         // Conteúdo por cima do fundo
     Row(modifier = Modifier.fillMaxSize()) {
@@ -157,7 +153,7 @@ fun LiveTvScreen(
             modifier = Modifier
                 .width(200.dp)
                 .fillMaxHeight()
-                .background(Color(0xCC0D1117))
+                .background(Color(0xCC141414))
                 .lazyScrollbar(catListState)
                 .padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -174,7 +170,6 @@ fun LiveTvScreen(
                     count = countByCat,
                     isSelected = selectedCategory == category.id,
                     onClick = {
-                        viewModel.updateSelectedChannel(null)
                         viewModel.setLiveCategory(category.id)
                     }
                 )
@@ -187,7 +182,7 @@ fun LiveTvScreen(
             modifier = Modifier
                 .width(280.dp)
                 .fillMaxHeight()
-                .background(Color(0xCC111827))
+                .background(Color(0xCC1A1A1A))
         ) {
             if (pagingItems.itemCount == 0) {
                 // Loading indicator
@@ -240,7 +235,7 @@ fun LiveTvScreen(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
-                .background(Color(0xBB080E18))
+                .background(Color(0xBB0E0E0E))
         ) {
             // Player (proporção fixa, sem consumir toda a altura)
             Box(
@@ -267,12 +262,36 @@ fun LiveTvScreen(
                                 previewPlayerViewRef.value = this
                             }
                         },
+                        update = { playerView ->
+                            // Re-anexa o player ao preview quando volta do fullscreen
+                            if (playerView.player !== viewModel.liveTvPlayer) {
+                                playerView.player = viewModel.liveTvPlayer
+                            }
+                        },
                         modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                // Botão favorito no canto superior direito do preview
+                val isFavorite = selectedChannel?.isFavorite == true
+                IconButton(
+                    onClick = { selectedChannel?.let { viewModel.updateFavorite(it.id, !isFavorite) } },
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                        .size(36.dp)
+                        .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(50))
+                ) {
+                    Icon(
+                        imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                        contentDescription = if (isFavorite) "Remover favorito" else "Adicionar favorito",
+                        tint = if (isFavorite) Color(0xFFC62828) else Color.White.copy(alpha = 0.8f),
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
 
-            // EPG + Título + Favorito (ocupa o espaço restante)
+            // EPG + Título (ocupa o espaço restante)
             Column(
                 modifier = Modifier
                     .weight(0.55f)
@@ -281,11 +300,13 @@ fun LiveTvScreen(
             ) {
                 // Título do Canal
                 Text(
-                    text = (selectedChannel?.name ?: "NOME DO CANAL").uppercase(),
-                    fontSize = 20.sp,
+                    text = (selectedChannel?.name ?: "SELECIONE UM CANAL").uppercase(),
+                    fontSize = 18.sp,
                     fontWeight = FontWeight.ExtraBold,
                     color = Color.White,
-                    modifier = Modifier.padding(vertical = 8.dp)
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
                 )
 
                 val hasEpg = (currentProgram != null) || epgListings.isNotEmpty() || upcomingPrograms.isNotEmpty()
@@ -409,31 +430,6 @@ fun LiveTvScreen(
                                 }
                             }
                         }
-                    }
-                }
-
-                // Botão Favorito (sempre visível na base)
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    val isFavorite = selectedChannel?.isFavorite == true
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(if (isFavorite) Color.White.copy(alpha = 0.1f) else Color(0xFFC62828).copy(alpha = 0.1f))
-                            .clickable { selectedChannel?.let { viewModel.updateFavorite(it.id, !isFavorite) } }
-                            .padding(horizontal = 16.dp, vertical = 8.dp)
-                    ) {
-                        Text(
-                            text = if (isFavorite) "REMOVER FAVORITO" else "ADICIONAR FAVORITO",
-                            color = if (isFavorite) Color.White else Color(0xFFC62828),
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
                     }
                 }
             }

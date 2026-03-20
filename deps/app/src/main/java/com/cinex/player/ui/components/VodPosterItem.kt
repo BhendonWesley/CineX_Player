@@ -45,22 +45,12 @@ fun VodPosterItem(
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
 
-    val scale by animateFloatAsState(
-        targetValue = if (isPressed) 1.05f else 1f,
-        animationSpec = tween(180),
-        label = "card_scale"
-    )
-
     val gradientBrush = Brush.linearGradient(listOf(CardRed, CardGold))
 
     Box(
         modifier = modifier
             .fillMaxWidth()
             .aspectRatio(2f / 3f)
-            .graphicsLayer {
-                scaleX = scale
-                scaleY = scale
-            }
             .clip(RoundedCornerShape(12.dp))
             .then(
                 if (isPressed) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(12.dp))
@@ -94,56 +84,65 @@ fun VodPosterItem(
                     .background(Color.Black.copy(alpha = 0.52f))
             )
 
-            // Botão play central
-            Box(
-                modifier = Modifier
-                    .size(52.dp)
-                    .align(Alignment.Center)
-                    .border(2.dp, CardGold, CircleShape)
-                    .background(Color.Black.copy(alpha = 0.45f), CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    Icons.Default.PlayArrow,
-                    contentDescription = null,
-                    tint = CardGold,
-                    modifier = Modifier.size(30.dp)
-                )
-            }
-
-            // Título + metadados (inferior)
             Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.BottomCenter)
-                    .background(
-                        Brush.verticalGradient(
-                            listOf(Color.Transparent, Color.Black.copy(alpha = 0.92f))
-                        )
-                    )
-                    .padding(horizontal = 10.dp, vertical = 10.dp)
+                modifier = Modifier.fillMaxSize()
             ) {
-                Text(
-                    text = channel.name,
-                    color = Color.White,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                val meta = listOfNotNull(
-                    channel.groupTitle?.takeIf { it.isNotBlank() },
-                    channel.tmdbYear?.takeIf { it.isNotBlank() }
-                ).joinToString(" | ")
-                if (meta.isNotEmpty()) {
-                    Spacer(Modifier.height(3.dp))
+                // Área superior: Botão play dinamicamente centralizado
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .border(2.dp, CardGold, CircleShape)
+                            .background(Color.Black.copy(alpha = 0.45f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = CardGold,
+                            modifier = Modifier.size(30.dp)
+                        )
+                    }
+                }
+
+                // Título + metadados (inferior)
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.92f))
+                            )
+                        )
+                        .padding(horizontal = 10.dp, vertical = 10.dp)
+                ) {
                     Text(
-                        text = meta,
-                        color = Color(0xFF9CA3AF),
-                        fontSize = 11.sp,
-                        maxLines = 1,
+                        text = channel.name,
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
+                    val meta = listOfNotNull(
+                        channel.groupTitle?.takeIf { it.isNotBlank() },
+                        channel.tmdbYear?.takeIf { it.isNotBlank() }
+                    ).joinToString(" | ")
+                    if (meta.isNotEmpty()) {
+                        Spacer(Modifier.height(3.dp))
+                        Text(
+                            text = meta,
+                            color = Color(0xFF9CA3AF),
+                            fontSize = 11.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
             }
         } else {
