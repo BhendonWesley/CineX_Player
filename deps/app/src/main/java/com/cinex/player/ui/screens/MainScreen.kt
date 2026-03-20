@@ -73,6 +73,13 @@ fun MainScreen(
     // Simplificamos a lógica de seleção de playlist: se não houver playlist ativa
     val showPlaylistSelectionDashboard = currentPlaylist == null || isServerSwapOpen
 
+    // Para o Live TV sempre que sair do contexto principal (playlist removida, bloqueio, etc.)
+    LaunchedEffect(showPlaylistSelectionDashboard, isDeviceBlocked) {
+        if (showPlaylistSelectionDashboard || isDeviceBlocked) {
+            viewModel.stopLiveTv()
+        }
+    }
+
     val isLiveHidden by viewModel.isLiveTvHidden.collectAsState()
     val isMoviesHidden by viewModel.isMoviesHidden.collectAsState()
     val isSeriesHidden by viewModel.isSeriesHidden.collectAsState()
@@ -89,14 +96,14 @@ fun MainScreen(
 
     // Para o player ao trocar de aba (imediato, sem depender do onDispose do LiveTvScreen)
     LaunchedEffect(selectedTab) {
-        if (selectedTab != 1 && playingChannel == null) {
+        if (selectedTab != 1) {
             viewModel.stopLiveTv()
         }
     }
 
     // Para o player ao abrir tela de detalhes (filme/série) — o usuário saiu do Live TV
     LaunchedEffect(selectedDetailsChannel) {
-        if (selectedDetailsChannel != null && playingChannel == null) {
+        if (selectedDetailsChannel != null) {
             viewModel.stopLiveTv()
         }
     }

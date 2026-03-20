@@ -131,12 +131,21 @@ fun LiveTvScreen(
         }
     }
 
-    // Toca o canal somente quando o usuário seleciona manualmente
-    LaunchedEffect(selectedChannel) {
-        selectedChannel?.let { channel ->
-            if (channel.streamUrl.isNotEmpty()) {
-                viewModel.playLiveChannel(channel)
+    // Toca o canal SOMENTE quando a aba Live TV está ativa
+    LaunchedEffect(selectedChannel, isActive) {
+        if (isActive) {
+            selectedChannel?.let { channel ->
+                if (channel.streamUrl.isNotEmpty()) {
+                    viewModel.playLiveChannel(channel)
+                }
             }
+        }
+    }
+
+    // Para o player IMEDIATAMENTE quando sai da aba Live TV
+    LaunchedEffect(isActive) {
+        if (!isActive) {
+            viewModel.stopLiveTv()
         }
     }
 

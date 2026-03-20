@@ -831,6 +831,7 @@ class MainViewModel @Inject constructor(
 
     fun stopLiveTv() {
         stallDetectorJob?.cancel()
+        liveTvPlayer.playWhenReady = false
         liveTvPlayer.pause()
         liveTvPlayer.stop()
         liveTvPlayer.clearMediaItems()
