@@ -166,6 +166,14 @@ class MainViewModel @Inject constructor(
                 syncFromPanel()
             }
         }
+
+        // Verificação periódica a cada 30 minutos — corta acesso se MAC removido ou bloqueado
+        viewModelScope.launch {
+            while (true) {
+                kotlinx.coroutines.delay(30 * 60 * 1000L) // 30 minutos
+                validateDeviceAccess()
+            }
+        }
     }
 
 
