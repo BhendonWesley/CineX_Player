@@ -743,6 +743,13 @@ class ChannelRepository @Inject constructor(
         channelDao.resetAllResumePositions()
     }
 
+    /** Limpa todos os dados locais (canais, playlists, categorias) — usado quando dispositivo é removido do painel */
+    suspend fun clearAllData() = withContext(Dispatchers.IO) {
+        channelDao.clearAll()
+        playlistDao.clearAll()
+        categoryDao.clearAll()
+    }
+
     suspend fun getNextEpisode(channel: Channel): Channel? {
         if (channel.category != "SERIES" || channel.seriesName == null) return null
         return channelDao.getNextEpisode(

@@ -20,4 +20,7 @@ interface CategoryDao {
 
     @Query("SELECT * FROM categories WHERE playlistUrl = :url")
     suspend fun getAllByPlaylist(url: String): List<Category>
+
+    @Query("DELETE FROM categories")
+    suspend fun clearAll()
 }

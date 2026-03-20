@@ -159,8 +159,8 @@ class MainViewModel @Inject constructor(
                     repository.activatePlaylist(lastUsed.url)
                     fetchRealAccountInfo(lastUsed.url)
                 }
-                // Busca datas e status atualizados do painel
-                refreshAccountFromPanel()
+                // Verifica com o painel se o dispositivo ainda tem acesso antes de liberar o app
+                validateDeviceAccess()
                 _isInitializing.value = false
             } else {
                 syncFromPanel()
@@ -508,7 +508,7 @@ class MainViewModel @Inject constructor(
         private const val PANEL_BASE_URL = "https://gerencia-cine-x.vercel.app"
     }
 
-    // Verifica o status do dispositivo no painel do revendedor (bloqueio)
+    // Verifica o status do dispositivo no painel do revendedor (bloqueio e existência)
     fun refreshAccountFromPanel() {
         viewModelScope.launch {
             try {
@@ -528,6 +528,12 @@ class MainViewModel @Inject constructor(
                     return@launch
                 }
 
+                // Dispositivo não encontrado no painel — removido pelo revendedor
+                if (responseCode == 404 || (responseCode != 200 && responseCode != 403) || body.contains("not_found")) {
+                    revokeAccess()
+                    return@launch
+                }
+
                 if (responseCode == 200) {
                     val json = org.json.JSONObject(body)
                     val status = json.optString("status", "")
@@ -539,6 +545,13 @@ class MainViewModel @Inject constructor(
                         )
                     } else {
                         _isDeviceBlocked.value = false
+
+                        // Valida se o dispositivo ainda tem playlist atribuída
+                        val hasPlaylist = json.has("playlist") && !json.isNull("playlist")
+                        if (!hasPlaylist) {
+                            revokeAccess()
+                            return@launch
+                        }
                     }
                 }
 
@@ -547,9 +560,62 @@ class MainViewModel @Inject constructor(
                     _currentPlaylist.value?.url?.let { fetchRealAccountInfo(it) }
                 }
             } catch (e: Exception) {
+                // Em caso de erro de rede, não revogar — manter cache para uso offline
                 e.printStackTrace()
             }
         }
+    }
+
+    /** Valida o dispositivo no painel de forma síncrona (suspend) — chamado no init antes de liberar o app */
+    private suspend fun validateDeviceAccess() {
+        try {
+            val mac = deviceMacAddress
+            val apiUrl = "$PANEL_BASE_URL/api/device/${mac}"
+            val (responseCode, body) = withContext(Dispatchers.IO) {
+                val request = okhttp3.Request.Builder().url(apiUrl).get().build()
+                val response = okHttpClient.newCall(request).execute()
+                Pair(response.code, response.body?.string() ?: "")
+            }
+
+            if (responseCode == 403) {
+                _isDeviceBlocked.value = true
+                _accountInfo.value = _accountInfo.value?.copy(accountStatus = "BLOQUEADO")
+                return
+            }
+
+            if (responseCode == 404 || (responseCode != 200 && responseCode != 403) || body.contains("not_found")) {
+                revokeAccess()
+                return
+            }
+
+            if (responseCode == 200) {
+                val json = org.json.JSONObject(body)
+                val status = json.optString("status", "")
+                if (status == "Bloqueado") {
+                    _isDeviceBlocked.value = true
+                    _accountInfo.value = _accountInfo.value?.copy(accountStatus = "BLOQUEADO")
+                } else {
+                    _isDeviceBlocked.value = false
+                    val hasPlaylist = json.has("playlist") && !json.isNull("playlist")
+                    if (!hasPlaylist) {
+                        revokeAccess()
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            // Erro de rede — permite uso offline com cache local
+            e.printStackTrace()
+        }
+    }
+
+    /** Remove acesso local — limpa playlists e canais do banco, forçando nova ativação */
+    private suspend fun revokeAccess() {
+        stopLiveTv()
+        repository.clearAllData()
+        _currentPlaylist.value = null
+        _isDeviceBlocked.value = false
+        _accountInfo.value = generateAccountInfoInternal()
+        _errorMessage.value = "Dispositivo não cadastrado no painel.\nContate seu revendedor."
     }
 
     fun syncFromPanel() {
