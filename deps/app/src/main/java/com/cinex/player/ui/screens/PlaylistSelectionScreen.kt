@@ -195,23 +195,12 @@ fun PlaylistSelectionScreen(
             Spacer(modifier = Modifier.height(12.dp))
             
             Text(
-                text = "Envie o código MAC abaixo para o seu revendedor oficial. Ele ativará seu dispositivo através do painel:", 
-                color = CineX_TextSecondary, 
+                text = "Envie o código MAC abaixo para o seu revendedor oficial para ativar seu dispositivo.",
+                color = CineX_TextSecondary,
                 fontSize = 12.sp,
                 textAlign = TextAlign.Center,
                 lineHeight = 16.sp,
                 modifier = Modifier.padding(horizontal = 8.dp)
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            Text(
-                text = "gerencia-cine-x.vercel.app", 
-                color = CineX_LightGold.copy(alpha = 0.8f), 
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                textAlign = TextAlign.Center,
-                letterSpacing = 0.5.sp
             )
             
             Spacer(modifier = Modifier.height(24.dp))
