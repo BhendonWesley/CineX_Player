@@ -163,7 +163,8 @@ class MainViewModel @Inject constructor(
                 validateDeviceAccess()
                 _isInitializing.value = false
             } else {
-                syncFromPanel()
+                // Sem playlists locais — mostra a tela de ativação para o usuário clicar em Sincronizar
+                _isInitializing.value = false
             }
         }
 
