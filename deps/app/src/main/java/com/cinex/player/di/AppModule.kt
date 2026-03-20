@@ -81,22 +81,24 @@ object AppModule {
     @Provides
     @Singleton
     fun provideLiveTvPlayer(app: Application): ExoPlayer {
-        // LoadControl otimizado para live streaming — buffers maiores evitam tela preta/travamento
+        // LoadControl otimizado para live streaming — buffers generosos para evitar tela preta/loop/travamento
         val loadControl = DefaultLoadControl.Builder()
             .setBufferDurationsMs(
-                /* minBufferMs */        15_000,   // buffer mínimo de 15s
-                /* maxBufferMs */        60_000,   // buffer máximo de 60s
-                /* bufferForPlaybackMs */  2_000,  // começa a reproduzir com 2s em buffer
-                /* bufferForPlaybackAfterRebufferMs */ 5_000  // após rebuffer, espera 5s antes de retomar
+                /* minBufferMs */        20_000,   // buffer mínimo de 20s — mais margem para instabilidade
+                /* maxBufferMs */        90_000,   // buffer máximo de 90s — absorve picos de latência
+                /* bufferForPlaybackMs */  1_500,  // começa a reproduzir rápido (1.5s)
+                /* bufferForPlaybackAfterRebufferMs */ 4_000  // após rebuffer, espera 4s antes de retomar
             )
             .setPrioritizeTimeOverSizeThresholds(true)
+            .setTargetBufferBytes(DefaultLoadControl.DEFAULT_TARGET_BUFFER_BYTES)
             .build()
 
         // DataSource com timeouts ajustados para streams IPTV
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-            .setConnectTimeoutMs(15_000)
-            .setReadTimeoutMs(15_000)
+            .setConnectTimeoutMs(20_000)
+            .setReadTimeoutMs(20_000)
             .setAllowCrossProtocolRedirects(true)
+            .setKeepPostFor302Redirects(true)
             .setUserAgent("CineXPlayer/1.0")
 
         val mediaSourceFactory = DefaultMediaSourceFactory(httpDataSourceFactory)

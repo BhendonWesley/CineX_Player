@@ -100,7 +100,7 @@ fun MovieDetailsScreen(
 
                 // Informações — layout fixo: título + rating sempre visíveis, sinopse com scroll, botões fixos embaixo
                 Column(
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f).fillMaxHeight()
                 ) {
                     val cleanTitle = movie.name
                         .replace(Regex("(?i)\\s*\\(\\d{4}\\)\\s*"), " ").trim().uppercase()

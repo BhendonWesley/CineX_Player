@@ -56,15 +56,34 @@ fun PlaylistSelectionScreen(
     }
 
     // Layout Original Restaurado (Single-Screen Horizontal)
-    // Redimensionado para caber perfeitamente no celular sem sumir nada.
+    Box(modifier = Modifier.fillMaxSize().background(CineX_BackgroundBlue)) {
+        // Background image com blur (mesmo padrão do app)
+        Image(
+            painter = painterResource(id = com.cinex.player.R.drawable.bg_loading),
+            contentDescription = null,
+            modifier = Modifier
+                .fillMaxSize()
+                .blur(4.dp),
+            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            alpha = 0.5f
+        )
+        // Overlay escuro
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            CineX_BackgroundBlue.copy(alpha = 0.85f),
+                            CineX_SecondaryBackground.copy(alpha = 0.9f)
+                        )
+                    )
+                )
+        )
+
     Row(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    colors = listOf(CineX_BackgroundBlue, CineX_SecondaryBackground)
-                )
-            )
             .padding(16.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp)
     ) {
@@ -230,33 +249,18 @@ fun PlaylistSelectionScreen(
 
             Spacer(modifier = Modifier.height(8.dp))
             
-            // Rodapé com Informações Extras
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Info do plano
-                Text(
-                    text = if (accountInfo != null) 
-                        "Plano: ${accountInfo?.accountStatus} • Vence: ${accountInfo?.playlistExpiration}"
-                    else 
-                        "Aguardando conexão...", 
-                    color = CineX_TextSecondary, 
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Medium
-                )
-                
-                // Versão
-                Text(
-                    text = "v5.0", 
-                    color = CineX_TextMuted, 
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
+            // Aviso legal
+            Text(
+                text = "O CineX Player não vende playlists ou assinaturas.\nO CineX Player é um reprodutor de mídia geral e não inclui nenhum conteúdo ou playlists.",
+                color = CineX_TextMuted,
+                fontSize = 9.sp,
+                textAlign = TextAlign.Center,
+                lineHeight = 13.sp,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)
+            )
         }
-    }
+    } // fim Row
+    } // fim Box
 }
 
 @Composable

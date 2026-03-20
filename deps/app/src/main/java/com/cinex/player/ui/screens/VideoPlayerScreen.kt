@@ -308,6 +308,7 @@ fun VideoPlayerScreen(
                 // Desconecta o player da surface fullscreen para que o preview reclaim imediatamente
                 if (isLiveTv) {
                     fullscreenPlayerViewRef.value?.player = null
+                    viewModel.refreshLiveTvSurface()
                 }
             }
         }

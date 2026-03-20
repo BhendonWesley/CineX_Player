@@ -236,6 +236,7 @@ fun MainScreen(
                                 viewModel.updateSearchQuery("")
                                 selectedTab = 1
                             } else {
+                                viewModel.stopLiveTv()
                                 viewModel.selectChannelForDetails(channel)
                             }
                         }

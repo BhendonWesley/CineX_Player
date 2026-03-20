@@ -93,40 +93,59 @@ class MainViewModel @Inject constructor(
     private var liveRetryCount = 0
     private val maxLiveRetries = 3
 
+    // Sinaliza que o preview deve reclamar a surface do player (após sair do fullscreen)
+    private val _liveTvSurfaceRefresh = MutableStateFlow(0)
+    val liveTvSurfaceRefresh = _liveTvSurfaceRefresh.asStateFlow()
+
+    fun refreshLiveTvSurface() {
+        _liveTvSurfaceRefresh.value++
+    }
+
+    private var stallDetectorJob: kotlinx.coroutines.Job? = null
+
     init {
         // Listener para recuperação automática do player de Live TV
         liveTvPlayer.addListener(object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
                 // Reconecta automaticamente ao mesmo canal
-                val lastChannel = _selectedLiveChannel.value
-                if (lastChannel != null && liveRetryCount < maxLiveRetries) {
-                    liveRetryCount++
-                    viewModelScope.launch {
-                        kotlinx.coroutines.delay(1500L * liveRetryCount) // backoff progressivo
-                        liveTvPlayer.stop()
-                        liveTvPlayer.clearMediaItems()
-                        val mediaItem = androidx.media3.common.MediaItem.Builder()
-                            .setUri(lastChannel.streamUrl)
-                            .setLiveConfiguration(
-                                androidx.media3.common.MediaItem.LiveConfiguration.Builder()
-                                    .setMaxPlaybackSpeed(1.04f)
-                                    .setMaxOffsetMs(12_000)
-                                    .setMinOffsetMs(3_000)
-                                    .setTargetOffsetMs(6_000)
-                                    .build()
-                            )
-                            .build()
-                        liveTvPlayer.setMediaItem(mediaItem)
-                        liveTvPlayer.prepare()
-                        liveTvPlayer.play()
-                    }
-                }
+                reconnectLiveChannel()
             }
 
             override fun onPlaybackStateChanged(playbackState: Int) {
-                if (playbackState == Player.STATE_READY) {
-                    // Reset retry counter quando volta a reproduzir com sucesso
-                    liveRetryCount = 0
+                when (playbackState) {
+                    Player.STATE_READY -> {
+                        // Reset retry counter quando volta a reproduzir com sucesso
+                        liveRetryCount = 0
+                        stallDetectorJob?.cancel()
+                    }
+                    Player.STATE_BUFFERING -> {
+                        // Detecta stall: se ficar em buffering por mais de 8s, força seek ao live edge
+                        stallDetectorJob?.cancel()
+                        stallDetectorJob = viewModelScope.launch {
+                            kotlinx.coroutines.delay(8_000)
+                            // Ainda em buffering após 8s — tenta seek ao live edge
+                            if (liveTvPlayer.playbackState == Player.STATE_BUFFERING) {
+                                liveTvPlayer.seekToDefaultPosition()
+                                // Se continuar em stall após mais 6s, reconecta o canal
+                                kotlinx.coroutines.delay(6_000)
+                                if (liveTvPlayer.playbackState == Player.STATE_BUFFERING) {
+                                    reconnectLiveChannel()
+                                }
+                            }
+                        }
+                    }
+                    Player.STATE_ENDED -> {
+                        // Live streams não devem terminar — reconecta
+                        val lastChannel = _selectedLiveChannel.value
+                        if (lastChannel != null) {
+                            viewModelScope.launch {
+                                kotlinx.coroutines.delay(500)
+                                liveTvPlayer.seekToDefaultPosition()
+                                liveTvPlayer.play()
+                            }
+                        }
+                    }
+                    else -> {}
                 }
             }
         })
@@ -701,7 +720,34 @@ class MainViewModel @Inject constructor(
         return repository.getEpisodesBySeasonPaged(seriesName, season)
     }
 
+    private fun reconnectLiveChannel() {
+        val lastChannel = _selectedLiveChannel.value
+        if (lastChannel != null && liveRetryCount < maxLiveRetries) {
+            liveRetryCount++
+            viewModelScope.launch {
+                kotlinx.coroutines.delay(1500L * liveRetryCount) // backoff progressivo
+                liveTvPlayer.stop()
+                liveTvPlayer.clearMediaItems()
+                val mediaItem = androidx.media3.common.MediaItem.Builder()
+                    .setUri(lastChannel.streamUrl)
+                    .setLiveConfiguration(
+                        androidx.media3.common.MediaItem.LiveConfiguration.Builder()
+                            .setMaxPlaybackSpeed(1.04f)
+                            .setMaxOffsetMs(12_000)
+                            .setMinOffsetMs(3_000)
+                            .setTargetOffsetMs(6_000)
+                            .build()
+                    )
+                    .build()
+                liveTvPlayer.setMediaItem(mediaItem)
+                liveTvPlayer.prepare()
+                liveTvPlayer.play()
+            }
+        }
+    }
+
     fun stopLiveTv() {
+        stallDetectorJob?.cancel()
         liveTvPlayer.pause()
         liveTvPlayer.stop()
         liveTvPlayer.clearMediaItems()

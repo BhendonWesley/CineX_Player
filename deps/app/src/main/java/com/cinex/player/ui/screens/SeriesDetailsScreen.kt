@@ -143,7 +143,7 @@ fun SeriesDetailsScreen(
                     Spacer(modifier = Modifier.width(32.dp))
 
                     Column(
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f).fillMaxHeight()
                     ) {
                         Text(
                             text = (series.seriesName ?: series.name).uppercase(),

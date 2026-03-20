@@ -93,6 +93,17 @@ fun LiveTvScreen(
     modifier: Modifier = Modifier
 ) {
     val previewPlayerViewRef = remember { mutableStateOf<PlayerView?>(null) }
+    val surfaceRefresh by viewModel.liveTvSurfaceRefresh.collectAsState()
+
+    // Quando sai do fullscreen, força o preview a reclamar a surface do player
+    LaunchedEffect(surfaceRefresh) {
+        if (surfaceRefresh > 0) {
+            previewPlayerViewRef.value?.let { view ->
+                view.player = null
+                view.player = viewModel.liveTvPlayer
+            }
+        }
+    }
 
     val categories by viewModel.liveCategories.collectAsState(initial = emptyList())
     val selectedCategory by viewModel.liveCategoryId.collectAsState()
