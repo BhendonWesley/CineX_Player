@@ -41,6 +41,7 @@ fun SeriesDetailsScreen(
     onBack: () -> Unit,
     onPlayEpisode: (Channel) -> Unit
 ) {
+    val isLoadingEpisodes by viewModel.isLoadingEpisodes.collectAsState()
     val seasons by viewModel.getSeasonsForSeries(series.seriesName ?: "").collectAsState(initial = emptyList())
     val sortedSeasons = seasons.filter { it > 0 }.sorted()
     var selectedSeason by remember { mutableStateOf(1) }
@@ -303,21 +304,42 @@ fun SeriesDetailsScreen(
                             modifier = Modifier.padding(bottom = 12.dp, top = 16.dp)
                         )
 
-                        LazyColumn(
-                            verticalArrangement = Arrangement.spacedBy(16.dp),
-                            contentPadding = PaddingValues(bottom = 32.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            items(
-                                count = pagingItems.itemCount,
-                                key = pagingItems.itemKey { it.id }
-                            ) { index ->
-                                pagingItems[index]?.let { episode ->
-                                    EpisodeItem(
-                                        episode = episode,
-                                        seriesPoster = series.bannerUrl ?: series.logoUrl,
-                                        onClick = { onPlayEpisode(episode) }
+                        if (isLoadingEpisodes) {
+                            Box(
+                                modifier = Modifier.fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    CircularProgressIndicator(
+                                        color = Color.White,
+                                        modifier = Modifier.size(32.dp),
+                                        strokeWidth = 3.dp
                                     )
+                                    Spacer(modifier = Modifier.height(12.dp))
+                                    Text(
+                                        text = "Carregando episódios...",
+                                        color = Color.Gray,
+                                        fontSize = 13.sp
+                                    )
+                                }
+                            }
+                        } else {
+                            LazyColumn(
+                                verticalArrangement = Arrangement.spacedBy(16.dp),
+                                contentPadding = PaddingValues(bottom = 32.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                items(
+                                    count = pagingItems.itemCount,
+                                    key = pagingItems.itemKey { it.id }
+                                ) { index ->
+                                    pagingItems[index]?.let { episode ->
+                                        EpisodeItem(
+                                            episode = episode,
+                                            seriesPoster = series.bannerUrl ?: series.logoUrl,
+                                            onClick = { onPlayEpisode(episode) }
+                                        )
+                                    }
                                 }
                             }
                         }
