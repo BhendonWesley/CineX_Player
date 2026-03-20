@@ -670,6 +670,14 @@ class MainViewModel @Inject constructor(
                 }
 
                 val json = org.json.JSONObject(body)
+
+                if (!json.has("playlist") || json.isNull("playlist")) {
+                    _errorMessage.value = "Nenhuma playlist encontrada!\nSeu revendedor ainda não atribuiu uma lista ao seu dispositivo."
+                    _isLoading.value = false
+                    rotateJob.cancel()
+                    return@launch
+                }
+
                 val playlist = json.getJSONObject("playlist")
                 val type = playlist.getString("type")
 
