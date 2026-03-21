@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
@@ -166,6 +167,7 @@ fun VideoPlayerScreen(
 
     var showResumeDialog by remember { mutableStateOf(channel.resumePosition > 0L && !isLiveTv) }
     var showExitDialog by remember { mutableStateOf(false) }
+    var showPlaybackError by remember(channel.id) { mutableStateOf(false) }
     var isVideoEnded by remember(channel.id) { mutableStateOf(false) }
     var showNextEpisodeOverlay by remember(channel.id) { mutableStateOf(false) }
     var nextEpisode by remember(channel.id) { mutableStateOf<Channel?>(null) }
@@ -177,13 +179,18 @@ fun VideoPlayerScreen(
         }
     }
 
-    // Detecta fim do vídeo via Player.Listener
+    // Detecta fim do vídeo e erros de reprodução
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_ENDED && !isLiveTv) {
                     isVideoEnded = true
                     showNextEpisodeOverlay = true
+                }
+            }
+            override fun onPlayerError(error: PlaybackException) {
+                if (!isLiveTv) {
+                    showPlaybackError = true
                 }
             }
         }
@@ -246,11 +253,14 @@ fun VideoPlayerScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
+    // Só pollar posição quando os controles estão visíveis e não é Live TV
+    LaunchedEffect(isControlsVisible, isLiveTv) {
+        if (isLiveTv) return@LaunchedEffect
         while (true) {
             currentPosition = exoPlayer.currentPosition
             duration = exoPlayer.duration.coerceAtLeast(0L)
             isPlaying = exoPlayer.isPlaying
+            if (!isControlsVisible) break
             delay(500)
         }
     }
@@ -562,6 +572,27 @@ fun VideoPlayerScreen(
                 onCancel = { showExitDialog = false }
             )
         }
+
+        if (showPlaybackError) {
+            PlaybackErrorOverlay(
+                onExit = { onBack() },
+                onRetry = {
+                    showPlaybackError = false
+                    exoPlayer.stop()
+                    exoPlayer.clearMediaItems()
+                    val mediaItem = MediaItem.fromUri(Uri.parse(channel.streamUrl))
+                    exoPlayer.setMediaItem(mediaItem)
+                    exoPlayer.prepare()
+                    exoPlayer.play()
+                },
+                onPlayNext = if (nextEpisode != null) {
+                    {
+                        showPlaybackError = false
+                        onPlayNext(nextEpisode!!)
+                    }
+                } else null
+            )
+        }
     }
 }
 
@@ -630,6 +661,100 @@ fun PlayerDialog(
                     contentAlignment = Alignment.Center
                 ) {
                     Text("NÃO", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PlaybackErrorOverlay(
+    onExit: () -> Unit,
+    onRetry: () -> Unit,
+    onPlayNext: (() -> Unit)? = null
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color(0xDD000000))
+            .clickable(enabled = false) {},
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            modifier = Modifier
+                .width(440.dp)
+                .background(com.cinex.player.ui.theme.CineX_SecondaryBackground, RoundedCornerShape(16.dp))
+                .border(2.dp, Color(0xFFC62828).copy(alpha = 0.4f), RoundedCornerShape(16.dp))
+                .padding(32.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(
+                imageVector = Icons.Default.Warning,
+                contentDescription = null,
+                tint = Color(0xFFC62828),
+                modifier = Modifier.size(48.dp)
+            )
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(
+                text = "ERRO DE REPRODUÇÃO",
+                color = Color.White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+                textAlign = TextAlign.Center
+            )
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            Text(
+                text = "Não foi possível reproduzir este conteúdo.\nVerifique sua conexão ou tente novamente.",
+                color = Color.LightGray,
+                fontSize = 14.sp,
+                textAlign = TextAlign.Center,
+                lineHeight = 20.sp
+            )
+
+            Spacer(modifier = Modifier.height(28.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                        .background(Color.DarkGray, RoundedCornerShape(8.dp))
+                        .clickable { onExit() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("SAIR", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                }
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp)
+                        .background(com.cinex.player.ui.theme.DeepRed, RoundedCornerShape(8.dp))
+                        .clickable { onRetry() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("TENTAR NOVAMENTE", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                }
+            }
+
+            if (onPlayNext != null) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .background(Color.White.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                        .clickable { onPlayNext() },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text("PRÓXIMO EPISÓDIO", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 }
             }
         }

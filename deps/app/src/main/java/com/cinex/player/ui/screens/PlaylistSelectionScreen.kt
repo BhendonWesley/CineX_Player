@@ -19,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -56,8 +57,8 @@ fun PlaylistSelectionScreen(
     }
 
     // Layout Original Restaurado (Single-Screen Horizontal)
-    Box(modifier = Modifier.fillMaxSize().background(CineX_BackgroundBlue)) {
-        // Background image com blur (mesmo padrão do app)
+    Box(modifier = Modifier.fillMaxSize().background(Color(0xFF0A0F1E))) {
+        // Background image com blur
         Image(
             painter = painterResource(id = com.cinex.player.R.drawable.bg_loading),
             contentDescription = null,
@@ -65,20 +66,13 @@ fun PlaylistSelectionScreen(
                 .fillMaxSize()
                 .blur(4.dp),
             contentScale = androidx.compose.ui.layout.ContentScale.Crop,
-            alpha = 0.5f
+            alpha = 0.7f
         )
-        // Overlay escuro
+        // Overlay escuro — mesmo padrão da CinematicLoadingScreen
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(
-                    Brush.verticalGradient(
-                        colors = listOf(
-                            CineX_BackgroundBlue.copy(alpha = 0.85f),
-                            CineX_SecondaryBackground.copy(alpha = 0.9f)
-                        )
-                    )
-                )
+                .background(Color(0x990A0F1E))
         )
 
     Row(
@@ -95,16 +89,15 @@ fun PlaylistSelectionScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // Logo Centralizado
+            // Logo Centralizada
             Image(
                 painter = painterResource(id = com.cinex.player.R.drawable.logo_cinex),
                 contentDescription = "CineX Logo",
                 modifier = Modifier
-                    .size(48.dp)
-                    .shadow(8.dp, CircleShape, spotColor = CineX_HighlightRed.copy(alpha = 0.5f))
+                    .size(96.dp)
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
             // Action Card: Sincronizar Conteúdo
             SyncActionCard(
@@ -115,36 +108,77 @@ fun PlaylistSelectionScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Botão Entrar
+            val isReady = playlists.isNotEmpty() && !isLoading
+            val readyGreen = Color(0xFF22C55E)
+
+            // Mensagem de sucesso
+            if (isReady) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(readyGreen.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                        .border(1.dp, readyGreen.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CheckCircle,
+                        contentDescription = null,
+                        tint = readyGreen,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Lista encontrada e carregada com sucesso!",
+                        color = readyGreen,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                Spacer(modifier = Modifier.height(12.dp))
+            }
+
+            // Botão Acessar / Aguardando
             Button(
-                onClick = { 
-                    if (playlists.isNotEmpty() && !isLoading) {
-                        viewModel.selectPlaylist(playlists.first()) 
+                onClick = {
+                    if (isReady) {
+                        viewModel.selectPlaylist(playlists.first())
                     }
                 },
-                enabled = true,
+                enabled = isReady,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = if (playlists.isNotEmpty() && !isLoading) CineX_DeepRed else CineX_SecondaryBackground,
-                    contentColor = if (playlists.isNotEmpty() && !isLoading) Color.White else CineX_TextSecondary
+                    containerColor = if (isReady) CineX_DeepRed else CineX_SecondaryBackground,
+                    contentColor = if (isReady) Color.White else CineX_TextSecondary,
+                    disabledContainerColor = CineX_SecondaryBackground,
+                    disabledContentColor = CineX_TextSecondary
                 ),
                 shape = RoundedCornerShape(12.dp),
                 border = BorderStroke(
-                    1.dp, 
-                    if (playlists.isNotEmpty() && !isLoading) CineX_HighlightRed else CineX_TextMuted
+                    1.dp,
+                    if (isReady) CineX_HighlightRed else CineX_TextMuted
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp)
                     .shadow(
-                        elevation = if (playlists.isNotEmpty()) 8.dp else 0.dp,
+                        elevation = if (isReady) 8.dp else 0.dp,
                         shape = RoundedCornerShape(12.dp),
                         ambientColor = CineX_HighlightRed,
                         spotColor = CineX_HighlightRed
                     )
             ) {
+                if (isReady) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                }
                 Text(
-                    text = if (playlists.isNotEmpty() && !isLoading) "ENTRAR" else "AGUARDANDO LISTA...", 
-                    fontSize = 14.sp, 
+                    text = if (isReady) "ACESSAR PLATAFORMA" else "AGUARDANDO LISTA...",
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = 1.sp
                 )
@@ -152,13 +186,14 @@ fun PlaylistSelectionScreen(
 
             if (errorMessage != null) {
                 Text(
-                    text = errorMessage ?: "", 
-                    color = CineX_HighlightRed, 
+                    text = errorMessage ?: "",
+                    color = CineX_HighlightRed,
                     modifier = Modifier.padding(top = 8.dp).fillMaxWidth(),
                     textAlign = TextAlign.Center,
                     fontSize = 12.sp
                 )
             }
+
         }
 
         // Barra Divisória
@@ -184,7 +219,7 @@ fun PlaylistSelectionScreen(
         ) {
             
             Text(
-                text = "Bem-vindo (a)!", 
+                text = "PRONTO PARA ASSISTIR?", 
                 color = Color.White, 
                 fontSize = 24.sp, 
                 fontWeight = FontWeight.ExtraBold,
@@ -290,7 +325,7 @@ fun SyncActionCard(
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = if (isSynced) "Conteúdo sincronizado!" else "Sincronizar Conteúdo", 
+                text = if (isSynced) "CONTEÚDO SINCRONIZADO!" else "SINCRONIZAR SERVIDOR", 
                 color = if (isSynced) CineX_PremiumGold else Color.White, 
                 fontSize = 14.sp,
                 fontWeight = FontWeight.ExtraBold

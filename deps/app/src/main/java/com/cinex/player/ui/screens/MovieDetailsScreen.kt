@@ -147,19 +147,38 @@ fun MovieDetailsScreen(
                         }
                     }
 
-                    // Sinopse — scroll próprio, ocupa o espaço disponível entre rating e botões
+                    // Sinopse em bloco visual com scroll e fade
                     Box(
                         modifier = Modifier
                             .weight(1f)
                             .padding(vertical = 8.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color.White.copy(alpha = 0.06f))
                     ) {
+                        val scrollState = rememberScrollState()
                         Text(
                             text = movie.tmdbSynopsis ?: "Sem sinopse disponível.",
                             color = Color.LightGray,
-                            fontSize = 15.sp,
-                            lineHeight = 22.sp,
-                            modifier = Modifier.verticalScroll(rememberScrollState())
+                            fontSize = 14.sp,
+                            lineHeight = 21.sp,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .verticalScroll(scrollState)
+                                .padding(12.dp)
                         )
+                        if (scrollState.canScrollForward) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(32.dp)
+                                    .align(Alignment.BottomCenter)
+                                    .background(
+                                        Brush.verticalGradient(
+                                            listOf(Color.Transparent, DarkBackground.copy(alpha = 0.9f))
+                                        )
+                                    )
+                            )
+                        }
                     }
 
                     // Botões — sempre fixos e visíveis na parte inferior

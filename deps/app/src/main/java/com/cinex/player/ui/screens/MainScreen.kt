@@ -70,6 +70,9 @@ fun MainScreen(
     val searchResults = viewModel.searchResults // Passamos o Flow diretamente
     val accountInfo by viewModel.accountInfo.collectAsState()
 
+    val continueWatching by viewModel.continueWatching.collectAsState()
+    val isDeviceBlocked by viewModel.isDeviceBlocked.collectAsState()
+
     // Simplificamos a lógica de seleção de playlist: se não houver playlist ativa
     val showPlaylistSelectionDashboard = currentPlaylist == null || isServerSwapOpen
 
@@ -83,9 +86,6 @@ fun MainScreen(
     val isLiveHidden by viewModel.isLiveTvHidden.collectAsState()
     val isMoviesHidden by viewModel.isMoviesHidden.collectAsState()
     val isSeriesHidden by viewModel.isSeriesHidden.collectAsState()
-
-    val continueWatching by viewModel.continueWatching.collectAsState()
-    val isDeviceBlocked by viewModel.isDeviceBlocked.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
     LaunchedEffect(Unit) {
@@ -128,13 +128,15 @@ fun MainScreen(
             macAddress = accountInfo?.macAddress ?: "",
             onRetry = { viewModel.refreshAccountFromPanel() }
         )
-    } else if (isInitializing || isLoading) {
+    } else if (isLoading) {
         CinematicLoadingScreen(
             statusMessage = syncStatus,
             tvProgress = liveProgress / 100f,
             moviesProgress = movieProgress / 100f,
             seriesProgress = seriesProgress / 100f
         )
+    } else if (isInitializing) {
+        AnimatedSplashScreen()
     } else if (playingChannel != null && playingChannel!!.category != "LIVE_TV") {
         // Para filmes/séries, substitui a tela inteira
         VideoPlayerScreen(
@@ -144,28 +146,6 @@ fun MainScreen(
                 playingChannel = nextChannel
             }
         )
-    } else if (selectedDetailsChannel != null) {
-        // Tela de Detalhes (Premium)
-        if (selectedDetailsChannel!!.category == "SERIES") {
-            SeriesDetailsScreen(
-                series = selectedDetailsChannel!!,
-                viewModel = viewModel,
-                onBack = { viewModel.selectChannelForDetails(null) },
-                onPlayEpisode = { 
-                    playingChannel = it
-                    viewModel.selectChannelForDetails(null) 
-                }
-            )
-        } else {
-            MovieDetailsScreen(
-                movie = selectedDetailsChannel!!,
-                onBack = { viewModel.selectChannelForDetails(null) },
-                onPlay = { 
-                    playingChannel = it
-                    viewModel.selectChannelForDetails(null)
-                }
-            )
-        }
     } else if (showPlaylistSelectionDashboard) {
         if (isAddingPlaylist) {
             LoginScreen(
@@ -281,7 +261,8 @@ fun MainScreen(
                                 viewModel = viewModel,
                                 title = "FILMES",
                                 continueWatching = continueWatching,
-                                onVideoClick = { viewModel.selectChannelForDetails(it) }
+                                onVideoClick = { viewModel.selectChannelForDetails(it) },
+                                onPlayDirect = { playingChannel = it }
                             )
                         }
                         Box(modifier = Modifier.tabVisibility(3)) {
@@ -289,11 +270,36 @@ fun MainScreen(
                                 type = "SERIES",
                                 viewModel = viewModel,
                                 title = "SÉRIES",
-                                onVideoClick = { viewModel.selectChannelForDetails(it) }
+                                onVideoClick = { viewModel.selectChannelForDetails(it) },
+                                onPlayDirect = { playingChannel = it }
                             )
                         }
                     }
                 }
+            }
+        }
+
+        // Detalhes de filme/série: overlay para manter tabs compostas por baixo
+        if (selectedDetailsChannel != null) {
+            if (selectedDetailsChannel!!.category == "SERIES") {
+                SeriesDetailsScreen(
+                    series = selectedDetailsChannel!!,
+                    viewModel = viewModel,
+                    onBack = { viewModel.selectChannelForDetails(null) },
+                    onPlayEpisode = {
+                        playingChannel = it
+                        viewModel.selectChannelForDetails(null)
+                    }
+                )
+            } else {
+                MovieDetailsScreen(
+                    movie = selectedDetailsChannel!!,
+                    onBack = { viewModel.selectChannelForDetails(null) },
+                    onPlay = {
+                        playingChannel = it
+                        viewModel.selectChannelForDetails(null)
+                    }
+                )
             }
         }
 
@@ -311,14 +317,15 @@ fun MainScreen(
         SnackbarHost(
             hostState = snackbarHostState,
             modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(bottom = 24.dp),
+                .align(Alignment.TopCenter)
+                .padding(top = 16.dp),
             snackbar = { data ->
                 Snackbar(
                     snackbarData = data,
                     containerColor = Color(0xFF282B30),
                     contentColor = Color.White,
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.widthIn(max = 360.dp)
                 )
             }
         )

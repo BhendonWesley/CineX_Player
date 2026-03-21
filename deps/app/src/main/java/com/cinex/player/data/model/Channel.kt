@@ -10,7 +10,8 @@ import androidx.room.PrimaryKey
         androidx.room.Index(value = ["categoryId", "playlistUrl"]),
         androidx.room.Index(value = ["category", "playlistUrl"]),
         androidx.room.Index(value = ["isFavorite", "category"]),
-        androidx.room.Index(value = ["seriesName", "playlistUrl"])
+        androidx.room.Index(value = ["seriesName", "playlistUrl"]),
+        androidx.room.Index(value = ["resumePosition"])
     ]
 )
 data class Channel(

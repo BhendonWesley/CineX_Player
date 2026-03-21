@@ -93,6 +93,9 @@ class MainViewModel @Inject constructor(
     private var liveRetryCount = 0
     private val maxLiveRetries = 3
 
+    private val _livePlayerError = MutableStateFlow(false)
+    val livePlayerError = _livePlayerError.asStateFlow()
+
     // Sinaliza que o preview deve reclamar a surface do player (após sair do fullscreen)
     private val _liveTvSurfaceRefresh = MutableStateFlow(0)
     val liveTvSurfaceRefresh = _liveTvSurfaceRefresh.asStateFlow()
@@ -152,6 +155,7 @@ class MainViewModel @Inject constructor(
 
         generateAccountInfo()
         viewModelScope.launch {
+            val splashStart = System.currentTimeMillis()
             val playlists = repository.allPlaylists.first()
             if (playlists.isNotEmpty()) {
                 playlists.maxByOrNull { it.lastUsed }?.let { lastUsed ->
@@ -161,11 +165,11 @@ class MainViewModel @Inject constructor(
                 }
                 // Verifica com o painel se o dispositivo ainda tem acesso antes de liberar o app
                 validateDeviceAccess()
-                _isInitializing.value = false
-            } else {
-                // Sem playlists locais — mostra a tela de ativação para o usuário clicar em Sincronizar
-                _isInitializing.value = false
             }
+            // Garante que a splash animada seja exibida por pelo menos 3s
+            val elapsed = System.currentTimeMillis() - splashStart
+            if (elapsed < 3000) kotlinx.coroutines.delay(3000 - elapsed)
+            _isInitializing.value = false
         }
 
         // Verificação periódica a cada 30 minutos — corta acesso se MAC removido ou bloqueado
@@ -197,10 +201,8 @@ class MainViewModel @Inject constructor(
         _homeReady.value = false
         if (playlist == null) flowOf(emptyList())
         else repository.getFeaturedContent(playlist.url)
-            .transformLatest { list ->
-                emit(list)
-                    kotlinx.coroutines.delay(1000)
-            }
+            .distinctUntilChanged()
+            .map { it.shuffled().take(20) }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
@@ -287,7 +289,9 @@ class MainViewModel @Inject constructor(
         enrichingIds.clear()
     }
 
-    private val enrichingIds = mutableSetOf<Int>()
+    private val enrichingIds = java.util.Collections.newSetFromMap(
+        java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
+    )
 
     fun onChannelVisible(channel: Channel) {
         if (channel.category != "LIVE_TV"
@@ -592,24 +596,33 @@ class MainViewModel @Inject constructor(
                 return
             }
 
-            if (responseCode == 404 || (responseCode != 200 && responseCode != 403) || body.contains("not_found")) {
+            // Só revoga se o servidor explicitamente confirmar que o dispositivo não existe
+            if (responseCode == 404) {
                 revokeAccess()
                 return
             }
 
-            if (responseCode == 200) {
-                val json = org.json.JSONObject(body)
-                val status = json.optString("status", "")
-                if (status == "Bloqueado") {
-                    _isDeviceBlocked.value = true
-                    _accountInfo.value = _accountInfo.value?.copy(accountStatus = "BLOQUEADO")
-                } else {
-                    _isDeviceBlocked.value = false
-                    val hasPlaylist = json.has("playlist") && !json.isNull("playlist")
-                    if (!hasPlaylist) {
-                        revokeAccess()
-                    }
-                }
+            // Qualquer outro erro não-200 (500, timeout, Vercel cold start, etc.) — mantém acesso offline
+            if (responseCode != 200) return
+
+            val json = org.json.JSONObject(body)
+
+            // Checa bloqueio explícito
+            val syncStatus = json.optString("sync_status", "")
+            val status = json.optString("status", "")
+            if (syncStatus == "blocked" || status == "Bloqueado") {
+                _isDeviceBlocked.value = true
+                _accountInfo.value = _accountInfo.value?.copy(accountStatus = "BLOQUEADO")
+                return
+            }
+
+            _isDeviceBlocked.value = false
+
+            // Se não tem playlist configurada no painel, revoga
+            val playlistObj = json.optJSONObject("playlist")
+            val playlistType = playlistObj?.optString("type", "")
+            if (playlistObj == null || playlistType.isNullOrBlank()) {
+                revokeAccess()
             }
         } catch (e: Exception) {
             // Erro de rede — permite uso offline com cache local
@@ -781,12 +794,17 @@ class MainViewModel @Inject constructor(
     private fun enrichChannelMetadata(channel: Channel) {
         viewModelScope.launch {
             if (channel.category == "SERIES") {
-                _isLoadingEpisodes.value = true
-                // Primeiro carrega episódios do servidor, DEPOIS enriquece com TMDB
+                val seriesName = channel.seriesName ?: channel.name
                 val seriesId = try { channel.remoteId.replace("series_", "").toInt() } catch (e: Exception) { -1 }
-                if (seriesId != -1) {
-                    repository.fetchAndStoreEpisodes(seriesId, channel.seriesName ?: channel.name)
+                // Verifica se já tem episódios no banco — se sim, não bloqueia com loading
+                val hasEpisodes = repository.hasEpisodesForSeries(seriesName)
+                if (!hasEpisodes) {
+                    _isLoadingEpisodes.value = true
                 }
+                if (seriesId != -1) {
+                    repository.fetchAndStoreEpisodes(seriesId, seriesName)
+                }
+                // Enriquece TMDB em background (stills, sinopses) sem bloquear
                 repository.enrichChannelWithTmdb(channel)
                 _isLoadingEpisodes.value = false
             } else {
@@ -826,7 +844,15 @@ class MainViewModel @Inject constructor(
                 liveTvPlayer.prepare()
                 liveTvPlayer.play()
             }
+        } else if (lastChannel != null) {
+            _livePlayerError.value = true
         }
+    }
+
+    fun retryLiveChannel() {
+        _livePlayerError.value = false
+        liveRetryCount = 0
+        _selectedLiveChannel.value?.let { playLiveChannel(it) }
     }
 
     fun stopLiveTv() {
@@ -1009,6 +1035,7 @@ class MainViewModel @Inject constructor(
     }
 
     fun playLiveChannel(channel: Channel) {
+        _livePlayerError.value = false
         val currentMediaItem = liveTvPlayer.currentMediaItem
         val newUri = android.net.Uri.parse(channel.streamUrl)
 

@@ -132,7 +132,8 @@ fun LiveTvScreen(
     }
 
     // Toca o canal SOMENTE quando a aba Live TV está ativa
-    LaunchedEffect(selectedChannel, isActive) {
+    // Usa o ID do canal como key para não re-triggerar ao mudar favorito (que altera o objeto mas não o canal)
+    LaunchedEffect(selectedChannel?.id, isActive) {
         if (isActive) {
             selectedChannel?.let { channel ->
                 if (channel.streamUrl.isNotEmpty()) {
@@ -168,6 +169,15 @@ fun LiveTvScreen(
     Row(modifier = Modifier.fillMaxSize()) {
         // 1. Coluna de Categorias
         val catListState = rememberLazyListState()
+
+        // Auto-scroll para a categoria selecionada
+        LaunchedEffect(selectedCategory, categories) {
+            val index = categories.indexOfFirst { it.id == selectedCategory }
+            if (index >= 0) {
+                catListState.animateScrollToItem(index)
+            }
+        }
+
         LazyColumn(
             state = catListState,
             modifier = Modifier
@@ -215,6 +225,21 @@ fun LiveTvScreen(
                 )
             }
             val channelListState = rememberLazyListState()
+
+            // Auto-scroll para o canal selecionado na lista
+            LaunchedEffect(selectedChannel?.id, pagingItems.itemCount) {
+                val targetId = selectedChannel?.id ?: return@LaunchedEffect
+                if (pagingItems.itemCount > 0) {
+                    for (i in 0 until pagingItems.itemCount) {
+                        val item = try { pagingItems.peek(i) } catch (_: Exception) { null }
+                        if (item?.id == targetId) {
+                            channelListState.animateScrollToItem(i)
+                            break
+                        }
+                    }
+                }
+            }
+
             LazyColumn(
                 state = channelListState,
                 modifier = Modifier
@@ -292,21 +317,66 @@ fun LiveTvScreen(
                     )
                 }
 
+                // Overlay de erro quando o canal falha após todas as tentativas
+                val liveError by viewModel.livePlayerError.collectAsState()
+                if (liveError) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.85f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                imageVector = Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = Color(0xFFC62828),
+                                modifier = Modifier.size(36.dp)
+                            )
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Canal indisponível",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "Toque para tentar novamente",
+                                color = Color.Gray,
+                                fontSize = 11.sp
+                            )
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFFC62828))
+                                    .clickable { viewModel.retryLiveChannel() }
+                                    .padding(horizontal = 20.dp, vertical = 8.dp)
+                            ) {
+                                Text("TENTAR NOVAMENTE", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+
                 // Botão favorito no canto superior direito do preview
                 val isFavorite = selectedChannel?.isFavorite == true
-                IconButton(
-                    onClick = { selectedChannel?.let { viewModel.updateFavorite(it.id, !isFavorite) } },
+                Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(8.dp)
-                        .size(36.dp)
-                        .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(50))
+                        .size(28.dp)
+                        .clip(RoundedCornerShape(50))
+                        .background(Color.Black.copy(alpha = 0.5f))
+                        .clickable { selectedChannel?.let { viewModel.updateFavorite(it.id, !isFavorite) } },
+                    contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                         contentDescription = if (isFavorite) "Remover favorito" else "Adicionar favorito",
                         tint = if (isFavorite) Color(0xFFC62828) else Color.White.copy(alpha = 0.8f),
-                        modifier = Modifier.size(18.dp)
+                        modifier = Modifier.size(16.dp)
                     )
                 }
             }

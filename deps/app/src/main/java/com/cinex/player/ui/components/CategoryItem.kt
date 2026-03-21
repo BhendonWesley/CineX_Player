@@ -19,6 +19,7 @@ import androidx.compose.ui.unit.sp
 private val ActiveRed  = Color(0xFFE11D2E)
 private val ActiveGold = Color(0xFFF59E0B)
 private val ActiveGradient = listOf(ActiveRed, ActiveGold)
+private val ActiveBrush = Brush.linearGradient(ActiveGradient)
 
 @Composable
 fun CategoryItem(
@@ -37,7 +38,7 @@ fun CategoryItem(
                 if (isSelected)
                     Modifier
                         .background(Color(0x1AFFFFFF))
-                        .border(2.dp, Brush.linearGradient(ActiveGradient), shape)
+                        .border(2.dp, ActiveBrush, shape)
                 else
                     Modifier.background(Color.Transparent)
             )

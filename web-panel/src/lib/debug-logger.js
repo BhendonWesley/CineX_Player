@@ -1,7 +1,7 @@
 
 // Memória global para logs (apenas em desenvolvimento)
-if (!global._debugLogs) {
-    global._debugLogs = [];
+if (!globalThis._debugLogs) {
+    globalThis._debugLogs = [];
 }
 
 export function addDebugLog(msg) {
@@ -9,14 +9,14 @@ export function addDebugLog(msg) {
         timestamp: new Date().toISOString(),
         message: msg
     };
-    global._debugLogs.push(logItem);
+    globalThis._debugLogs.push(logItem);
     // Manter apenas os últimos 100 logs
-    if (global._debugLogs.length > 100) {
-        global._debugLogs.shift();
+    if (globalThis._debugLogs.length > 100) {
+        globalThis._debugLogs.shift();
     }
     console.log(`[DEBUG_LOG] ${msg}`);
 }
 
 export function getDebugLogs() {
-    return global._debugLogs || [];
+    return globalThis._debugLogs || [];
 }

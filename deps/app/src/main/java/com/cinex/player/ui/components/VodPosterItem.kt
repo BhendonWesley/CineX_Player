@@ -45,7 +45,9 @@ fun VodPosterItem(
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
 
-    val gradientBrush = Brush.linearGradient(listOf(CardRed, CardGold))
+    val gradientBrush = remember { Brush.linearGradient(listOf(CardRed, CardGold)) }
+    val overlayGradient = remember { Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.92f))) }
+    val context = androidx.compose.ui.platform.LocalContext.current
 
     Box(
         modifier = modifier
@@ -66,8 +68,18 @@ fun VodPosterItem(
         val imageUrl = channel.logoUrl?.takeIf { it.isNotEmpty() } ?: channel.posterUrl
 
         if (imageUrl != null) {
+            val imageRequest = remember(imageUrl) {
+                coil.request.ImageRequest.Builder(context)
+                    .data(imageUrl)
+                    .crossfade(300)
+                    .memoryCacheKey(imageUrl)
+                    .diskCacheKey(imageUrl)
+                    .size(320, 480)
+                    .build()
+            }
+
             AsyncImage(
-                model = imageUrl,
+                model = imageRequest,
                 contentDescription = channel.name,
                 contentScale = if (channel.posterUrl.isNullOrEmpty()) ContentScale.Fit else ContentScale.Crop,
                 alignment = Alignment.TopCenter,
@@ -114,11 +126,7 @@ fun VodPosterItem(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(
-                            Brush.verticalGradient(
-                                listOf(Color.Transparent, Color.Black.copy(alpha = 0.92f))
-                            )
-                        )
+                        .background(overlayGradient)
                         .padding(horizontal = 10.dp, vertical = 10.dp)
                 ) {
                     Text(
@@ -156,10 +164,10 @@ fun VodPosterItem(
                     val progress = channel.resumePosition.toFloat() / channel.totalDuration.toFloat()
                     LinearProgressIndicator(
                         progress = { progress.coerceIn(0f, 1f) },
-                        modifier = Modifier.fillMaxWidth().height(3.dp),
+                        modifier = Modifier.fillMaxWidth().height(4.dp),
                         color = DeepRed,
-                        trackColor = Color.Transparent,
-                        strokeCap = StrokeCap.Round
+                        trackColor = Color.DarkGray.copy(alpha = 0.6f),
+                        strokeCap = StrokeCap.Square
                     )
                 }
                 Box(

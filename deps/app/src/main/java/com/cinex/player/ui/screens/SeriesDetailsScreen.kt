@@ -1,11 +1,11 @@
 package com.cinex.player.ui.screens
 
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,10 +19,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -46,8 +48,7 @@ fun SeriesDetailsScreen(
     val sortedSeasons = seasons.filter { it > 0 }.sorted()
     var selectedSeason by remember { mutableStateOf(1) }
     var viewMode by remember { mutableStateOf(SeriesViewMode.LANDING) }
-    
-    // Auto-select first season when available
+
     LaunchedEffect(sortedSeasons) {
         if (sortedSeasons.isNotEmpty()) {
             if (selectedSeason !in sortedSeasons) {
@@ -56,8 +57,6 @@ fun SeriesDetailsScreen(
         }
     }
 
-
-
     val episodesFlow = remember(series.seriesName, selectedSeason) {
         viewModel.getEpisodesBySeasonPaged(series.seriesName ?: "", selectedSeason)
     }
@@ -65,7 +64,6 @@ fun SeriesDetailsScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
 
     Box(modifier = Modifier.fillMaxSize().background(DarkBackground)) {
-        // Backdrop em tela cheia com Scrim
         AsyncImage(
             model = series.bannerUrl ?: series.logoUrl,
             contentDescription = null,
@@ -73,8 +71,7 @@ fun SeriesDetailsScreen(
             contentScale = ContentScale.Crop,
             alpha = 0.3f
         )
-        
-        // Degradês Cinematográficos
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -85,7 +82,7 @@ fun SeriesDetailsScreen(
                     )
                 )
         )
-        
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -98,7 +95,6 @@ fun SeriesDetailsScreen(
         )
 
         Column(modifier = Modifier.fillMaxSize()) {
-            // Barra Superior de Navegação
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp),
                 verticalAlignment = Alignment.CenterVertically
@@ -123,7 +119,6 @@ fun SeriesDetailsScreen(
             }
 
             if (viewMode == SeriesViewMode.LANDING) {
-                // PASSO 1: LANDING PAGE (Estilo Netflix/Filmes)
                 Row(
                     modifier = Modifier
                         .fillMaxSize()
@@ -186,22 +181,41 @@ fun SeriesDetailsScreen(
                             Text(text = "${sortedSeasons.size} Temporadas", color = Color.Gray, fontSize = 16.sp)
                         }
 
-                        // Sinopse — scroll próprio, ocupa espaço entre rating e botões
+                        // Sinopse em bloco visual com scroll e fade
                         Box(
                             modifier = Modifier
                                 .weight(1f)
                                 .padding(vertical = 8.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color.White.copy(alpha = 0.06f))
                         ) {
+                            val scrollState = rememberScrollState()
                             Text(
                                 text = series.tmdbSynopsis ?: "Sem sinopse disponível.",
                                 color = Color.LightGray,
-                                fontSize = 15.sp,
-                                lineHeight = 22.sp,
-                                modifier = Modifier.verticalScroll(rememberScrollState())
+                                fontSize = 14.sp,
+                                lineHeight = 21.sp,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(scrollState)
+                                    .padding(12.dp)
                             )
+                            // Fade inferior indicando mais conteúdo
+                            if (scrollState.canScrollForward) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(32.dp)
+                                        .align(Alignment.BottomCenter)
+                                        .background(
+                                            Brush.verticalGradient(
+                                                listOf(Color.Transparent, DarkBackground.copy(alpha = 0.9f))
+                                            )
+                                        )
+                                )
+                            }
                         }
 
-                        // Botões — sempre fixos e visíveis na parte inferior
                         Row(
                             modifier = Modifier.padding(bottom = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -250,9 +264,9 @@ fun SeriesDetailsScreen(
                     }
                 }
             } else {
-                // PASSO 2: SELEÇÃO DE EPISÓDIOS (Painel Duplo)
+                // SELEÇÃO DE EPISÓDIOS (Painel Duplo)
                 Row(modifier = Modifier.fillMaxSize().padding(horizontal = 40.dp)) {
-                    // LADO ESQUERDO: Lista de Temporadas (Vertical)
+                    // Temporadas
                     Column(
                         modifier = Modifier
                             .width(200.dp)
@@ -260,13 +274,13 @@ fun SeriesDetailsScreen(
                             .padding(top = 16.dp)
                     ) {
                         Text(
-                            text = "TEMPORADAS", 
-                            color = Color.Gray, 
-                            fontSize = 12.sp, 
+                            text = "TEMPORADAS",
+                            color = Color.Gray,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(bottom = 16.dp, start = 8.dp)
                         )
-                        
+
                         LazyColumn(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.fillMaxWidth()
@@ -294,7 +308,7 @@ fun SeriesDetailsScreen(
 
                     Spacer(modifier = Modifier.width(32.dp))
 
-                    // LADO DIREITO: Lista de Episódios
+                    // Episódios
                     Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
                         Text(
                             text = "EPISÓDIOS - TEMPORADA $selectedSeason",
@@ -304,23 +318,15 @@ fun SeriesDetailsScreen(
                             modifier = Modifier.padding(bottom = 12.dp, top = 16.dp)
                         )
 
-                        if (isLoadingEpisodes) {
-                            Box(
-                                modifier = Modifier.fillMaxSize(),
-                                contentAlignment = Alignment.Center
+                        if (isLoadingEpisodes && pagingItems.itemCount == 0) {
+                            // Shimmer loading placeholders
+                            LazyColumn(
+                                verticalArrangement = Arrangement.spacedBy(16.dp),
+                                contentPadding = PaddingValues(bottom = 32.dp),
+                                modifier = Modifier.fillMaxWidth()
                             ) {
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    CircularProgressIndicator(
-                                        color = Color.White,
-                                        modifier = Modifier.size(32.dp),
-                                        strokeWidth = 3.dp
-                                    )
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    Text(
-                                        text = "Carregando episódios...",
-                                        color = Color.Gray,
-                                        fontSize = 13.sp
-                                    )
+                                items(6) {
+                                    ShimmerEpisodeItem()
                                 }
                             }
                         } else {
@@ -351,8 +357,81 @@ fun SeriesDetailsScreen(
 }
 
 @Composable
+fun ShimmerEpisodeItem() {
+    val shimmerColors = listOf(
+        Color.White.copy(alpha = 0.05f),
+        Color.White.copy(alpha = 0.12f),
+        Color.White.copy(alpha = 0.05f)
+    )
+
+    val transition = rememberInfiniteTransition(label = "shimmer")
+    val translateAnim by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1000f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 1200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shimmer_translate"
+    )
+
+    val brush = Brush.linearGradient(
+        colors = shimmerColors,
+        start = Offset(translateAnim - 200f, 0f),
+        end = Offset(translateAnim, 0f)
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(Color.White.copy(alpha = 0.05f))
+            .padding(12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // Thumbnail placeholder
+            Box(
+                modifier = Modifier
+                    .size(width = 160.dp, height = 90.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(brush)
+            )
+
+            Spacer(modifier = Modifier.width(16.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                // Title placeholder
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.7f)
+                        .height(16.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(brush)
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                // Synopsis placeholder
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.9f)
+                        .height(12.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(brush)
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(0.5f)
+                        .height(12.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(brush)
+                )
+            }
+        }
+    }
+}
+
+@Composable
 fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: String?, onClick: () -> Unit) {
-    // Hierarquia de imagens: Still TMDB > Logo original (Xtream movie_image) > Poster série > Fallback
     val imageModel = when {
         !episode.bannerUrl.isNullOrBlank() -> episode.bannerUrl
         !episode.logoUrl.isNullOrBlank() -> episode.logoUrl
@@ -369,7 +448,6 @@ fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: Stri
             .padding(12.dp)
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            // Thumbnail do Episódio
             Box(
                 modifier = Modifier
                     .size(width = 160.dp, height = 90.dp)
@@ -386,7 +464,6 @@ fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: Stri
                     )
                 }
 
-                // Overlay de Play
                 Box(
                     modifier = Modifier
                         .size(36.dp)
@@ -394,8 +471,8 @@ fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: Stri
                         .background(Color.Black.copy(alpha = 0.5f)),
                     contentAlignment = Alignment.Center
                 ) {
-                    androidx.compose.material3.Icon(
-                        imageVector = androidx.compose.material.icons.Icons.Default.PlayArrow,
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
                         contentDescription = null,
                         tint = Color.White,
                         modifier = Modifier.size(24.dp)
@@ -421,6 +498,7 @@ fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: Stri
                         fontSize = 12.sp,
                         maxLines = 2,
                         lineHeight = 16.sp,
+                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(top = 4.dp)
                     )
                 }
@@ -428,4 +506,3 @@ fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: Stri
         }
     }
 }
-

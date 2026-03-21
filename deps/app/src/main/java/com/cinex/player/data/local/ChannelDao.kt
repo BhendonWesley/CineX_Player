@@ -48,8 +48,8 @@ interface ChannelDao {
         AND bannerUrl IS NOT NULL AND bannerUrl != '' AND bannerUrl NOT LIKE '%null'
         AND tmdbSynopsis IS NOT NULL AND tmdbSynopsis != ''
         GROUP BY CASE WHEN category = 'SERIES' THEN seriesName ELSE name END
-        ORDER BY RANDOM()
-        LIMIT 20
+        ORDER BY tmdbRating DESC
+        LIMIT 40
     """)
     fun getFeaturedContent(url: String): Flow<List<Channel>>
 
@@ -59,6 +59,9 @@ interface ChannelDao {
 
     @Query("SELECT * FROM channels WHERE category = 'SERIES' AND seriesName = :seriesName AND playlistUrl = :url")
     suspend fun getEpisodesForSeriesList(seriesName: String, url: String): List<Channel>
+
+    @Query("SELECT COUNT(*) FROM channels WHERE category = 'SERIES' AND seriesName = :seriesName AND playlistUrl = :url LIMIT 1")
+    suspend fun countEpisodesForSeries(seriesName: String, url: String): Int
 
     @Query("SELECT DISTINCT seasonNumber FROM channels WHERE category = 'SERIES' AND seriesName = :seriesName AND playlistUrl = :url ORDER BY seasonNumber ASC")
     fun getSeasonsForSeries(seriesName: String, url: String): Flow<List<Int>>
@@ -119,6 +122,9 @@ interface ChannelDao {
     @Query("SELECT * FROM channels WHERE playlistUrl = :url")
     suspend fun getAllByPlaylist(url: String): List<Channel>
 
+    @Query("SELECT remoteId, tmdbRating, tmdbSynopsis, posterUrl, bannerUrl, tmdbYear, castMembers, trailerUrl, resumePosition, totalDuration, isFavorite FROM channels WHERE playlistUrl = :url")
+    suspend fun getTmdbAndUserDataByPlaylist(url: String): List<ChannelPreserveData>
+
     @Query("SELECT categoryId, COUNT(*) as count FROM channels WHERE playlistUrl = :url GROUP BY categoryId")
     fun getCategoryCounts(url: String): Flow<List<CategoryCount>>
 
@@ -148,6 +154,20 @@ interface ChannelDao {
     """)
     suspend fun getNextEpisode(seriesName: String, currentSeason: Int, currentEpisode: Int, url: String): Channel?
 }
+
+data class ChannelPreserveData(
+    val remoteId: String,
+    val tmdbRating: Double?,
+    val tmdbSynopsis: String?,
+    val posterUrl: String?,
+    val bannerUrl: String?,
+    val tmdbYear: String?,
+    val castMembers: String?,
+    val trailerUrl: String?,
+    val resumePosition: Long,
+    val totalDuration: Long,
+    val isFavorite: Boolean
+)
 
 data class CategoryCount(
     val categoryId: String,

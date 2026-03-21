@@ -16,6 +16,8 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.ScrollState
 import androidx.compose.ui.geometry.CornerRadius
@@ -101,6 +103,7 @@ fun VodScreen(
     channels: Flow<PagingData<Channel>>? = null,
     continueWatching: List<Channel> = emptyList(),
     onVideoClick: (Channel) -> Unit,
+    onPlayDirect: (Channel) -> Unit = onVideoClick,
     modifier: Modifier = Modifier
 ) {
     val categoriesFlow = when (type) {
@@ -155,6 +158,18 @@ fun VodScreen(
         if (type != "SEARCH") {
             // ── SIDEBAR DE CATEGORIAS ──────────────────────────────
             val sidebarScrollState = rememberScrollState()
+            var selectedItemOffset by remember { mutableIntStateOf(0) }
+
+            // Auto-scroll para a categoria selecionada
+            LaunchedEffect(selectedCategory, selectedItemOffset) {
+                if (selectedItemOffset > 0) {
+                    val viewportHeight = sidebarScrollState.viewportSize
+                    // Centraliza o item selecionado no viewport
+                    val targetScroll = (selectedItemOffset - viewportHeight / 3).coerceAtLeast(0)
+                    sidebarScrollState.animateScrollTo(targetScroll)
+                }
+            }
+
             Column(
                 modifier = Modifier
                     .width(260.dp)
@@ -188,34 +203,54 @@ fun VodScreen(
                 val typeCounts by viewModel.typeCounts.collectAsState()
                 val favCounts  by viewModel.favoriteCounts.collectAsState()
 
+                // "Continue Assistindo" no topo da sidebar
+                if (continueWatching.isNotEmpty()) {
+                    val isContinueSelected = selectedCategory == "Continuar Assistindo"
+                    Box(
+                        modifier = Modifier.onGloballyPositioned { coords ->
+                            if (isContinueSelected) {
+                                selectedItemOffset = coords.positionInParent().y.toInt()
+                            }
+                        }
+                    ) {
+                        CategoryItem(
+                            name = "Continue Assistindo",
+                            count = continueWatching.size,
+                            isSelected = isContinueSelected,
+                            onClick = {
+                                if (type == "MOVIE") viewModel.setMovieCategory("Continuar Assistindo")
+                                else viewModel.setSeriesCategory("Continuar Assistindo")
+                            }
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                }
+
                 categories.forEach { category ->
+                    val isSelected = selectedCategory == category.id
                     val count = when (category.id) {
                         "Tudo"     -> typeCounts[type] ?: 0
                         "Favorito" -> favCounts[type] ?: 0
                         else       -> counts[category.id] ?: 0
                     }
-                    CategoryItem(
-                        name = category.name,
-                        count = count,
-                        isSelected = selectedCategory == category.id,
-                        onClick = {
-                            if (type == "MOVIE") viewModel.setMovieCategory(category.id)
-                            else viewModel.setSeriesCategory(category.id)
+                    Box(
+                        modifier = Modifier.onGloballyPositioned { coords ->
+                            if (isSelected) {
+                                selectedItemOffset = coords.positionInParent().y.toInt()
+                            }
                         }
-                    )
+                    ) {
+                        CategoryItem(
+                            name = category.name,
+                            count = count,
+                            isSelected = isSelected,
+                            onClick = {
+                                if (type == "MOVIE") viewModel.setMovieCategory(category.id)
+                                else viewModel.setSeriesCategory(category.id)
+                            }
+                        )
+                    }
                     Spacer(Modifier.height(6.dp))
-                }
-
-                if (continueWatching.isNotEmpty()) {
-                    CategoryItem(
-                        name = "Visualizados recentemente",
-                        count = continueWatching.size,
-                        isSelected = selectedCategory == "Continuar Assistindo",
-                        onClick = {
-                            if (type == "MOVIE") viewModel.setMovieCategory("Continuar Assistindo")
-                            else viewModel.setSeriesCategory("Continuar Assistindo")
-                        }
-                    )
                 }
             }
         }
@@ -240,7 +275,13 @@ fun VodScreen(
                     }
                     VodPosterItem(
                         channel = channel,
-                        onClick = { onVideoClick(channel) }
+                        onClick = {
+                            if (selectedCategory == "Continuar Assistindo") {
+                                onPlayDirect(channel)
+                            } else {
+                                onVideoClick(channel)
+                            }
+                        }
                     )
                 }
             }

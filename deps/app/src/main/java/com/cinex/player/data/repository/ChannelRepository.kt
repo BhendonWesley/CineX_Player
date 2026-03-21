@@ -134,6 +134,11 @@ class ChannelRepository @Inject constructor(
         return channelDao.getSeasonsForSeries(seriesName, url)
     }
 
+    suspend fun hasEpisodesForSeries(seriesName: String): Boolean {
+        val url = _activePlaylistUrl.value ?: return false
+        return channelDao.countEpisodesForSeries(seriesName, url) > 0
+    }
+
     fun getEpisodesBySeasonPaged(seriesName: String, season: Int): Flow<PagingData<Channel>> {
         val url = _activePlaylistUrl.value ?: return flowOf(PagingData.empty())
         return Pager(PagingConfig(pageSize = 50)) {
@@ -232,8 +237,8 @@ class ChannelRepository @Inject constructor(
             if (parsedChannels.isNotEmpty()) {
                 onProgress(50, 50, 50, "Sincronizando metadados...")
                 
-                // Preservar dados TMDB existentes
-                val existingTmdbData = channelDao.getAllByPlaylist(url).associateBy({ it.remoteId }, { it })
+                // Preservar dados TMDB e do usuário (favoritos, progresso)
+                val existingTmdbData = channelDao.getTmdbAndUserDataByPlaylist(url).associateBy { it.remoteId }
 
                 onProgress(50, 50, 50, "Limpando dados antigos...")
                 channelDao.clearByPlaylist(url)
@@ -250,7 +255,10 @@ class ChannelRepository @Inject constructor(
                         bannerUrl = old?.bannerUrl,
                         tmdbYear = old?.tmdbYear,
                         castMembers = old?.castMembers,
-                        trailerUrl = old?.trailerUrl
+                        trailerUrl = old?.trailerUrl,
+                        resumePosition = old?.resumePosition ?: 0L,
+                        totalDuration = old?.totalDuration ?: 0L,
+                        isFavorite = old?.isFavorite ?: false
                     )
                 }
 
@@ -363,9 +371,9 @@ class ChannelRepository @Inject constructor(
             
             onProgress(10, 10, 10, "Conectando ao servidor...")
             
-            // Busca metadados existentes para preservar capas
+            // Busca metadados existentes para preservar capas e dados do usuário
             val existingTmdbData = withContext(Dispatchers.IO) {
-                channelDao.getAllByPlaylist(playlistUrl).associateBy({ it.remoteId }, { it })
+                channelDao.getTmdbAndUserDataByPlaylist(playlistUrl).associateBy { it.remoteId }
             }
 
             // BUSCA PARALELA DE CATEGORIAS
@@ -427,7 +435,8 @@ class ChannelRepository @Inject constructor(
                     bannerUrl = old?.bannerUrl,
                     tmdbYear = old?.tmdbYear,
                     castMembers = old?.castMembers,
-                    trailerUrl = old?.trailerUrl
+                    trailerUrl = old?.trailerUrl,
+                    isFavorite = old?.isFavorite ?: false
                 )
             }
             if (liveChannels.isNotEmpty()) {
@@ -455,7 +464,10 @@ class ChannelRepository @Inject constructor(
                     bannerUrl = old?.bannerUrl,
                     tmdbYear = old?.tmdbYear,
                     castMembers = old?.castMembers,
-                    trailerUrl = old?.trailerUrl
+                    trailerUrl = old?.trailerUrl,
+                    resumePosition = old?.resumePosition ?: 0L,
+                    totalDuration = old?.totalDuration ?: 0L,
+                    isFavorite = old?.isFavorite ?: false
                 )
             }
             if (movieStreams.isNotEmpty()) {
@@ -483,7 +495,10 @@ class ChannelRepository @Inject constructor(
                     bannerUrl = old?.bannerUrl,
                     tmdbYear = old?.tmdbYear,
                     castMembers = old?.castMembers,
-                    trailerUrl = old?.trailerUrl
+                    trailerUrl = old?.trailerUrl,
+                    resumePosition = old?.resumePosition ?: 0L,
+                    totalDuration = old?.totalDuration ?: 0L,
+                    isFavorite = old?.isFavorite ?: false
                 )
             }
             if (seriesStreams.isNotEmpty()) {
@@ -608,46 +623,32 @@ class ChannelRepository @Inject constructor(
                 val trailerUrl = pickBestTrailer(allVideos)
 
                 if (channel.category == "SERIES" && channel.seriesName != null) {
-                    val episodes = channelDao.getEpisodesForSeriesList(channel.seriesName, channel.playlistUrl)
-                    episodes.forEach { ep ->
-                        channelDao.updateTmdbInfo(
-                            ep.id,
-                            ep.tmdbRating ?: tmdbResult.vote_average,
-                            ep.tmdbSynopsis ?: details.overview, // preserva sinopse individual do episódio
-                            ep.posterUrl ?: posterUrl, // preserva poster individual se existir
-                            ep.bannerUrl, // preserva o still individual do episódio
-                            ep.tmdbYear ?: year,
-                            cast,
-                            trailerUrl
-                        )
-                    }
-                    
-                    // Busca thumbnails e sinopses específicas de episódios
+                    // Atualiza o canal da série em si (não os episódios)
+                    channelDao.updateTmdbInfo(
+                        channel.id,
+                        tmdbResult.vote_average,
+                        details.overview,
+                        posterUrl,
+                        backdropUrl,
+                        year,
+                        cast,
+                        trailerUrl
+                    )
+
+                    // Busca thumbnails e sinopses específicas de episódios em uma única passada
                     details.seasons?.forEach { season ->
                         try {
                             val seasonDetails = tmdbApi.getSeasonDetails(bestMatch.id, season.season_number, tmdbApiKey)
                             seasonDetails.episodes.forEach { tmdbEp ->
                                 val stillUrl = tmdbEp.still_path?.let { "https://image.tmdb.org/t/p/w500$it" }
-                                if (stillUrl != null) {
-                                    channelDao.updateEpisodeStillAndSynopsis(
-                                        channel.seriesName!!,
-                                        season.season_number,
-                                        tmdbEp.episode_number,
-                                        stillUrl,
-                                        tmdbEp.overview,
-                                        channel.playlistUrl
-                                    )
-                                } else if (!tmdbEp.overview.isNullOrBlank()) {
-                                    // Mesmo sem still, salva a sinopse do episódio
-                                    channelDao.updateEpisodeStillAndSynopsis(
-                                        channel.seriesName!!,
-                                        season.season_number,
-                                        tmdbEp.episode_number,
-                                        "",
-                                        tmdbEp.overview,
-                                        channel.playlistUrl
-                                    )
-                                }
+                                channelDao.updateEpisodeStillAndSynopsis(
+                                    channel.seriesName!!,
+                                    season.season_number,
+                                    tmdbEp.episode_number,
+                                    stillUrl ?: "",
+                                    tmdbEp.overview,
+                                    channel.playlistUrl
+                                )
                             }
                         } catch (_: Exception) {}
                     }

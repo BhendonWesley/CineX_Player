@@ -191,8 +191,9 @@ export default function LoginPage() {
     return (
         <>
             <style jsx global>{`
-                .pw { position:absolute; inset:-40px; display:flex; gap:8px; overflow:hidden }
+                .pw { position:absolute; inset:-120px; display:flex; gap:8px; overflow:hidden; justify-content:center }
                 .pc { flex:1; min-width:0; display:flex; flex-direction:column; gap:8px; will-change:transform }
+                @media(max-width:768px){ .pw { inset:-60px; gap:6px } .pc { flex:0 0 110px } }
                 
                 /* Agrupa filmes para criar 2 blocos idênticos por coluna para o loop perfeito */
                 .p-group { display:flex; flex-direction:column; gap:8px; }

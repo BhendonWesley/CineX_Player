@@ -92,7 +92,7 @@ fun HomeScreen(
                             try {
                                 val request = ImageRequest.Builder(context)
                                     .data(url)
-                                    .size(coil.size.Size.ORIGINAL)
+                                    .size(1280, 720)
                                     .build()
                                 context.imageLoader.execute(request)
                             } catch (_: Exception) {}
