@@ -95,7 +95,7 @@ const P = [
 // 14 columns, 5 unique posters each = 70 needed (exactly our list)
 function buildColumns() {
     const cols = []
-    const speeds = ['sa','sb','sc','sd','se','sf']
+    const speeds = ['sa', 'sb', 'sc', 'sd', 'se', 'sf']
     for (let i = 0; i < 14; i++) {
         const colPosters = P.slice(i * 5, i * 5 + 5)
         cols.push({
@@ -127,17 +127,17 @@ export default function LoginPage() {
                     const data = await res.json()
                     allPaths.push(...(data.results || []).map(m => m.poster_path).filter(Boolean))
                 }
-                
+
                 // Get unique posters and slice exactly 84 (6 rows * 14 columns)
                 allPaths = [...new Set(allPaths)].slice(0, 84)
 
                 // Fill array if TMDB didn't return enough results
-                while(allPaths.length < 84 && allPaths.length > 0) {
-                     allPaths = [...allPaths, ...allPaths].slice(0, 84)
+                while (allPaths.length < 84 && allPaths.length > 0) {
+                    allPaths = [...allPaths, ...allPaths].slice(0, 84)
                 }
 
                 const newCols = []
-                const speeds = ['sa','sb','sc','sd','se','sf']
+                const speeds = ['sa', 'sb', 'sc', 'sd', 'se', 'sf']
                 for (let i = 0; i < 14; i++) {
                     const colPaths = allPaths.slice(i * 6, i * 6 + 6)
                     newCols.push({
@@ -155,9 +155,9 @@ export default function LoginPage() {
         return () => { isMounted = false }
     }, [])
 
-    const displayCols = cols.length > 0 ? cols : Array.from({length: 14}).map((_, i) => ({
+    const displayCols = cols.length > 0 ? cols : Array.from({ length: 14 }).map((_, i) => ({
         posters: Array(6).fill(''),
-        speed: ['sa','sb','sc','sd','se','sf'][i % 6],
+        speed: ['sa', 'sb', 'sc', 'sd', 'se', 'sf'][i % 6],
         offset: (i % 3) * 30
     }))
 
@@ -167,14 +167,14 @@ export default function LoginPage() {
 
         setLoading(true)
         setError('')
-        
+
         try {
             const fd = new FormData()
             fd.append('username', username)
             fd.append('password', password)
 
             const r = await loginAction(fd)
-            
+
             // Se o loginAction chegar aqui sem disparar o redirect, significa que houve erro
             if (r && !r.success) {
                 setError(r.message || 'Credenciais inválidas.')
@@ -234,14 +234,14 @@ export default function LoginPage() {
                 .dv{height:1px;background:linear-gradient(90deg,transparent,rgba(216,166,58,.15),transparent);margin:16px 0}
             `}</style>
 
-            <div style={{ position:'relative', minHeight:'100vh', width:'100%', background:'#0B0F1A', display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden' }}>
+            <div style={{ position: 'relative', minHeight: '100vh', width: '100%', background: '#0B0F1A', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                 {/* ═══ FULLSCREEN POSTER WALL — 14 unique columns ═══ */}
                 <div className="pw">
                     {displayCols.map((col, ci) => {
                         return (
                             <div key={ci} className={`pc ${col.speed}`} style={{ paddingTop: col.offset }}>
                                 <div className="pc-inner" style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                                    
+
                                     {/* Primeira Metade (Original) */}
                                     <div className="p-group">
                                         {col.posters.map((src, i) => (
@@ -252,7 +252,7 @@ export default function LoginPage() {
                                             )
                                         ))}
                                     </div>
-                                    
+
                                     {/* Segunda Metade (Clone para Sincronia de Loop Reverso) */}
                                     <div className="p-group">
                                         {col.posters.map((src, i) => (
@@ -263,7 +263,7 @@ export default function LoginPage() {
                                             )
                                         ))}
                                     </div>
-                                    
+
                                 </div>
                             </div>
                         )
@@ -275,43 +275,43 @@ export default function LoginPage() {
 
                 {/* ═══ UNIFIED CARD ═══ */}
                 <div className="cc">
-                    <div style={{ textAlign:'center', marginBottom:'6px' }}>
-                        <div style={{ margin:'0 auto 12px', display:'flex', alignItems:'center', justifyContent:'center' }}>
-                            <Image src="/cinex-logo-final.png" alt="CineX" width={80} height={80} style={{ objectFit:'contain', filter:'drop-shadow(0 4px 12px rgba(178,30,43,0.3))' }} />
+                    <div style={{ textAlign: 'center', marginBottom: '6px' }}>
+                        <div style={{ margin: '0 auto 12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                            <Image src="/cinex-logo-final.png" alt="CineX" width={80} height={80} style={{ objectFit: 'contain', filter: 'drop-shadow(0 4px 12px rgba(178,30,43,0.3))' }} />
                         </div>
-                        <h1 style={{ fontSize:'24px', fontWeight:'800', color:'#B21E2B', marginBottom:'2px', letterSpacing:'-0.5px' }}>
+                        <h1 style={{ fontSize: '24px', fontWeight: '800', color: '#B21E2B', marginBottom: '2px', letterSpacing: '-0.5px' }}>
                             CENTRAL DE CONTROLE
                         </h1>
-                        <p style={{ fontSize:'10px', color:'#D8A63A', fontWeight:'600', letterSpacing:'2.5px', textTransform:'uppercase' }}>
+                        <p style={{ fontSize: '10px', color: '#D8A63A', fontWeight: '600', letterSpacing: '2.5px', textTransform: 'uppercase' }}>
                             Painel oficial de revendedores
                         </p>
                     </div>
 
                     <div className="dv" />
 
-                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', marginBottom:'16px' }}>
-                        <div className="cp"><Smartphone size={13} style={{ color:'#D8A63A', flexShrink:0 }} /><span>Ativação via MAC</span></div>
-                        <div className="cp"><Zap size={13} style={{ color:'#D8A63A', flexShrink:0 }} /><span>M3U e Xtream</span></div>
-                        <div className="cp" style={{ gridColumn: '1 / -1' }}><Shield size={13} style={{ color:'#D8A63A', flexShrink:0 }} /><span>Sincronize com o CineX Player</span></div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', marginBottom: '16px' }}>
+                        <div className="cp"><Smartphone size={13} style={{ color: '#D8A63A', flexShrink: 0 }} /><span>Ativação via MAC</span></div>
+                        <div className="cp"><Zap size={13} style={{ color: '#D8A63A', flexShrink: 0 }} /><span>M3U e Xtream</span></div>
+                        <div className="cp" style={{ gridColumn: '1 / -1' }}><Shield size={13} style={{ color: '#D8A63A', flexShrink: 0 }} /><span>Sincronize com o CineX Player</span></div>
                     </div>
 
-                    <form onSubmit={handleLogin} style={{ display:'flex', flexDirection:'column', gap:'12px' }}>
+                    <form onSubmit={handleLogin} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                         {error && (
-                            <div style={{ background:'rgba(178,30,43,.1)', border:'1px solid rgba(178,30,43,.25)', color:'#E23A3A', padding:'10px 14px', borderRadius:'10px', fontSize:'13px', textAlign:'center' }}>{error}</div>
+                            <div style={{ background: 'rgba(178,30,43,.1)', border: '1px solid rgba(178,30,43,.25)', color: '#E23A3A', padding: '10px 14px', borderRadius: '10px', fontSize: '13px', textAlign: 'center' }}>{error}</div>
                         )}
-                        <div style={{ position:'relative' }}>
-                            <User size={16} style={{ position:'absolute', left:'14px', top:'50%', transform:'translateY(-50%)', color:'#5a6175', pointerEvents:'none' }} />
-                            <input type="text" placeholder="Usuário do Painel" value={username} onChange={e=>setUsername(e.target.value)} required className="ci" />
+                        <div style={{ position: 'relative' }}>
+                            <User size={16} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: '#5a6175', pointerEvents: 'none' }} />
+                            <input type="text" placeholder="Usuário do Painel" value={username} onChange={e => setUsername(e.target.value)} required className="ci" />
                         </div>
-                        <div style={{ position:'relative' }}>
-                            <Lock size={16} style={{ position:'absolute', left:'14px', top:'50%', transform:'translateY(-50%)', color:'#5a6175', pointerEvents:'none' }} />
-                            <input 
-                                type={showPassword ? "text" : "password"} 
-                                placeholder="Senha do Painel" 
-                                value={password} 
-                                onChange={e=>setPassword(e.target.value)} 
-                                required 
-                                className="ci" 
+                        <div style={{ position: 'relative' }}>
+                            <Lock size={16} style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', color: '#5a6175', pointerEvents: 'none' }} />
+                            <input
+                                type={showPassword ? "text" : "password"}
+                                placeholder="Senha do Painel"
+                                value={password}
+                                onChange={e => setPassword(e.target.value)}
+                                required
+                                className="ci"
                                 style={{ paddingRight: '44px' }}
                             />
                             <button
@@ -329,17 +329,17 @@ export default function LoginPage() {
                                 {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                             </button>
                         </div>
-                        <button type="submit" disabled={loading} className="cb" style={{ marginTop:'2px' }}>
+                        <button type="submit" disabled={loading} className="cb" style={{ marginTop: '2px' }}>
                             {loading ? <Loader2 className="spin" size={20} /> : 'ENTRAR'}
                         </button>
-                        
+
                         <p style={{ textAlign: 'center', fontSize: '12px', color: '#9CA3AF', marginTop: '12px', lineHeight: '1.5' }}>
-                            Use o mesmo usuário e senha do Painel de Revendedor CineX.
+                            Use o mesmo usuário e senha do Painel de Revendedor
                         </p>
                     </form>
 
-                    <div style={{ textAlign:'center', marginTop:'16px' }}>
-                        <p style={{ fontSize:'10px', color:'#4a5063' }}>© CineX Player — Acesso restrito para revendedores autorizados.</p>
+                    <div style={{ textAlign: 'center', marginTop: '16px' }}>
+                        <p style={{ fontSize: '10px', color: '#4a5063' }}>© CineX Player — Acesso restrito para revendedores autorizados.</p>
                     </div>
                 </div>
             </div>
