@@ -333,7 +333,7 @@ export default function LoginPage() {
                             {loading ? <Loader2 className="spin" size={20} /> : 'ENTRAR'}
                         </button>
                         
-                        <p style={{ textAlign: 'center', fontSize: '12px', color: '#9CA3AF', marginTop: '12px', lineHeight: '1.5', whiteSpace: 'nowrap' }}>
+                        <p style={{ textAlign: 'center', fontSize: '12px', color: '#9CA3AF', marginTop: '12px', lineHeight: '1.5' }}>
                             Use o mesmo usuário e senha do Painel de Revendedor CineX.
                         </p>
                     </form>
