@@ -56,6 +56,9 @@ class MainViewModel @Inject constructor(
     private val _isLoading = MutableStateFlow(false)
     val isLoading = _isLoading.asStateFlow()
 
+    private val _isSyncing = MutableStateFlow(false)
+    val isSyncing = _isSyncing.asStateFlow()
+
     private val _errorMessage = MutableStateFlow<String?>(null)
     val errorMessage = _errorMessage.asStateFlow()
 
@@ -643,6 +646,7 @@ class MainViewModel @Inject constructor(
     fun syncFromPanel() {
         viewModelScope.launch {
             _isLoading.value = true
+            _isSyncing.value = true
             _errorMessage.value = null
             _syncStatus.value = "Conectando ao painel CineX..."
 
@@ -715,9 +719,7 @@ class MainViewModel @Inject constructor(
                             _syncStatus.value = "Lista carregada com sucesso!"
                             val savedPlaylist = repository.allPlaylists.first().find { it.url == url }
                             savedPlaylist?.epgUrl?.let { scheduleEpgSync(it) }
-                            _currentPlaylist.value = savedPlaylist ?: com.cinex.player.data.model.Playlist(
-                                name = "CineX Panel", url = url, lastUsed = System.currentTimeMillis()
-                            )
+                            // NÃO seta _currentPlaylist aqui — o usuário clica em "ACESSAR PLATAFORMA"
                             fetchRealAccountInfo(url)
                         }.onFailure {
                             _errorMessage.value = it.message ?: "Erro ao carregar lista M3U"
@@ -743,9 +745,7 @@ class MainViewModel @Inject constructor(
                         }
                         result.onSuccess {
                             _syncStatus.value = "Lista Xtream carregada com sucesso!"
-                            _currentPlaylist.value = com.cinex.player.data.model.Playlist(
-                                name = "CineX Panel (Xtream)", url = xtreamUrl, lastUsed = System.currentTimeMillis()
-                            )
+                            // NÃO seta _currentPlaylist aqui — o usuário clica em "ACESSAR PLATAFORMA"
                             fetchRealAccountInfo(xtreamUrl)
                         }.onFailure {
                             _errorMessage.value = it.message ?: "Erro ao carregar lista Xtream"
@@ -760,6 +760,7 @@ class MainViewModel @Inject constructor(
             } finally {
                 rotateJob.cancel()
                 _isLoading.value = false
+                _isSyncing.value = false
                 _isInitializing.value = false
             }
         }
@@ -877,6 +878,7 @@ class MainViewModel @Inject constructor(
     fun selectPlaylist(playlist: com.cinex.player.data.model.Playlist) {
         viewModelScope.launch {
             _isLoading.value = true
+            _isSyncing.value = true
             _errorMessage.value = null
             _currentPlaylist.value = playlist
             
@@ -906,6 +908,17 @@ class MainViewModel @Inject constructor(
             
             rotateJob.cancel()
             _isLoading.value = false
+            _isSyncing.value = false
+        }
+    }
+
+    // Ativa uma playlist já sincronizada (sem re-baixar) — usado pelo botão "ACESSAR PLATAFORMA"
+    fun enterPlatform(playlist: com.cinex.player.data.model.Playlist) {
+        viewModelScope.launch {
+            _currentPlaylist.value = playlist
+            repository.activatePlaylist(playlist.url)
+            fetchRealAccountInfo(playlist.url)
+            playlist.epgUrl?.let { scheduleEpgSync(it) }
         }
     }
 
@@ -926,6 +939,7 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             clearPagingCaches()
             _isLoading.value = true
+            _isSyncing.value = true
             _errorMessage.value = null
             
             val rotateJob = launch {
@@ -953,6 +967,7 @@ class MainViewModel @Inject constructor(
 
             rotateJob.cancel()
             _isLoading.value = false
+            _isSyncing.value = false
         }
     }
 

@@ -72,6 +72,7 @@ fun MainScreen(
 
     val continueWatching by viewModel.continueWatching.collectAsState()
     val isDeviceBlocked by viewModel.isDeviceBlocked.collectAsState()
+    val isSyncing by viewModel.isSyncing.collectAsState()
 
     // Simplificamos a lógica de seleção de playlist: se não houver playlist ativa
     val showPlaylistSelectionDashboard = currentPlaylist == null || isServerSwapOpen
@@ -128,13 +129,24 @@ fun MainScreen(
             macAddress = accountInfo?.macAddress ?: "",
             onRetry = { viewModel.refreshAccountFromPanel() }
         )
-    } else if (isLoading) {
+    } else if (isLoading && isSyncing) {
         CinematicLoadingScreen(
             statusMessage = syncStatus,
             tvProgress = liveProgress / 100f,
             moviesProgress = movieProgress / 100f,
             seriesProgress = seriesProgress / 100f
         )
+    } else if (isLoading) {
+        // Loading simples (não é sync) — tela preta com indicador
+        Box(
+            modifier = Modifier.fillMaxSize().background(Color.Black),
+            contentAlignment = Alignment.Center
+        ) {
+            androidx.compose.material3.CircularProgressIndicator(
+                color = Color(0xFFB21E2B),
+                modifier = Modifier.size(48.dp)
+            )
+        }
     } else if (isInitializing) {
         AnimatedSplashScreen()
     } else if (playingChannel != null && playingChannel!!.category != "LIVE_TV") {

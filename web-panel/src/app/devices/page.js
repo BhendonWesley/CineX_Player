@@ -21,6 +21,7 @@ export default function DevicesPage() {
     const [editSubmitting, setEditSubmitting] = useState(false)
     const [editPlaylistType, setEditPlaylistType] = useState('xtream')
     const [togglingStatus, setTogglingStatus] = useState(null)
+    const [deviceToToggle, setDeviceToToggle] = useState(null)
     const [mounted, setMounted] = useState(false)
 
     useEffect(() => {
@@ -117,8 +118,15 @@ export default function DevicesPage() {
         setEditSubmitting(false)
     }
 
-    const handleToggleStatus = async (device) => {
+    const triggerToggleStatus = (device) => {
+        setDeviceToToggle(device)
+    }
+
+    const executeToggleStatus = async () => {
+        if (!deviceToToggle) return
+        const device = deviceToToggle
         const newStatus = device.status === 'Bloqueado' ? 'Ativo' : 'Bloqueado'
+        setDeviceToToggle(null)
         setTogglingStatus(device.id)
         const result = await toggleDeviceStatus(device.id, newStatus)
         if (result.success) {
@@ -261,7 +269,7 @@ export default function DevicesPage() {
                                         <td style={{ padding: '16px 24px' }}>
                                             <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
                                                 <button
-                                                    onClick={() => handleToggleStatus(device)}
+                                                    onClick={() => triggerToggleStatus(device)}
                                                     disabled={togglingStatus === device.id}
                                                     style={{
                                                         background: 'none', border: 'none', cursor: togglingStatus === device.id ? 'wait' : 'pointer',
@@ -348,7 +356,7 @@ export default function DevicesPage() {
                                         LISTA: <strong style={{ color: 'var(--text-secondary)' }}>{device.playlist_type || 'XTREAM'}</strong>
                                     </span>
                                     <div style={{ display: 'flex', gap: '8px' }}>
-                                        <button onClick={() => handleToggleStatus(device)} disabled={togglingStatus === device.id} className="input-field" style={{ padding: '8px', width: 'auto', display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
+                                        <button onClick={() => triggerToggleStatus(device)} disabled={togglingStatus === device.id} className="input-field" style={{ padding: '8px', width: 'auto', display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
                                             {togglingStatus === device.id ? <Loader2 size={16} className="animate-spin" /> : (device.status === 'Bloqueado' ? <Unlock size={16} color="#4ade80" /> : <Lock size={16} color="var(--highlight-red)" />)}
                                         </button>
                                         <button onClick={() => handleEditClick(device)} className="input-field" style={{ padding: '8px', width: 'auto', display: 'flex', alignItems: 'center', cursor: 'pointer' }}>
@@ -553,6 +561,58 @@ export default function DevicesPage() {
                             </button>
                         </div>
                     </form>
+                </div>
+            , document.body)}
+
+            {/* Block/Unblock Confirmation Modal */}
+            {mounted && deviceToToggle && createPortal(
+                <div style={{
+                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, width: '100vw', height: '100vh',
+                    background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999
+                }}>
+                    <div className="premium-card animate-fade" style={{ width: '400px', maxWidth: '90vw', padding: '32px', textAlign: 'center', margin: 'auto' }}>
+                        <div style={{ width: '64px', height: '64px', background: deviceToToggle.status === 'Bloqueado' ? 'rgba(34, 197, 94, 0.1)' : 'rgba(178, 30, 43, 0.1)', border: `1px solid ${deviceToToggle.status === 'Bloqueado' ? 'rgba(34, 197, 94, 0.3)' : 'rgba(178, 30, 43, 0.3)'}`, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px' }}>
+                            {deviceToToggle.status === 'Bloqueado'
+                                ? <Unlock size={32} color="#22c55e" />
+                                : <Lock size={32} color="var(--primary-red)" />
+                            }
+                        </div>
+                        <h3 style={{ marginBottom: '12px', fontSize: '20px' }}>
+                            {deviceToToggle.status === 'Bloqueado' ? 'Desbloquear Dispositivo?' : 'Bloquear Dispositivo?'}
+                        </h3>
+                        <p style={{ color: 'var(--text-secondary)', marginBottom: '8px', fontSize: '14px' }}>
+                            {deviceToToggle.status === 'Bloqueado'
+                                ? <>O dispositivo <strong style={{ color: 'var(--text-primary)' }}>{deviceToToggle.name}</strong> voltará a ter acesso à lista IPTV.</>
+                                : <>O dispositivo <strong style={{ color: 'var(--text-primary)' }}>{deviceToToggle.name}</strong> perderá o acesso à lista IPTV.</>
+                            }
+                        </p>
+                        <p style={{ color: 'var(--text-muted)', marginBottom: '32px', fontSize: '13px' }}>
+                            {deviceToToggle.status === 'Bloqueado'
+                                ? 'O cliente poderá acessar o conteúdo normalmente.'
+                                : 'O cliente não conseguirá mais acessar o conteúdo.'
+                            }
+                        </p>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                            <button
+                                onClick={() => setDeviceToToggle(null)}
+                                className="input-field"
+                                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: '12px' }}
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={executeToggleStatus}
+                                className="btn-primary"
+                                style={{
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '12px',
+                                    background: deviceToToggle.status === 'Bloqueado' ? '#22c55e' : undefined
+                                }}
+                            >
+                                {deviceToToggle.status === 'Bloqueado' ? 'Sim, Desbloquear' : 'Sim, Bloquear'}
+                            </button>
+                        </div>
+                    </div>
                 </div>
             , document.body)}
 

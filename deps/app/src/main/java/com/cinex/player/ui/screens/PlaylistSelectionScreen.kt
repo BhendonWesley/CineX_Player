@@ -97,7 +97,7 @@ fun PlaylistSelectionScreen(
                     .size(96.dp)
             )
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
 
             // Action Card: Sincronizar Conteúdo
             SyncActionCard(
@@ -106,7 +106,7 @@ fun PlaylistSelectionScreen(
                 isSynced = playlists.isNotEmpty()
             )
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(10.dp))
 
             val isReady = playlists.isNotEmpty() && !isLoading
             val readyGreen = Color(0xFF22C55E)
@@ -118,7 +118,7 @@ fun PlaylistSelectionScreen(
                         .fillMaxWidth()
                         .background(readyGreen.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
                         .border(1.dp, readyGreen.copy(alpha = 0.4f), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.Center
                 ) {
@@ -126,24 +126,24 @@ fun PlaylistSelectionScreen(
                         imageVector = Icons.Default.CheckCircle,
                         contentDescription = null,
                         tint = readyGreen,
-                        modifier = Modifier.size(16.dp)
+                        modifier = Modifier.size(14.dp)
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "Lista encontrada e carregada com sucesso!",
                         color = readyGreen,
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.SemiBold
                     )
                 }
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(8.dp))
             }
 
             // Botão Acessar / Aguardando
             Button(
                 onClick = {
                     if (isReady) {
-                        viewModel.selectPlaylist(playlists.first())
+                        viewModel.enterPlatform(playlists.first())
                     }
                 },
                 enabled = isReady,
@@ -160,7 +160,7 @@ fun PlaylistSelectionScreen(
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
+                    .height(42.dp)
                     .shadow(
                         elevation = if (isReady) 8.dp else 0.dp,
                         shape = RoundedCornerShape(12.dp),
@@ -190,7 +190,8 @@ fun PlaylistSelectionScreen(
                     color = CineX_HighlightRed,
                     modifier = Modifier.padding(top = 8.dp).fillMaxWidth(),
                     textAlign = TextAlign.Center,
-                    fontSize = 12.sp
+                    fontSize = 12.sp,
+                    lineHeight = 18.sp
                 )
             }
 
@@ -299,7 +300,7 @@ fun SyncActionCard(
         border = BorderStroke(1.dp, if (isSynced) CineX_PremiumGold else CineX_PremiumGold.copy(alpha = 0.6f)),
         modifier = Modifier
             .fillMaxWidth()
-            .height(115.dp)
+            .height(100.dp)
             .clickable(enabled = !isLoading) { onClick() }
             .shadow(
                 elevation = if (isSynced) 8.dp else 4.dp,
@@ -325,16 +326,10 @@ fun SyncActionCard(
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(
-                text = if (isSynced) "CONTEÚDO SINCRONIZADO!" else "SINCRONIZAR SERVIDOR", 
-                color = if (isSynced) CineX_PremiumGold else Color.White, 
+                text = if (isSynced) "CONTEÚDO SINCRONIZADO!" else "SINCRONIZAR SERVIDOR",
+                color = if (isSynced) CineX_PremiumGold else Color.White,
                 fontSize = 14.sp,
                 fontWeight = FontWeight.ExtraBold
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = if (isSynced) "Clique no botão ENTRAR abaixo" else "Buscar biblioteca do servidor", 
-                color = CineX_TextSecondary,
-                fontSize = 11.sp
             )
         }
     }
