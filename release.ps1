@@ -14,9 +14,12 @@ if (-not $Version) {
     exit 1
 }
 
-# Calcula versionCode a partir da versao (1.0.0 = 10000, 1.0.1 = 10001, 1.2.3 = 10203)
+# Calcula versionCode a partir da versao (1.0.0 = 10000, 1.0.1 = 10001, 1.2 = 10200)
 $parts = $Version.Split(".")
-$versionCode = [int]$parts[0] * 10000 + [int]$parts[1] * 100 + [int]$parts[2]
+$major = [int]$parts[0]
+$minor = [int]$parts[1]
+$patch = if ($parts.Count -ge 3) { [int]$parts[2] } else { 0 }
+$versionCode = $major * 10000 + $minor * 100 + $patch
 
 Write-Host ""
 Write-Host "========================================="
