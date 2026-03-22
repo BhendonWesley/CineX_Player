@@ -283,6 +283,23 @@ fun PlaylistSelectionScreen(
                 lineHeight = 13.sp,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp)
             )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Versão do app
+            val context = androidx.compose.ui.platform.LocalContext.current
+            val versionName = remember {
+                try {
+                    context.packageManager.getPackageInfo(context.packageName, 0).versionName
+                } catch (e: Exception) { "1.0" }
+            }
+            Text(
+                text = "CineX Player v$versionName",
+                color = CineX_TextMuted.copy(alpha = 0.5f),
+                fontSize = 9.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth()
+            )
         }
     } // fim Row
     } // fim Box

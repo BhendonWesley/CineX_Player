@@ -474,8 +474,14 @@ class MainViewModel @Inject constructor(
 
     val deviceMacAddress: String
         get() {
+            val prefs = app.getSharedPreferences("cinex_device", android.content.Context.MODE_PRIVATE)
+            val saved = prefs.getString("device_mac", null)
+            if (saved != null) return saved
+
             val androidId = Settings.Secure.getString(app.contentResolver, Settings.Secure.ANDROID_ID) ?: "000000000000"
-            return androidId.chunked(2).take(6).joinToString(":").uppercase()
+            val mac = androidId.chunked(2).take(6).joinToString(":").uppercase()
+            prefs.edit().putString("device_mac", mac).apply()
+            return mac
         }
 
     private fun fetchRealAccountInfo(playlistUrl: String) {
@@ -547,8 +553,7 @@ class MainViewModel @Inject constructor(
     }
 
     private fun getDeviceMacAddressInternal(): String {
-        val androidId = Settings.Secure.getString(app.contentResolver, Settings.Secure.ANDROID_ID) ?: "000000000000"
-        return androidId.chunked(2).take(6).joinToString(":").uppercase()
+        return deviceMacAddress
     }
 
     private fun generateAccountInfo() {

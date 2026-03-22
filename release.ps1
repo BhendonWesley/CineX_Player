@@ -14,42 +14,58 @@ if (-not $Version) {
     exit 1
 }
 
+# Calcula versionCode a partir da versao (1.0.0 = 10000, 1.0.1 = 10001, 1.2.3 = 10203)
+$parts = $Version.Split(".")
+$versionCode = [int]$parts[0] * 10000 + [int]$parts[1] * 100 + [int]$parts[2]
+
 Write-Host ""
 Write-Host "========================================="
 Write-Host "  CineX Player - Release v$Version"
+Write-Host "  versionCode: $versionCode"
 Write-Host "========================================="
 Write-Host ""
 
-# 1. Mostra o que mudou
-Write-Host "[1/5] Verificando alteracoes..."
+# 1. Atualiza versao no build.gradle.kts
+Write-Host "[1/6] Atualizando versao no build.gradle.kts..."
+$gradlePath = "deps\app\build.gradle.kts"
+$content = Get-Content $gradlePath -Raw
+$content = $content -replace 'versionCode = \d+', "versionCode = $versionCode"
+$content = $content -replace 'versionName = ".*?"', "versionName = `"$Version`""
+Set-Content $gradlePath $content -NoNewline
+Write-Host "  versionName = `"$Version`""
+Write-Host "  versionCode = $versionCode"
+Write-Host ""
+
+# 2. Mostra o que mudou
+Write-Host "[2/6] Verificando alteracoes..."
 git status --short
 Write-Host ""
 
-# 2. Confirma
+# 3. Confirma
 $confirm = Read-Host "Deseja continuar com o release v$Version? (s/n)"
 if ($confirm -ne "s") {
     Write-Host "Release cancelado."
     exit 0
 }
 
-# 3. Adiciona e commita
+# 4. Adiciona e commita
 Write-Host ""
-Write-Host "[2/5] Commitando alteracoes..."
+Write-Host "[3/6] Commitando alteracoes..."
 git add -A
 git commit -m "release: v$Version"
 
-# 4. Cria a tag
+# 5. Cria a tag
 Write-Host ""
-Write-Host "[3/5] Criando tag v$Version..."
+Write-Host "[4/6] Criando tag v$Version..."
 git tag "v$Version"
 
-# 5. Push
+# 6. Push
 Write-Host ""
-Write-Host "[4/5] Enviando para o GitHub..."
+Write-Host "[5/6] Enviando para o GitHub..."
 git push origin main --tags
 
 Write-Host ""
-Write-Host "[5/5] Pronto!"
+Write-Host "[6/6] Pronto!"
 Write-Host ""
 Write-Host "========================================="
 Write-Host "  Release v$Version enviado!"
