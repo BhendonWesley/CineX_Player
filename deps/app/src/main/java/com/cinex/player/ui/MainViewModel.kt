@@ -709,19 +709,20 @@ class MainViewModel @Inject constructor(
                 }
 
                 if (responseCode == 403 || body.contains("blocked")) {
-                    val message = if (body.contains("blocked")) {
+                    revokeAccess()
+                    _isDeviceBlocked.value = true
+                    _errorMessage.value = if (body.contains("blocked")) {
                         org.json.JSONObject(body).optString("message", "Dispositivo bloqueado. Contate seu revendedor.")
                     } else {
                         "Dispositivo bloqueado. Contate seu revendedor."
                     }
-                    _errorMessage.value = message
                     _isLoading.value = false
                     rotateJob.cancel()
                     return@launch
                 }
 
                 if (responseCode != 200 || body.contains("not_found")) {
-                    _errorMessage.value = "Dispositivo não cadastrado no painel.\nContate seu revendedor."
+                    revokeAccess()
                     _isLoading.value = false
                     rotateJob.cancel()
                     return@launch
