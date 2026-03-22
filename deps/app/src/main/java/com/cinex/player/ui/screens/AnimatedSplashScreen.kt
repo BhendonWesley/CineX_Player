@@ -8,6 +8,7 @@ import androidx.compose.runtime.*
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.Canvas
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -56,53 +57,39 @@ fun AnimatedSplashScreen() {
             .background(Color.Black),
         contentAlignment = Alignment.Center
     ) {
-        // Gradiente radial avermelhado sutil no centro
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(Color(0xFF1A0A0A), Color.Black),
-                        radius = 800f
-                    )
-                )
-        )
+        // Glow cinematográfico — Canvas fullscreen, sempre circular
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        Color(0xFF8B0000).copy(alpha = 0.5f * glowAlpha),
+                        Color(0xFF8B0000).copy(alpha = 0.15f * glowAlpha),
+                        Color(0xFF1A0A0A).copy(alpha = 0.05f),
+                        Color.Transparent
+                    ),
+                    center = center,
+                    radius = size.minDimension * 0.6f
+                ),
+                center = center,
+                radius = size.minDimension * 0.6f
+            )
+        }
 
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // Logo com entrada triunfal
-            Box(contentAlignment = Alignment.Center) {
-                // Glow cinematográfico
-                Box(
-                    modifier = Modifier
-                        .size(200.dp)
-                        .graphicsLayer { alpha = glowAlpha }
-                        .background(
-                            Brush.radialGradient(
-                                colors = listOf(
-                                    Color(0xFF8B0000).copy(alpha = 0.5f),
-                                    CineX_PremiumGold.copy(alpha = 0.06f),
-                                    Color.Transparent
-                                ),
-                                radius = 280f
-                            )
-                        )
-                )
-
-                Image(
-                    painter = painterResource(id = R.drawable.logo_cinex),
-                    contentDescription = "CineX",
-                    modifier = Modifier
-                        .size(120.dp)
-                        .graphicsLayer {
-                            this.alpha  = logoAlpha.value
-                            this.scaleX = logoScale.value
-                            this.scaleY = logoScale.value
-                        }
-                )
-            }
+            Image(
+                painter = painterResource(id = R.drawable.logo_cinex),
+                contentDescription = "CineX",
+                modifier = Modifier
+                    .size(120.dp)
+                    .graphicsLayer {
+                        this.alpha  = logoAlpha.value
+                        this.scaleX = logoScale.value
+                        this.scaleY = logoScale.value
+                    }
+            )
 
             Spacer(modifier = Modifier.height(16.dp))
 
