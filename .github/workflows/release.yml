@@ -47,11 +47,11 @@ jobs:
         run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
 
       - name: Rename APK
-        run: mv app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/CineX-Player-${{ steps.version.outputs.VERSION }}.apk
+        run: mv app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/CineX-Player.apk
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: CineX Player ${{ steps.version.outputs.VERSION }}
           generate_release_notes: true
-          files: deps/app/build/outputs/apk/release/CineX-Player-${{ steps.version.outputs.VERSION }}.apk
+          files: deps/app/build/outputs/apk/release/CineX-Player.apk

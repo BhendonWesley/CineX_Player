@@ -190,8 +190,9 @@ fun PlaylistSelectionScreen(
                     color = CineX_HighlightRed,
                     modifier = Modifier.padding(top = 8.dp).fillMaxWidth(),
                     textAlign = TextAlign.Center,
-                    fontSize = 12.sp,
-                    lineHeight = 18.sp
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    maxLines = 5
                 )
             }
 
