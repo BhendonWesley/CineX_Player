@@ -40,7 +40,7 @@ fun LoadingScreen(
             "Sincronizando as séries...",
             "Ajustando os canais ao vivo...",
             "Buscando as capas oficiais...",
-            "Quase lá! Deixando tudo pronto para você..."
+            "Quase lá! Finalizando..."
         )
     }
 

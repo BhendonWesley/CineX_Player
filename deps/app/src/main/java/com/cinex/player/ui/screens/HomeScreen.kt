@@ -38,6 +38,7 @@ import com.cinex.player.ui.theme.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalContext
 
 @Composable
@@ -50,6 +51,7 @@ fun HomeScreen(
     onRefresh: () -> Unit,
     accountInfo: com.cinex.player.ui.AccountInfo?,
     onAccountOpen: () -> Unit = {},
+    isActive: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     // ESTADOS ESSENCIAIS (Corrigindo Unresolved Reference)
@@ -65,10 +67,10 @@ fun HomeScreen(
             .take(10)
     }
 
-    // Auto-scroll do carousel
+    // Auto-scroll do carousel — só roda quando a tab está ativa
     var currentIndex by remember { mutableIntStateOf(0) }
-    LaunchedEffect(validMovies.size) {
-        if (validMovies.size <= 1) return@LaunchedEffect
+    LaunchedEffect(validMovies.size, isActive) {
+        if (validMovies.size <= 1 || !isActive) return@LaunchedEffect
         while (true) {
             delay(8000)
             currentIndex = (currentIndex + 1) % validMovies.size
@@ -118,6 +120,7 @@ fun HomeScreen(
             HeroBackdrop(
                 movies = validMovies,
                 currentIndex = currentIndex,
+                isActive = isActive,
                 modifier = Modifier.fillMaxSize()
             )
 
@@ -166,6 +169,7 @@ fun HomeScreen(
 private fun HeroBackdrop(
     movies: List<Channel>,
     currentIndex: Int,
+    isActive: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     Box(modifier = modifier) {
@@ -188,6 +192,7 @@ private fun HeroBackdrop(
             }
         } else {
             val movie = movies.getOrNull(currentIndex) ?: movies.first()
+            val isTabActive = isActive
 
             AnimatedContent(
                 targetState = movie,
@@ -198,25 +203,26 @@ private fun HeroBackdrop(
                 modifier = Modifier.fillMaxSize(),
                 label = "hero_backdrop"
             ) { currentMovie ->
-                val infiniteTransition = rememberInfiniteTransition(label = "ken_burns")
-                val scale by infiniteTransition.animateFloat(
-                    initialValue = 1f,
-                    targetValue = 1.08f,
-                    animationSpec = infiniteRepeatable(
-                        animation = tween(12000, easing = LinearEasing),
-                        repeatMode = RepeatMode.Reverse
-                    ),
-                    label = "zoom"
-                )
-                val translationX by infiniteTransition.animateFloat(
-                    initialValue = -20f,
-                    targetValue = 20f,
-                    animationSpec = infiniteRepeatable(
-                        animation = tween(15000, easing = LinearEasing),
-                        repeatMode = RepeatMode.Reverse
-                    ),
-                    label = "pan"
-                )
+                // Ken Burns apenas quando tab ativa
+                val tabActive = isTabActive
+                val scale = remember { Animatable(1f) }
+                val panX = remember { Animatable(-20f) }
+                LaunchedEffect(tabActive) {
+                    if (tabActive) {
+                        launch {
+                            while (true) {
+                                scale.animateTo(1.08f, tween(12000, easing = LinearEasing))
+                                scale.animateTo(1f, tween(12000, easing = LinearEasing))
+                            }
+                        }
+                        launch {
+                            while (true) {
+                                panX.animateTo(20f, tween(15000, easing = LinearEasing))
+                                panX.animateTo(-20f, tween(15000, easing = LinearEasing))
+                            }
+                        }
+                    }
+                }
 
                 AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
@@ -228,9 +234,9 @@ private fun HeroBackdrop(
                     modifier = Modifier
                         .fillMaxSize()
                         .graphicsLayer(
-                            scaleX = scale,
-                            scaleY = scale,
-                            translationX = translationX
+                            scaleX = scale.value,
+                            scaleY = scale.value,
+                            translationX = panX.value
                         ),
                     contentScale = ContentScale.Crop
                 )

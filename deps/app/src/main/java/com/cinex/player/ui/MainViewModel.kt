@@ -71,11 +71,31 @@ class MainViewModel @Inject constructor(
     private val _isDeviceBlocked = MutableStateFlow(false)
     val isDeviceBlocked = _isDeviceBlocked.asStateFlow()
 
+    private val _deltaSyncMessage = MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val deltaSyncMessage: SharedFlow<String> = _deltaSyncMessage.asSharedFlow()
+
     private val _isLoadingEpisodes = MutableStateFlow(false)
     val isLoadingEpisodes = _isLoadingEpisodes.asStateFlow()
 
     private val _homeReady = MutableStateFlow(false)
     val homeReady = _homeReady.asStateFlow()
+
+    // Controle parental — sessão adulta desbloqueada até fechar o app
+    private val _adultUnlocked = MutableStateFlow(false)
+    val adultUnlocked = _adultUnlocked.asStateFlow()
+    private val parentalPin = "0000"
+
+    fun isAdultCategory(name: String): Boolean {
+        val lower = name.lowercase()
+        return lower.contains("xxx") || lower.contains("adulto") || lower.contains("adult")
+                || lower.contains("+18") || lower.contains("18+")
+    }
+
+    fun verifyParentalPin(pin: String): Boolean {
+        val correct = pin == parentalPin
+        if (correct) _adultUnlocked.value = true
+        return correct
+    }
 
     fun setHomeReady(ready: Boolean) {
         _homeReady.value = ready
@@ -94,10 +114,13 @@ class MainViewModel @Inject constructor(
     val accountInfo = _accountInfo.asStateFlow()
 
     private var liveRetryCount = 0
-    private val maxLiveRetries = 3
+    private val maxLiveRetries = 2
 
     private val _livePlayerError = MutableStateFlow(false)
     val livePlayerError = _livePlayerError.asStateFlow()
+
+    private val _isLiveBuffering = MutableStateFlow(false)
+    val isLiveBuffering = _isLiveBuffering.asStateFlow()
 
     // Sinaliza que o preview deve reclamar a surface do player (após sair do fullscreen)
     private val _liveTvSurfaceRefresh = MutableStateFlow(0)
@@ -122,18 +145,20 @@ class MainViewModel @Inject constructor(
                     Player.STATE_READY -> {
                         // Reset retry counter quando volta a reproduzir com sucesso
                         liveRetryCount = 0
+                        _isLiveBuffering.value = false
                         stallDetectorJob?.cancel()
                     }
                     Player.STATE_BUFFERING -> {
-                        // Detecta stall: se ficar em buffering por mais de 8s, força seek ao live edge
+                        _isLiveBuffering.value = true
+                        // Detecta stall: se ficar em buffering por mais de 3s, força seek ao live edge
                         stallDetectorJob?.cancel()
                         stallDetectorJob = viewModelScope.launch {
-                            kotlinx.coroutines.delay(8_000)
-                            // Ainda em buffering após 8s — tenta seek ao live edge
+                            kotlinx.coroutines.delay(3_000)
+                            // Ainda em buffering após 3s — tenta seek ao live edge
                             if (liveTvPlayer.playbackState == Player.STATE_BUFFERING) {
                                 liveTvPlayer.seekToDefaultPosition()
-                                // Se continuar em stall após mais 6s, reconecta o canal
-                                kotlinx.coroutines.delay(6_000)
+                                // Se continuar em stall após mais 2s, reconecta o canal
+                                kotlinx.coroutines.delay(2_000)
                                 if (liveTvPlayer.playbackState == Player.STATE_BUFFERING) {
                                     reconnectLiveChannel()
                                 }
@@ -173,6 +198,16 @@ class MainViewModel @Inject constructor(
             val elapsed = System.currentTimeMillis() - splashStart
             if (elapsed < 3000) kotlinx.coroutines.delay(3000 - elapsed)
             _isInitializing.value = false
+
+            // Delta sync silencioso — atualiza conteúdo sempre que o app abre
+            if (_currentPlaylist.value != null) {
+                val result = repository.syncPlaylistDelta()
+                result.onSuccess { newCount ->
+                    if (newCount > 0) {
+                        _deltaSyncMessage.tryEmit("$newCount novos conteúdos adicionados")
+                    }
+                }
+            }
         }
 
         // Verificação periódica a cada 30 minutos — corta acesso se MAC removido ou bloqueado
@@ -192,7 +227,7 @@ class MainViewModel @Inject constructor(
         "Sincronizando as séries...",
         "Ajustando os canais ao vivo...",
         "Buscando as capas oficiais...",
-        "Quase lá! Deixando tudo pronto para você..."
+        "Quase lá! Finalizando..."
     )
 
     val liveTvChannels: Flow<PagingData<Channel>> = repository.liveTvChannels
@@ -827,7 +862,7 @@ class MainViewModel @Inject constructor(
         if (lastChannel != null && liveRetryCount < maxLiveRetries) {
             liveRetryCount++
             viewModelScope.launch {
-                kotlinx.coroutines.delay(1500L * liveRetryCount) // backoff progressivo
+                kotlinx.coroutines.delay(800L * liveRetryCount) // backoff progressivo
                 liveTvPlayer.stop()
                 liveTvPlayer.clearMediaItems()
                 val mediaItem = androidx.media3.common.MediaItem.Builder()
@@ -846,6 +881,7 @@ class MainViewModel @Inject constructor(
                 liveTvPlayer.play()
             }
         } else if (lastChannel != null) {
+            _isLiveBuffering.value = false
             _livePlayerError.value = true
         }
     }
@@ -862,6 +898,10 @@ class MainViewModel @Inject constructor(
         liveTvPlayer.pause()
         liveTvPlayer.stop()
         liveTvPlayer.clearMediaItems()
+    }
+
+    fun resumeLiveTv() {
+        _selectedLiveChannel.value?.let { playLiveChannel(it) }
     }
 
     override fun onCleared() {
@@ -972,13 +1012,8 @@ class MainViewModel @Inject constructor(
     }
 
     fun updateFavorite(channelId: Int, isFav: Boolean) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             repository.updateFavorite(channelId, isFav)
-            // Atualiza o canal selecionado localmente para refletir na UI
-            val current = _selectedLiveChannel.value
-            if (current != null && current.id == channelId) {
-                _selectedLiveChannel.value = current.copy(isFavorite = isFav)
-            }
         }
     }
 

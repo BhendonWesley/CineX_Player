@@ -40,6 +40,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.cinex.player.ui.MainViewModel
 import com.cinex.player.ui.theme.DarkBackground
+import androidx.paging.compose.collectAsLazyPagingItems
 
 @Composable
 fun MainScreen(
@@ -72,6 +73,7 @@ fun MainScreen(
 
     val continueWatching by viewModel.continueWatching.collectAsState()
     val isDeviceBlocked by viewModel.isDeviceBlocked.collectAsState()
+    val livePagingItems = viewModel.liveTvPagingData.collectAsLazyPagingItems()
     val isSyncing by viewModel.isSyncing.collectAsState()
 
     // Simplificamos a lógica de seleção de playlist: se não houver playlist ativa
@@ -94,6 +96,11 @@ fun MainScreen(
             snackbarHostState.showSnackbar(message, duration = SnackbarDuration.Short)
         }
     }
+    LaunchedEffect(Unit) {
+        viewModel.deltaSyncMessage.collect { message ->
+            snackbarHostState.showSnackbar(message, duration = SnackbarDuration.Short)
+        }
+    }
 
     // Para o player ao trocar de aba (imediato, sem depender do onDispose do LiveTvScreen)
     LaunchedEffect(selectedTab) {
@@ -110,12 +117,14 @@ fun MainScreen(
     }
 
     // Para o player quando o app vai para background (botão Home, notificações, etc.)
-    // Não para se estiver em fullscreen (playingChannel != null)
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE && playingChannel == null) {
+            if (event == Lifecycle.Event.ON_PAUSE) {
                 viewModel.stopLiveTv()
+            }
+            if (event == Lifecycle.Event.ON_RESUME && (selectedTab == 1 || (playingChannel != null && playingChannel?.category == "LIVE_TV"))) {
+                viewModel.resumeLiveTv()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -257,7 +266,8 @@ fun MainScreen(
                                 onSettingsClick = { isSettingsOpen = true },
                                 onRefresh = { viewModel.refreshPlaylist() },
                                 accountInfo = accountInfo,
-                                onAccountOpen = { viewModel.refreshAccountFromPanel() }
+                                onAccountOpen = { viewModel.refreshAccountFromPanel() },
+                                isActive = selectedTab == 0
                             )
                         }
                         Box(modifier = Modifier.tabVisibility(1)) {
@@ -272,7 +282,7 @@ fun MainScreen(
                                 type = "MOVIE",
                                 viewModel = viewModel,
                                 title = "FILMES",
-                                continueWatching = continueWatching,
+                                continueWatching = continueWatching.filter { it.category == "MOVIE" },
                                 onVideoClick = { viewModel.selectChannelForDetails(it) },
                                 onPlayDirect = { playingChannel = it }
                             )
@@ -282,6 +292,7 @@ fun MainScreen(
                                 type = "SERIES",
                                 viewModel = viewModel,
                                 title = "SÉRIES",
+                                continueWatching = continueWatching.filter { it.category == "SERIES" },
                                 onVideoClick = { viewModel.selectChannelForDetails(it) },
                                 onPlayDirect = { playingChannel = it }
                             )
@@ -322,6 +333,34 @@ fun MainScreen(
                 onBack = { playingChannel = null },
                 onPlayNext = { nextChannel ->
                     playingChannel = nextChannel
+                },
+                onPreviousChannel = {
+                    val current = playingChannel ?: return@VideoPlayerScreen
+                    // Encontra o canal anterior na lista paginada
+                    for (i in 0 until livePagingItems.itemCount) {
+                        if (livePagingItems.peek(i)?.id == current.id && i > 0) {
+                            livePagingItems[i - 1]?.let { prevChannel ->
+                                viewModel.updateSelectedChannel(prevChannel)
+                                viewModel.playLiveChannel(prevChannel)
+                                playingChannel = prevChannel
+                            }
+                            break
+                        }
+                    }
+                },
+                onNextChannel = {
+                    val current = playingChannel ?: return@VideoPlayerScreen
+                    // Encontra o próximo canal na lista paginada
+                    for (i in 0 until livePagingItems.itemCount) {
+                        if (livePagingItems.peek(i)?.id == current.id && i < livePagingItems.itemCount - 1) {
+                            livePagingItems[i + 1]?.let { nextChannel ->
+                                viewModel.updateSelectedChannel(nextChannel)
+                                viewModel.playLiveChannel(nextChannel)
+                                playingChannel = nextChannel
+                            }
+                            break
+                        }
+                    }
                 }
             )
         }
@@ -332,13 +371,20 @@ fun MainScreen(
                 .align(Alignment.TopCenter)
                 .padding(top = 16.dp),
             snackbar = { data ->
-                Snackbar(
-                    snackbarData = data,
-                    containerColor = Color(0xFF282B30),
-                    contentColor = Color.White,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.widthIn(max = 360.dp)
-                )
+                Box(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentAlignment = Alignment.TopCenter
+                ) {
+                    Text(
+                        text = data.visuals.message,
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Medium,
+                        modifier = Modifier
+                            .background(Color(0xFF282B30), RoundedCornerShape(12.dp))
+                            .padding(horizontal = 20.dp, vertical = 10.dp)
+                    )
+                }
             }
         )
         } // fim Box

@@ -70,6 +70,8 @@ fun VideoPlayerScreen(
     channel: Channel,
     onBack: () -> Unit,
     onPlayNext: (Channel) -> Unit = {},
+    onPreviousChannel: (() -> Unit)? = null,
+    onNextChannel: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
     viewModel: MainViewModel = hiltViewModel()
 ) {
@@ -165,6 +167,7 @@ fun VideoPlayerScreen(
         }
     }
 
+    var showInfoPanel by remember { mutableStateOf(false) }
     var showResumeDialog by remember { mutableStateOf(channel.resumePosition > 0L && !isLiveTv) }
     var showExitDialog by remember { mutableStateOf(false) }
     var showPlaybackError by remember(channel.id) { mutableStateOf(false) }
@@ -246,8 +249,9 @@ fun VideoPlayerScreen(
         }
     }
 
-    LaunchedEffect(isControlsVisible, isPlaying) {
-        if (isControlsVisible && isPlaying && !showResumeDialog && !showExitDialog) {
+    // Auto-hide dos controles após 5 segundos
+    LaunchedEffect(isControlsVisible) {
+        if (isControlsVisible && !showResumeDialog && !showExitDialog) {
             delay(5000)
             isControlsVisible = false
         }
@@ -339,7 +343,7 @@ fun VideoPlayerScreen(
             },
             update = {
                 it.resizeMode = resizeMode
-                it.player = exoPlayer
+                if (it.player !== exoPlayer) it.player = exoPlayer
             },
             modifier = Modifier.fillMaxSize()
         )
@@ -374,7 +378,7 @@ fun VideoPlayerScreen(
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = { /* Mostrar info se houver */ }) {
+                        IconButton(onClick = { showInfoPanel = !showInfoPanel }) {
                             Icon(Icons.Default.Info, contentDescription = "Info", tint = Color.White, modifier = Modifier.size(24.dp))
                         }
                         
@@ -409,24 +413,53 @@ fun VideoPlayerScreen(
                     horizontalArrangement = Arrangement.spacedBy(40.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = { exoPlayer.seekBack() }, modifier = Modifier.size(56.dp)) {
-                        Icon(Icons.Default.Replay10, contentDescription = "-10s", tint = Color.White, modifier = Modifier.fillMaxSize())
-                    }
+                    if (isLiveTv) {
+                        // Live TV: canal anterior
+                        if (onPreviousChannel != null) {
+                            IconButton(onClick = onPreviousChannel, modifier = Modifier.size(56.dp)) {
+                                Icon(Icons.Default.SkipPrevious, contentDescription = "Canal anterior", tint = Color.White, modifier = Modifier.fillMaxSize())
+                            }
+                        }
 
-                    IconButton(
-                        onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() },
-                        modifier = Modifier.size(72.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                            contentDescription = "Play/Pause",
-                            tint = Color.White,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
+                        IconButton(
+                            onClick = { if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play() },
+                            modifier = Modifier.size(72.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (exoPlayer.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = "Play/Pause",
+                                tint = Color.White,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
 
-                    IconButton(onClick = { exoPlayer.seekForward() }, modifier = Modifier.size(56.dp)) {
-                        Icon(Icons.Default.Forward10, contentDescription = "+10s", tint = Color.White, modifier = Modifier.fillMaxSize())
+                        // Live TV: próximo canal
+                        if (onNextChannel != null) {
+                            IconButton(onClick = onNextChannel, modifier = Modifier.size(56.dp)) {
+                                Icon(Icons.Default.SkipNext, contentDescription = "Próximo canal", tint = Color.White, modifier = Modifier.fillMaxSize())
+                            }
+                        }
+                    } else {
+                        // VOD: seek -10s / play / seek +10s
+                        IconButton(onClick = { exoPlayer.seekBack() }, modifier = Modifier.size(56.dp)) {
+                            Icon(Icons.Default.Replay10, contentDescription = "-10s", tint = Color.White, modifier = Modifier.fillMaxSize())
+                        }
+
+                        IconButton(
+                            onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() },
+                            modifier = Modifier.size(72.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = "Play/Pause",
+                                tint = Color.White,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
+
+                        IconButton(onClick = { exoPlayer.seekForward() }, modifier = Modifier.size(56.dp)) {
+                            Icon(Icons.Default.Forward10, contentDescription = "+10s", tint = Color.White, modifier = Modifier.fillMaxSize())
+                        }
                     }
                 }
 
@@ -514,20 +547,126 @@ fun VideoPlayerScreen(
                     }
                 }
 
+                // Barra de progresso (só para VOD)
+                if (!isLiveTv) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).padding(horizontal = 48.dp, vertical = 32.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(formatTime(currentPosition), color = Color.White, fontSize = 14.sp)
+                        Slider(
+                            value = currentPosition.toFloat(),
+                            onValueChange = { exoPlayer.seekTo(it.toLong()) },
+                            valueRange = 0f..duration.toFloat().coerceAtLeast(1f),
+                            modifier = Modifier.weight(1f).padding(horizontal = 16.dp),
+                            colors = SliderDefaults.colors(thumbColor = DeepRed, activeTrackColor = DeepRed)
+                        )
+                        Text(formatTime(duration), color = Color.White, fontSize = 14.sp)
+                    }
+                }
+            }
+        }
+
+        // Painel de informações (estilo Smart TV)
+        AnimatedVisibility(
+            visible = showInfoPanel,
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
+            // Auto-hide após 5 segundos
+            LaunchedEffect(showInfoPanel) {
+                if (showInfoPanel) {
+                    delay(5000)
+                    showInfoPanel = false
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null
+                    ) { showInfoPanel = false },
+                contentAlignment = Alignment.BottomCenter
+            ) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).padding(horizontal = 48.dp, vertical = 32.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color.Black.copy(alpha = 0.85f))
+                        .padding(horizontal = 32.dp, vertical = 16.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(formatTime(currentPosition), color = Color.White, fontSize = 14.sp)
-                    Slider(
-                        value = currentPosition.toFloat(),
-                        onValueChange = { exoPlayer.seekTo(it.toLong()) },
-                        valueRange = 0f..duration.toFloat().coerceAtLeast(1f),
-                        modifier = Modifier.weight(1f).padding(horizontal = 16.dp),
-                        colors = SliderDefaults.colors(thumbColor = DeepRed, activeTrackColor = DeepRed)
-                    )
-                    Text(formatTime(duration), color = Color.White, fontSize = 14.sp)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = channel.name.uppercase(),
+                            color = Color.White,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+
+                        Spacer(modifier = Modifier.height(4.dp))
+
+                        // Categoria / Qualidade
+                        val quality = when {
+                            channel.name.contains("FHD", ignoreCase = true) -> "FULL HD"
+                            channel.name.contains("HD", ignoreCase = true) -> "HD"
+                            channel.name.contains("SD", ignoreCase = true) -> "SD"
+                            channel.name.contains("4K", ignoreCase = true) -> "4K"
+                            else -> null
+                        }
+                        Row {
+                            Text(
+                                text = channel.groupTitle ?: channel.category,
+                                color = Color.Gray,
+                                fontSize = 13.sp
+                            )
+                            if (quality != null) {
+                                Text("  •  ", color = Color.Gray, fontSize = 13.sp)
+                                Text(
+                                    text = quality,
+                                    color = com.cinex.player.ui.theme.CineX_PremiumGold,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        // EPG info se disponível
+                        if (!isLiveTv) {
+                            if (!channel.tmdbSynopsis.isNullOrEmpty()) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = channel.tmdbSynopsis,
+                                    color = Color.White.copy(alpha = 0.6f),
+                                    fontSize = 12.sp,
+                                    maxLines = 2
+                                )
+                            }
+                        }
+                    }
+
+                    // Rating se disponível
+                    if (channel.tmdbRating != null && channel.tmdbRating > 0) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(start = 24.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Star,
+                                contentDescription = null,
+                                tint = Color.Yellow,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Text(
+                                text = String.format("%.1f", channel.tmdbRating),
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
             }
         }

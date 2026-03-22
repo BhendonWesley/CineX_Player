@@ -47,6 +47,13 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.delay
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 
 private val LiveGold = Color(0xFFD8A63A)
 
@@ -107,6 +114,9 @@ fun LiveTvScreen(
 
     val categories by viewModel.liveCategories.collectAsState(initial = emptyList())
     val selectedCategory by viewModel.liveCategoryId.collectAsState()
+    val adultUnlocked by viewModel.adultUnlocked.collectAsState()
+    var showParentalDialog by remember { mutableStateOf(false) }
+    var pendingAdultCategoryId by remember { mutableStateOf<String?>(null) }
     
     val pagingItems = viewModel.liveTvPagingData.collectAsLazyPagingItems()
 
@@ -200,7 +210,12 @@ fun LiveTvScreen(
                     count = countByCat,
                     isSelected = selectedCategory == category.id,
                     onClick = {
-                        viewModel.setLiveCategory(category.id)
+                        if (viewModel.isAdultCategory(category.name) && !adultUnlocked) {
+                            pendingAdultCategoryId = category.id
+                            showParentalDialog = true
+                        } else {
+                            viewModel.setLiveCategory(category.id)
+                        }
                     }
                 )
             }
@@ -215,14 +230,24 @@ fun LiveTvScreen(
                 .background(Color(0xCC1A1A1A))
         ) {
             if (pagingItems.itemCount == 0) {
-                // Loading indicator
-                androidx.compose.material3.CircularProgressIndicator(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .align(Alignment.Center),
-                    color = Color(0xFFC62828),
-                    strokeWidth = 3.dp
-                )
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    val transition = rememberInfiniteTransition(label = "channelLoading")
+                    val rotation by transition.animateFloat(
+                        initialValue = 0f,
+                        targetValue = 360f,
+                        animationSpec = infiniteRepeatable(animation = tween(durationMillis = 1000)),
+                        label = "rotation"
+                    )
+                    Canvas(modifier = Modifier.size(32.dp)) {
+                        drawArc(
+                            color = Color(0xFFC62828),
+                            startAngle = rotation,
+                            sweepAngle = 270f,
+                            useCenter = false,
+                            style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
+                        )
+                    }
+                }
             }
             val channelListState = rememberLazyListState()
 
@@ -323,45 +348,69 @@ fun LiveTvScreen(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.85f)),
+                            .background(Color.Black.copy(alpha = 0.85f))
+                            .clickable { viewModel.retryLiveChannel() },
                         contentAlignment = Alignment.Center
                     ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(8.dp)
+                        ) {
                             Icon(
                                 imageVector = Icons.Default.Warning,
                                 contentDescription = null,
                                 tint = Color(0xFFC62828),
-                                modifier = Modifier.size(36.dp)
+                                modifier = Modifier.size(28.dp)
                             )
-                            Spacer(modifier = Modifier.height(8.dp))
+                            Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = "Canal indisponível",
+                                text = "CANAL INDISPONÍVEL",
                                 color = Color.White,
-                                fontSize = 14.sp,
+                                fontSize = 12.sp,
                                 fontWeight = FontWeight.Bold
                             )
-                            Spacer(modifier = Modifier.height(4.dp))
+                            Spacer(modifier = Modifier.height(3.dp))
                             Text(
                                 text = "Toque para tentar novamente",
                                 color = Color.Gray,
-                                fontSize = 11.sp
+                                fontSize = 10.sp
                             )
-                            Spacer(modifier = Modifier.height(12.dp))
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color(0xFFC62828))
-                                    .clickable { viewModel.retryLiveChannel() }
-                                    .padding(horizontal = 20.dp, vertical = 8.dp)
-                            ) {
-                                Text("TENTAR NOVAMENTE", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
+                        }
+                    }
+                }
+
+                // Spinner de buffering estilo Netflix
+                val isBuffering by viewModel.isLiveBuffering.collectAsState()
+                if (isBuffering && !liveError) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        val transition = rememberInfiniteTransition(label = "buffering")
+                        val rotation by transition.animateFloat(
+                            initialValue = 0f,
+                            targetValue = 360f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(durationMillis = 1000)
+                            ),
+                            label = "rotation"
+                        )
+                        Canvas(modifier = Modifier.size(40.dp)) {
+                            drawArc(
+                                color = Color(0xFFC62828),
+                                startAngle = rotation,
+                                sweepAngle = 270f,
+                                useCenter = false,
+                                style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
+                            )
                         }
                     }
                 }
 
                 // Botão favorito no canto superior direito do preview
-                val isFavorite = selectedChannel?.isFavorite == true
+                var isFavLocal by remember(selectedChannel?.id) {
+                    mutableStateOf(selectedChannel?.isFavorite == true)
+                }
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
@@ -369,13 +418,18 @@ fun LiveTvScreen(
                         .size(28.dp)
                         .clip(RoundedCornerShape(50))
                         .background(Color.Black.copy(alpha = 0.5f))
-                        .clickable { selectedChannel?.let { viewModel.updateFavorite(it.id, !isFavorite) } },
+                        .clickable {
+                            selectedChannel?.let {
+                                isFavLocal = !isFavLocal
+                                viewModel.updateFavorite(it.id, isFavLocal)
+                            }
+                        },
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
-                        imageVector = if (isFavorite) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
-                        contentDescription = if (isFavorite) "Remover favorito" else "Adicionar favorito",
-                        tint = if (isFavorite) Color(0xFFC62828) else Color.White.copy(alpha = 0.8f),
+                        imageVector = if (isFavLocal) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
+                        contentDescription = if (isFavLocal) "Remover favorito" else "Adicionar favorito",
+                        tint = if (isFavLocal) Color(0xFFC62828) else Color.White.copy(alpha = 0.8f),
                         modifier = Modifier.size(16.dp)
                     )
                 }
@@ -468,22 +522,19 @@ fun LiveTvScreen(
                                 val title = first.title.decodeBase64IfNeeded()
                                 val timeRange = formatEpgTime(first, is24Hour)
                                 Column(modifier = Modifier.fillMaxWidth()) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text = timeRange,
-                                            color = Color(0xFFFFD700),
-                                            fontSize = 14.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.width(if (is24Hour) 110.dp else 160.dp)
-                                        )
-                                        Text(
-                                            text = title,
-                                            color = Color.White,
-                                            fontSize = 16.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            maxLines = 1
-                                        )
-                                    }
+                                    Text(
+                                        text = timeRange,
+                                        color = Color(0xFFFFD700),
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = title,
+                                        color = Color.White,
+                                        fontSize = 15.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        maxLines = 2
+                                    )
                                     Spacer(modifier = Modifier.height(6.dp))
                                     Box(modifier = Modifier.fillMaxWidth().height(2.dp).background(Color(0xFFFFD700).copy(alpha = 0.4f)))
                                 }
@@ -499,23 +550,22 @@ fun LiveTvScreen(
                             items(epgListings.drop(1).take(10)) { epg ->
                                 val title = epg.title.decodeBase64IfNeeded()
                                 val timeRange = formatEpgTime(epg, is24Hour)
-                                Row(
-                                    modifier = Modifier.padding(vertical = 2.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                                Column(
+                                    modifier = Modifier.padding(vertical = 2.dp)
                                 ) {
                                     Text(
                                         text = timeRange,
                                         color = Color.Gray,
                                         fontSize = 13.sp,
-                                        fontWeight = FontWeight.Medium,
-                                        modifier = Modifier.width(if (is24Hour) 110.dp else 160.dp)
+                                        fontWeight = FontWeight.Medium
                                     )
                                     Text(
                                         text = title,
                                         color = Color.White.copy(alpha = 0.85f),
-                                        fontSize = 14.sp,
+                                        fontSize = 13.sp,
                                         fontWeight = FontWeight.Normal,
-                                        maxLines = 1
+                                        maxLines = 2,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                     )
                                 }
                             }
@@ -527,6 +577,24 @@ fun LiveTvScreen(
     } // fim Row
 
     // Fullscreen agora é via VideoPlayerScreen (MainScreen.playingChannel)
+
+    // Dialog de controle parental
+    if (showParentalDialog) {
+        com.cinex.player.ui.components.ParentalPinDialog(
+            onDismiss = {
+                showParentalDialog = false
+                pendingAdultCategoryId = null
+            },
+            onPinVerified = {
+                showParentalDialog = false
+                pendingAdultCategoryId?.let { categoryId ->
+                    viewModel.setLiveCategory(categoryId)
+                }
+                pendingAdultCategoryId = null
+            },
+            verifyPin = { viewModel.verifyParentalPin(it) }
+        )
+    }
     } // fim Box
 }
 
@@ -537,23 +605,22 @@ fun EpgItem(program: com.cinex.player.data.model.EpgProgram, isCurrent: Boolean,
     val start = timeFormat.format(Date(program.startTime))
     val end = timeFormat.format(Date(program.endTime))
     
-    Row(
-        modifier = Modifier.padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically
+    Column(
+        modifier = Modifier.padding(vertical = 4.dp)
     ) {
         Text(
             text = "$start - $end",
             color = if (isCurrent) Color(0xFFFFD700) else Color.Gray,
-            fontSize = if (isCurrent) 15.sp else 14.sp,
-            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium,
-            modifier = Modifier.width(if (is24Hour) 110.dp else 160.dp)
+            fontSize = if (isCurrent) 14.sp else 13.sp,
+            fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Medium
         )
         Text(
             text = program.title,
             color = if (isCurrent) Color.White else Color.White.copy(alpha = 0.7f),
-            fontSize = if (isCurrent) 17.sp else 14.sp,
+            fontSize = if (isCurrent) 15.sp else 13.sp,
             fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-            maxLines = 1
+            maxLines = 2,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
         )
     }
 }

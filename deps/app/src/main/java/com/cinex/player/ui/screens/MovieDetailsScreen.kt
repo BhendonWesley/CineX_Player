@@ -65,16 +65,6 @@ fun MovieDetailsScreen(
                 IconButton(onClick = onBack) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White)
                 }
-                Spacer(modifier = Modifier.width(16.dp))
-                val cleanTitleBar = movie.name
-                    .replace(Regex("(?i)\\s*\\(\\d{4}\\)\\s*"), " ").trim().uppercase()
-                Text(
-                    text = cleanTitleBar,
-                    color = Color.White,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 1.sp
-                )
             }
 
             // Conteúdo principal
@@ -102,14 +92,13 @@ fun MovieDetailsScreen(
                 Column(
                     modifier = Modifier.weight(1f).fillMaxHeight()
                 ) {
-                    val cleanTitle = movie.name
-                        .replace(Regex("(?i)\\s*\\(\\d{4}\\)\\s*"), " ").trim().uppercase()
+                    // Título
                     Text(
-                        text = "$cleanTitle${if (movie.tmdbYear != null) " (${movie.tmdbYear})" else ""}",
+                        text = movie.name.replace(Regex("(?i)\\s*\\(\\d{4}\\)\\s*"), " ").trim().uppercase(),
                         color = Color.White,
-                        fontSize = 28.sp,
-                        fontWeight = FontWeight.Black,
-                        lineHeight = 34.sp
+                        fontSize = 22.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        letterSpacing = 1.sp
                     )
 
                     // Rating + ano + gênero
@@ -202,26 +191,24 @@ fun MovieDetailsScreen(
 
                         OutlinedButton(
                             onClick = {
-                                movie.trailerUrl?.let { url ->
-                                    val uri = android.net.Uri.parse(url)
-                                    val youtubeIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri).apply {
-                                        setPackage("com.google.android.youtube")
-                                    }
-                                    try {
-                                        context.startActivity(youtubeIntent)
-                                    } catch (e: android.content.ActivityNotFoundException) {
-                                        context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, uri))
-                                    }
+                                val searchQuery = java.net.URLEncoder.encode("${movie.name} trailer oficial", "UTF-8")
+                                val searchUri = android.net.Uri.parse("https://www.youtube.com/results?search_query=$searchQuery")
+                                val youtubeIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, searchUri).apply {
+                                    setPackage("com.google.android.youtube")
+                                }
+                                try {
+                                    context.startActivity(youtubeIntent)
+                                } catch (e: android.content.ActivityNotFoundException) {
+                                    context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, searchUri))
                                 }
                             },
-                            enabled = movie.trailerUrl != null,
-                            border = BorderStroke(2.dp, if (movie.trailerUrl != null) Color.White else Color.Gray),
+                            border = BorderStroke(2.dp, Color.White),
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier.height(52.dp).width(140.dp)
                         ) {
                             Text(
                                 "TRAILER",
-                                color = if (movie.trailerUrl != null) Color.White else Color.Gray,
+                                color = Color.White,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp
                             )

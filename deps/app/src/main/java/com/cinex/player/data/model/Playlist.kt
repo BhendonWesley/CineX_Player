@@ -11,5 +11,6 @@ data class Playlist(
     val status: String = "Disconnected", // e.g., Connected, Disconnected
     val macAddress: String? = null,
     val epgUrl: String? = null,
-    val lastUsed: Long = System.currentTimeMillis()
+    val lastUsed: Long = System.currentTimeMillis(),
+    val lastSyncTime: Long = 0L
 )

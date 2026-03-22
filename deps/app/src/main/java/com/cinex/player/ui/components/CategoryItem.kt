@@ -58,6 +58,7 @@ fun CategoryItem(
                 modifier = Modifier.weight(1f)
             )
             if (count > 0) {
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = count.toString(),
                     color = if (isSelected) ActiveGold else Color(0xFF6B7280),

@@ -288,6 +288,7 @@ class ChannelRepository @Inject constructor(
                 epgUrl?.let { syncEpg(it) }
 
                 _activePlaylistUrl.value = url
+                playlistDao.updateLastSyncTime(url, System.currentTimeMillis())
                 onProgress(100, 100, 100, "Iniciando em segundo plano...")
             } else {
                 return@withContext Result.failure(Exception("Nenhum conteúdo encontrado na lista. Verifique a URL."))
@@ -350,8 +351,194 @@ class ChannelRepository @Inject constructor(
         }
     }
 
-    suspend fun syncPlaylistDelta(): Result<Unit> = withContext(Dispatchers.IO) {
-        Result.success(Unit)
+    /**
+     * Delta sync: baixa a playlist, compara com o banco local e só insere novos / remove deletados.
+     * Retorna a quantidade de canais novos adicionados.
+     */
+    suspend fun syncPlaylistDelta(): Result<Int> = withContext(Dispatchers.IO) {
+        val url = _activePlaylistUrl.value ?: return@withContext Result.failure(Exception("No active playlist"))
+        try {
+            val uri = android.net.Uri.parse(url)
+            val username = uri.getQueryParameter("username")
+            val password = uri.getQueryParameter("password")
+            val host = uri.host
+            val scheme = uri.scheme
+            val port = uri.port
+
+            val newChannels: List<Channel> = if (username != null && password != null && host != null) {
+                val baseUrl = "$scheme://$host${if (port != -1) ":$port" else ""}/"
+                fetchXtreamChannels(baseUrl, username, password, url)
+            } else {
+                fetchM3UChannels(url)
+            }
+
+            if (newChannels.isEmpty()) return@withContext Result.success(0)
+
+            // Comparar com o banco local
+            val existingIds = channelDao.getAllRemoteIds(url).toSet()
+            val newIds = newChannels.map { it.remoteId }.toSet()
+
+            // Proteção: se o servidor retornou menos de 50% dos canais existentes,
+            // provavelmente foi uma resposta parcial/erro — NÃO deletar nada
+            val removedIds = existingIds - newIds
+            val safeToDelete = removedIds.size < existingIds.size * 0.5
+            if (safeToDelete && removedIds.isNotEmpty()) {
+                removedIds.chunked(500).forEach { chunk ->
+                    channelDao.deleteMultipleByRemoteId(url, chunk)
+                }
+            }
+
+            // Canais novos que não existem localmente
+            val addedIds = newIds - existingIds
+            val channelsToInsert = newChannels.filter { it.remoteId in addedIds }
+
+            if (channelsToInsert.isNotEmpty()) {
+                channelsToInsert.chunked(500).forEach { chunk ->
+                    channelDao.insertAll(chunk)
+                }
+
+                // Atualizar categorias (pode ter novas categorias)
+                val newCategoriesByGroup = channelsToInsert.groupBy { it.groupTitle }
+                val existingCategories = categoryDao.getAllByPlaylist(url).map { it.id }.toSet()
+                val newCategories = newCategoriesByGroup.entries
+                    .filter { it.key !in existingCategories }
+                    .mapIndexed { index, (catName, channels) ->
+                        val type = channels.groupBy { it.category }
+                            .maxByOrNull { it.value.size }?.key ?: "LIVE_TV"
+                        com.cinex.player.data.model.Category(
+                            id = catName,
+                            name = catName,
+                            type = type,
+                            playlistUrl = url,
+                            orderIndex = 1000 + index
+                        )
+                    }
+                if (newCategories.isNotEmpty()) {
+                    categoryDao.insertAll(newCategories)
+                }
+
+                // Enriquecer novos canais com TMDB em background
+                repositoryScope.launch {
+                    val moviesToEnrich = channelsToInsert.filter { it.category == "MOVIE" }
+                    val seriesToEnrich = channelsToInsert.filter { it.category == "SERIES" }
+                        .distinctBy { it.seriesName }
+
+                    (moviesToEnrich + seriesToEnrich).chunked(5).forEach { chunk ->
+                        coroutineScope {
+                            chunk.forEach { channel ->
+                                launch { enrichChannelWithTmdb(channel) }
+                            }
+                        }
+                        delay(200)
+                    }
+                }
+            }
+
+            // Atualizar timestamp do último sync
+            playlistDao.updateLastSyncTime(url, System.currentTimeMillis())
+
+            Result.success(channelsToInsert.size)
+        } catch (e: Exception) {
+            e.printStackTrace()
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Baixa canais via Xtream API sem salvar — retorna lista para comparação delta.
+     */
+    private suspend fun fetchXtreamChannels(
+        baseUrl: String, user: String, pass: String, playlistUrl: String
+    ): List<Channel> = coroutineScope {
+        try {
+            val api = Retrofit.Builder()
+                .baseUrl(baseUrl)
+                .client(okHttpClient)
+                .addConverterFactory(GsonConverterFactory.create())
+                .build()
+                .create(XtreamCodesApi::class.java)
+
+            val liveCatsDeferred = async { try { api.getLiveCategories(user, pass) } catch (_: Exception) { emptyList() } }
+            val vodCatsDeferred = async { try { api.getVodCategories(user, pass) } catch (_: Exception) { emptyList() } }
+            val seriesCatsDeferred = async { try { api.getSeriesCategories(user, pass) } catch (_: Exception) { emptyList() } }
+
+            val liveCats = liveCatsDeferred.await().associateBy { it.category_id }
+            val vodCats = vodCatsDeferred.await().associateBy { it.category_id }
+            val seriesCats = seriesCatsDeferred.await().associateBy { it.category_id }
+
+            val liveDeferred = async { api.getLiveStreams(user, pass) }
+            val vodDeferred = async { api.getVodStreams(user, pass) }
+            val seriesDeferred = async { api.getSeries(user, pass) }
+
+            val channels = mutableListOf<Channel>()
+
+            liveDeferred.await().forEachIndexed { index, stream ->
+                channels.add(Channel(
+                    name = stream.name,
+                    logoUrl = stream.stream_icon,
+                    groupTitle = liveCats[stream.category_id]?.category_name ?: "Live",
+                    categoryId = stream.category_id,
+                    streamUrl = "${baseUrl}live/$user/$pass/${stream.stream_id}.ts",
+                    category = "LIVE_TV",
+                    playlistUrl = playlistUrl,
+                    orderIndex = index,
+                    remoteId = "live_${stream.stream_id}",
+                    tvgId = stream.epg_channel_id
+                ))
+            }
+
+            vodDeferred.await().forEachIndexed { index, m ->
+                val ext = m.container_extension ?: "mp4"
+                channels.add(Channel(
+                    name = m.name,
+                    logoUrl = m.stream_icon,
+                    groupTitle = vodCats[m.category_id]?.category_name ?: "VOD",
+                    categoryId = m.category_id,
+                    streamUrl = "${baseUrl}movie/$user/$pass/${m.stream_id}.$ext",
+                    category = "MOVIE",
+                    playlistUrl = playlistUrl,
+                    orderIndex = index,
+                    remoteId = "vod_${m.stream_id}"
+                ))
+            }
+
+            seriesDeferred.await().forEachIndexed { index, s ->
+                channels.add(Channel(
+                    name = s.name,
+                    logoUrl = s.cover,
+                    groupTitle = seriesCats[s.category_id]?.category_name ?: "SÉRIES",
+                    categoryId = s.category_id,
+                    streamUrl = "",
+                    category = "SERIES",
+                    seriesName = s.name,
+                    playlistUrl = playlistUrl,
+                    orderIndex = index,
+                    remoteId = "series_${s.series_id}"
+                ))
+            }
+
+            channels
+        } catch (e: Exception) {
+            e.printStackTrace()
+            emptyList()
+        }
+    }
+
+    /**
+     * Baixa canais via M3U sem salvar — retorna lista para comparação delta.
+     */
+    private suspend fun fetchM3UChannels(url: String): List<Channel> {
+        return try {
+            val request = Request.Builder().url(url).build()
+            val response = okHttpClient.newCall(request).execute()
+            if (!response.isSuccessful) return emptyList()
+            val body = response.body ?: return emptyList()
+            val (parsed, _) = body.charStream().buffered().use { reader -> parser.parse(reader, url) }
+            parsed
+        } catch (e: Exception) {
+            e.printStackTrace()
+            emptyList()
+        }
     }
 
     suspend fun syncXtream(
@@ -505,6 +692,7 @@ class ChannelRepository @Inject constructor(
                 withContext(Dispatchers.IO) { seriesStreams.chunked(500).forEach { chunk -> channelDao.insertAll(chunk) } }
             }
 
+            playlistDao.updateLastSyncTime(playlistUrl, System.currentTimeMillis())
             onProgress(100, 100, 100, "Concluído!")
             Result.success(Unit)
         } catch (e: Exception) {

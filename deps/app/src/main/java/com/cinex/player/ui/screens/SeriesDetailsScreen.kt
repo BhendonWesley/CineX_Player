@@ -236,26 +236,24 @@ fun SeriesDetailsScreen(
 
                             OutlinedButton(
                                 onClick = {
-                                    series.trailerUrl?.let { url ->
-                                        val uri = android.net.Uri.parse(url)
-                                        val youtubeIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, uri).apply {
-                                            setPackage("com.google.android.youtube")
-                                        }
-                                        try {
-                                            context.startActivity(youtubeIntent)
-                                        } catch (e: android.content.ActivityNotFoundException) {
-                                            context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, uri))
-                                        }
+                                    val searchQuery = java.net.URLEncoder.encode("${series.name} trailer oficial", "UTF-8")
+                                    val searchUri = android.net.Uri.parse("https://www.youtube.com/results?search_query=$searchQuery")
+                                    val youtubeIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, searchUri).apply {
+                                        setPackage("com.google.android.youtube")
+                                    }
+                                    try {
+                                        context.startActivity(youtubeIntent)
+                                    } catch (e: android.content.ActivityNotFoundException) {
+                                        context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, searchUri))
                                     }
                                 },
-                                enabled = series.trailerUrl != null,
-                                border = BorderStroke(2.dp, if (series.trailerUrl != null) Color.White else Color.Gray),
+                                border = BorderStroke(2.dp, Color.White),
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier.height(52.dp).width(140.dp)
                             ) {
                                 Text(
                                     "TRAILER",
-                                    color = if (series.trailerUrl != null) Color.White else Color.Gray,
+                                    color = Color.White,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 14.sp
                                 )

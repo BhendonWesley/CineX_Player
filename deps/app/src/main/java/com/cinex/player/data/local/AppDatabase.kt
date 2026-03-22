@@ -10,7 +10,7 @@ import com.cinex.player.data.model.EpgProgram
 
 @Database(
     entities = [Channel::class, Playlist::class, Category::class, EpgChannel::class, EpgProgram::class],
-    version = 11,
+    version = 12,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

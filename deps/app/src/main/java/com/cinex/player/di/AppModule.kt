@@ -2,6 +2,8 @@ package com.cinex.player.di
 
 import android.app.Application
 import androidx.room.Room
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.cinex.player.data.local.AppDatabase
 import com.cinex.player.data.local.ChannelDao
 import com.cinex.player.data.local.EpgDao
@@ -23,6 +25,12 @@ import androidx.media3.exoplayer.upstream.DefaultBandwidthMeter
 @InstallIn(SingletonComponent::class)
 object AppModule {
 
+    private val MIGRATION_11_12 = object : Migration(11, 12) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE playlists ADD COLUMN lastSyncTime INTEGER NOT NULL DEFAULT 0")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(app: Application): AppDatabase {
@@ -30,7 +38,9 @@ object AppModule {
             app,
             AppDatabase::class.java,
             "cinex_database"
-        ).fallbackToDestructiveMigration().build()
+        ).addMigrations(MIGRATION_11_12)
+         .fallbackToDestructiveMigration()
+         .build()
     }
 
     @Provides

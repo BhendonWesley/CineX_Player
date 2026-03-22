@@ -112,6 +112,9 @@ fun VodScreen(
         else     -> flowOf(emptyList())
     }
     val categories by categoriesFlow.collectAsState(initial = emptyList())
+    val adultUnlocked by viewModel.adultUnlocked.collectAsState()
+    var showParentalDialog by remember { mutableStateOf(false) }
+    var pendingAdultCategoryId by remember { mutableStateOf<String?>(null) }
 
     val selectedMovieCategory  by viewModel.selectedMovieCategory.collectAsState()
     val selectedSeriesCategory by viewModel.selectedSeriesCategory.collectAsState()
@@ -245,8 +248,13 @@ fun VodScreen(
                             count = count,
                             isSelected = isSelected,
                             onClick = {
-                                if (type == "MOVIE") viewModel.setMovieCategory(category.id)
-                                else viewModel.setSeriesCategory(category.id)
+                                if (viewModel.isAdultCategory(category.name) && !adultUnlocked) {
+                                    pendingAdultCategoryId = category.id
+                                    showParentalDialog = true
+                                } else {
+                                    if (type == "MOVIE") viewModel.setMovieCategory(category.id)
+                                    else viewModel.setSeriesCategory(category.id)
+                                }
                             }
                         )
                     }
@@ -287,5 +295,24 @@ fun VodScreen(
             }
         }
         } // fecha Row
+
+        // Dialog de controle parental
+        if (showParentalDialog) {
+            com.cinex.player.ui.components.ParentalPinDialog(
+                onDismiss = {
+                    showParentalDialog = false
+                    pendingAdultCategoryId = null
+                },
+                onPinVerified = {
+                    showParentalDialog = false
+                    pendingAdultCategoryId?.let { categoryId ->
+                        if (type == "MOVIE") viewModel.setMovieCategory(categoryId)
+                        else viewModel.setSeriesCategory(categoryId)
+                    }
+                    pendingAdultCategoryId = null
+                },
+                verifyPin = { viewModel.verifyParentalPin(it) }
+            )
+        }
     } // fecha Box
 }

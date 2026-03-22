@@ -27,7 +27,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.Image
 import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
 import com.cinex.player.data.model.Channel
 import com.cinex.player.ui.theme.CineX_SecondaryBackground
 import com.cinex.player.ui.theme.DeepRed
@@ -78,14 +80,40 @@ fun VodPosterItem(
                     .build()
             }
 
-            AsyncImage(
+            SubcomposeAsyncImage(
                 model = imageRequest,
                 contentDescription = channel.name,
-                contentScale = if (channel.posterUrl.isNullOrEmpty()) ContentScale.Fit else ContentScale.Crop,
+                contentScale = ContentScale.Crop,
                 alignment = Alignment.TopCenter,
                 modifier = Modifier.fillMaxSize(),
-                error = painterResource(id = com.cinex.player.R.drawable.logo_cinex)
+                error = {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            painter = painterResource(id = com.cinex.player.R.drawable.logo_cinex),
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxWidth(0.55f),
+                            contentScale = ContentScale.Fit,
+                            alpha = 0.5f
+                        )
+                    }
+                }
             )
+        } else {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Image(
+                    painter = painterResource(id = com.cinex.player.R.drawable.logo_cinex),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxWidth(0.55f),
+                    contentScale = ContentScale.Fit,
+                    alpha = 0.5f
+                )
+            }
         }
 
         if (isPressed) {
