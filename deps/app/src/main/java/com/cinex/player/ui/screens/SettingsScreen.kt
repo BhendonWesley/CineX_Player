@@ -1,7 +1,10 @@
 package com.cinex.player.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -15,8 +18,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.*
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -149,13 +154,25 @@ fun SettingsScreen(
 
 @Composable
 fun SettingsTile(item: SettingItem) {
+    var isFocused by remember { mutableStateOf(false) }
     Card(
         shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E)), // Dark tile background
+        colors = CardDefaults.cardColors(containerColor = if (isFocused) Color(0xFF2A2A2A) else Color(0xFF1E1E1E)),
         modifier = Modifier
             .fillMaxWidth()
             .height(70.dp)
+            .then(
+                if (isFocused) Modifier.border(2.dp, Color(0xFFF59E0B), RoundedCornerShape(8.dp))
+                else Modifier
+            )
             .clickable { item.action() }
+            .onFocusChanged { isFocused = it.isFocused }
+            .focusable(interactionSource = remember { MutableInteractionSource() })
+            .onKeyEvent { event ->
+                if (event.type == KeyEventType.KeyUp &&
+                    (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                ) { item.action(); true } else false
+            }
     ) {
         Row(
             modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),

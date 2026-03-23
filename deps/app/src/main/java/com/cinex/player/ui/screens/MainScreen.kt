@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.activity.compose.BackHandler
 import com.cinex.player.ui.MainViewModel
 import com.cinex.player.ui.theme.DarkBackground
 import androidx.paging.compose.collectAsLazyPagingItems
@@ -199,6 +200,16 @@ fun MainScreen(
             }
         )
     } else {
+        // Back: detalhes → fecha detalhes, settings → fecha, aba interna → volta Home, Home → ignora (evita sair acidentalmente na TV)
+        BackHandler(enabled = true) {
+            when {
+                selectedDetailsChannel != null -> viewModel.selectChannelForDetails(null)
+                isSettingsOpen -> isSettingsOpen = false
+                selectedTab != 0 -> selectedTab = 0
+                // Na Home, ignora o Back para não sair acidentalmente (TV gera Back quando foco escapa)
+            }
+        }
+
         Box(modifier = modifier.fillMaxSize()) {
         Column(
             modifier = Modifier

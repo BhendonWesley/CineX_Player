@@ -2,7 +2,10 @@ package com.cinex.player.ui.screens
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
@@ -15,13 +18,15 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.*
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -89,15 +94,37 @@ fun TopNavigationBar(
         ) {
             visibleTabs.forEachIndexed { index, (title, id) ->
                 val isSelected = selectedTab == id
+                var isFocused by remember { mutableStateOf(false) }
 
+                val tabShape = RoundedCornerShape(8.dp)
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.clickable { onTabSelected(id) }
+                    modifier = Modifier
+                        .onPreviewKeyEvent { event ->
+                            if (event.key == Key.DirectionUp) true else false
+                        }
+                        .onFocusChanged { isFocused = it.isFocused }
+                        .focusable(interactionSource = remember { MutableInteractionSource() })
+                        .onKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyUp &&
+                                (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                            ) { onTabSelected(id); true } else false
+                        }
+                        .then(
+                            if (isFocused) Modifier
+                                .border(2.dp, Brush.linearGradient(listOf(Color(0xFFE11D2E), NavGold)), tabShape)
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                            else Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { onTabSelected(id) }
                 ) {
                     Text(
                         text = title,
                         fontFamily = Montserrat,
-                        color = if (isSelected) NavGold else NavInactive,
+                        color = if (isSelected) NavGold else if (isFocused) Color.White else NavInactive,
                         fontWeight = if (isSelected) FontWeight.ExtraBold else FontWeight.SemiBold,
                         fontSize = 14.sp,
                         letterSpacing = 1.sp

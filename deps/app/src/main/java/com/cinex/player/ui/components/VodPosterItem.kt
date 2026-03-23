@@ -5,6 +5,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
@@ -17,10 +18,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -46,18 +49,28 @@ fun VodPosterItem(
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
+    var isFocused by remember { mutableStateOf(false) }
 
     val gradientBrush = remember { Brush.linearGradient(listOf(CardRed, CardGold)) }
     val overlayGradient = remember { Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.92f))) }
     val context = androidx.compose.ui.platform.LocalContext.current
 
+    val showOverlay = isPressed || isFocused
+
     Box(
         modifier = modifier
             .fillMaxWidth()
             .aspectRatio(2f / 3f)
+            .onFocusChanged { isFocused = it.isFocused }
+            .focusable(interactionSource = remember { MutableInteractionSource() })
+            .onKeyEvent { event ->
+                if (event.type == KeyEventType.KeyUp &&
+                    (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                ) { onClick(); true } else false
+            }
             .clip(RoundedCornerShape(12.dp))
             .then(
-                if (isPressed) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(12.dp))
+                if (showOverlay) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(12.dp))
                 else Modifier
             )
             .background(CineX_SecondaryBackground)
@@ -116,7 +129,7 @@ fun VodPosterItem(
             }
         }
 
-        if (isPressed) {
+        if (showOverlay) {
             // Overlay escuro
             Box(
                 modifier = Modifier

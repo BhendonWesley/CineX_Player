@@ -18,10 +18,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.focusable
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.input.key.*
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -398,39 +402,63 @@ private fun HeaderBar(
         }
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(CircleShape)
-                    .background(CineX_DeepRed)
-                    .clickable { onRefresh() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Default.Refresh, "Atualizar", tint = Color.White, modifier = Modifier.size(20.dp))
-            }
-
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF0A0A0A))
-                    .clickable { onSettingsClick() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Default.Settings, "Config", tint = Color.White, modifier = Modifier.size(20.dp))
-            }
-
-            Box(
-                modifier = Modifier
-                    .size(38.dp)
-                    .clip(CircleShape)
-                    .background(CineX_PremiumGold)
-                    .clickable { onAccountClick() },
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(Icons.Default.Person, "Perfil", tint = Color.White, modifier = Modifier.size(20.dp))
-            }
+            HeaderButton(
+                icon = Icons.Default.Refresh,
+                label = "Atualizar",
+                bgColor = CineX_DeepRed,
+                onClick = onRefresh
+            )
+            HeaderButton(
+                icon = Icons.Default.Settings,
+                label = "Config",
+                bgColor = Color(0xFF0A0A0A),
+                onClick = onSettingsClick
+            )
+            HeaderButton(
+                icon = Icons.Default.Person,
+                label = "Perfil",
+                bgColor = CineX_PremiumGold,
+                onClick = onAccountClick
+            )
         }
+    }
+}
+
+@Composable
+private fun HeaderButton(
+    icon: ImageVector,
+    label: String,
+    bgColor: Color,
+    onClick: () -> Unit
+) {
+    var isFocused by remember { mutableStateOf(false) }
+    Box(
+        modifier = Modifier
+            .size(38.dp)
+            .onPreviewKeyEvent { event ->
+                // Bloqueia D-pad Up nos botões do topo para o foco não escapar do app
+                if (event.key == Key.DirectionUp) true else false
+            }
+            .onFocusChanged { isFocused = it.isFocused }
+            .focusable(interactionSource = remember { MutableInteractionSource() })
+            .onKeyEvent { event ->
+                if (event.type == KeyEventType.KeyUp &&
+                    (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                ) { onClick(); true } else false
+            }
+            .clip(CircleShape)
+            .background(bgColor)
+            .then(
+                if (isFocused) Modifier.border(2.dp, Color.White, CircleShape)
+                else Modifier
+            )
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { onClick() },
+        contentAlignment = Alignment.Center
+    ) {
+        Icon(icon, label, tint = Color.White, modifier = Modifier.size(20.dp))
     }
 }
 
@@ -475,18 +503,26 @@ private fun NavCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    var isFocused by remember { mutableStateOf(false) }
+
     Box(
         modifier = modifier
             .height(100.dp)
+            .onFocusChanged { isFocused = it.isFocused }
+            .focusable(interactionSource = remember { MutableInteractionSource() })
+            .onKeyEvent { event ->
+                if (event.type == KeyEventType.KeyUp &&
+                    (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                ) { onClick(); true } else false
+            }
             .clip(RoundedCornerShape(14.dp))
             .background(
                 color = if (isActive) Color.White.copy(alpha = 0.10f)
                 else Color.White.copy(alpha = 0.05f)
             )
-            .border(
-                width = 0.8.dp,
-                color = if (isActive) CineX_HighlightRed else CineX_DeepRed.copy(alpha = 0.5f),
-                shape = RoundedCornerShape(14.dp)
+            .then(
+                if (isFocused) Modifier.border(2.5.dp, CineX_PremiumGold, RoundedCornerShape(14.dp))
+                else Modifier.border(0.8.dp, if (isActive) CineX_HighlightRed else CineX_DeepRed.copy(alpha = 0.5f), RoundedCornerShape(14.dp))
             )
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
@@ -512,14 +548,14 @@ private fun NavCard(
                 Icon(
                     imageVector = icon,
                     contentDescription = label,
-                    tint = if (isActive) CineX_PremiumGold else CineX_PremiumGold.copy(alpha = 0.7f),
+                    tint = if (isFocused) CineX_PremiumGold else if (isActive) CineX_PremiumGold else CineX_PremiumGold.copy(alpha = 0.7f),
                     modifier = Modifier.size(28.dp)
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
             Text(
                 text = label,
-                color = Color.White,
+                color = if (isFocused) CineX_PremiumGold else Color.White,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.sp,

@@ -6,7 +6,10 @@ import android.widget.FrameLayout
 import android.util.Base64
 import androidx.annotation.OptIn
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -23,6 +26,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.*
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -278,12 +285,29 @@ fun LiveTvScreen(
                     val channel = pagingItems[index]
                     if (channel != null) {
                         val isSelected = selectedChannel?.id == channel.id
+                        var isFocused by remember { mutableStateOf(false) }
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .background(if (isSelected) Color(0xFFC62828).copy(alpha = 0.2f) else Color.Transparent)
+                                .onFocusChanged { isFocused = it.isFocused }
+                                .focusable(interactionSource = remember { MutableInteractionSource() })
+                                .onKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyUp &&
+                                        (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                                    ) {
+                                        if (isSelected) onChannelExpand(channel)
+                                        else viewModel.updateSelectedChannel(channel)
+                                        true
+                                    } else false
+                                }
+                                .background(
+                                    if (isSelected) Color(0xFFC62828).copy(alpha = 0.2f)
+                                    else if (isFocused) Color.White.copy(alpha = 0.08f)
+                                    else Color.Transparent
+                                )
                                 .clickable {
-                                    viewModel.updateSelectedChannel(channel)
+                                    if (isSelected) onChannelExpand(channel)
+                                    else viewModel.updateSelectedChannel(channel)
                                 }
                                 .padding(horizontal = 16.dp, vertical = 12.dp)
                         ) {
@@ -308,11 +332,14 @@ fun LiveTvScreen(
                 .background(Color(0xBB0E0E0E))
         ) {
             // Player (proporção fixa, sem consumir toda a altura)
+            val favFocusRequester = remember { FocusRequester() }
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(0.45f)
                     .background(Color.Black)
+                    .onFocusChanged { if (it.isFocused) try { favFocusRequester.requestFocus() } catch (_: Exception) {} }
+                    .focusable(interactionSource = remember { MutableInteractionSource() })
                     .clickable { selectedChannel?.let { onChannelExpand(it) } },
                 contentAlignment = Alignment.Center
             ) {
@@ -411,13 +438,32 @@ fun LiveTvScreen(
                 var isFavLocal by remember(selectedChannel?.id) {
                     mutableStateOf(selectedChannel?.isFavorite == true)
                 }
+                var isFavFocused by remember { mutableStateOf(false) }
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(8.dp)
-                        .size(28.dp)
+                        .size(if (isFavFocused) 36.dp else 28.dp)
+                        .focusRequester(favFocusRequester)
+                        .onFocusChanged { isFavFocused = it.isFocused }
+                        .focusable(interactionSource = remember { MutableInteractionSource() })
+                        .onKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyUp &&
+                                (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                            ) {
+                                selectedChannel?.let {
+                                    isFavLocal = !isFavLocal
+                                    viewModel.updateFavorite(it.id, isFavLocal)
+                                }
+                                true
+                            } else false
+                        }
                         .clip(RoundedCornerShape(50))
-                        .background(Color.Black.copy(alpha = 0.5f))
+                        .background(Color.Black.copy(alpha = if (isFavFocused) 0.8f else 0.5f))
+                        .then(
+                            if (isFavFocused) Modifier.border(2.dp, Color(0xFFF59E0B), RoundedCornerShape(50))
+                            else Modifier
+                        )
                         .clickable {
                             selectedChannel?.let {
                                 isFavLocal = !isFavLocal
@@ -627,10 +673,22 @@ fun EpgItem(program: com.cinex.player.data.model.EpgProgram, isCurrent: Boolean,
 
 @Composable
 fun ActionButton(text: String, color: Color, onClick: () -> Unit = {}) {
+    var isFocused by remember { mutableStateOf(false) }
     Box(
         modifier = Modifier
+            .onFocusChanged { isFocused = it.isFocused }
+            .focusable(interactionSource = remember { MutableInteractionSource() })
+            .onKeyEvent { event ->
+                if (event.type == KeyEventType.KeyUp &&
+                    (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                ) { onClick(); true } else false
+            }
             .clip(RoundedCornerShape(8.dp))
             .background(color)
+            .then(
+                if (isFocused) Modifier.border(2.dp, Color(0xFFF59E0B), RoundedCornerShape(8.dp))
+                else Modifier
+            )
             .clickable { onClick() }
             .padding(horizontal = 24.dp, vertical = 12.dp)
     ) {

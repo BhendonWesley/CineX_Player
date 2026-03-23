@@ -58,11 +58,14 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.focusable
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.input.key.*
 import com.cinex.player.data.model.Channel
 import kotlinx.coroutines.delay
 import com.cinex.player.ui.MainViewModel
 import com.cinex.player.ui.theme.DeepRed
-import kotlinx.coroutines.delay
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -281,10 +284,49 @@ fun VideoPlayerScreen(
         }
     }
 
+    val playerFocusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { playerFocusRequester.requestFocus() }
+
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
+            .focusRequester(playerFocusRequester)
+            .focusable(interactionSource = remember { MutableInteractionSource() })
+            .onKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                when (event.key) {
+                    Key.DirectionCenter, Key.Enter -> {
+                        if (showResumeDialog || showExitDialog) return@onKeyEvent false
+                        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                        isControlsVisible = true
+                        true
+                    }
+                    Key.DirectionLeft -> {
+                        if (!isLiveTv) exoPlayer.seekTo(maxOf(0, exoPlayer.currentPosition - 10_000))
+                        isControlsVisible = true
+                        true
+                    }
+                    Key.DirectionRight -> {
+                        if (!isLiveTv) exoPlayer.seekTo(minOf(exoPlayer.duration, exoPlayer.currentPosition + 10_000))
+                        isControlsVisible = true
+                        true
+                    }
+                    Key.DirectionUp -> {
+                        onNextChannel?.invoke()
+                        true
+                    }
+                    Key.DirectionDown -> {
+                        onPreviousChannel?.invoke()
+                        true
+                    }
+                    Key.Back -> {
+                        onBack()
+                        true
+                    }
+                    else -> false
+                }
+            }
             .pointerInput(Unit) {
                 detectVerticalDragGestures { change, dragAmount ->
                     if (showResumeDialog || showExitDialog) return@detectVerticalDragGestures

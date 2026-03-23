@@ -145,11 +145,11 @@ data class ServerInfo(
 data class XtreamCategory(
     val category_id: String,
     val category_name: String,
-    val parent_id: Int = 0
+    val parent_id: String? = null
 )
 
 data class LiveStreamItem(
-    val num: Int? = null,
+    val num: String? = null,
     val name: String,
     val stream_type: String? = null,
     val stream_id: Int,
@@ -159,7 +159,7 @@ data class LiveStreamItem(
 )
 
 data class VodStreamItem(
-    val num: Int? = null,
+    val num: String? = null,
     val name: String,
     val stream_type: String? = null,
     val stream_id: Int,
@@ -170,7 +170,7 @@ data class VodStreamItem(
 )
 
 data class SeriesItem(
-    val num: Int? = null,
+    val num: String? = null,
     val name: String,
     val series_id: Int,
     val cover: String? = null,

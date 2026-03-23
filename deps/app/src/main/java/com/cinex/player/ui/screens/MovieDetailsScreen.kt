@@ -9,7 +9,13 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.runtime.*
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -33,8 +39,22 @@ fun MovieDetailsScreen(
     onPlay: (Channel) -> Unit
 ) {
     val context = LocalContext.current
+    val playButtonRequester = remember { FocusRequester() }
 
-    Box(modifier = Modifier.fillMaxSize().background(DarkBackground)) {
+    LaunchedEffect(Unit) {
+        try { playButtonRequester.requestFocus() } catch (e: Exception) {}
+    }
+
+    BackHandler { onBack() }
+
+    Box(modifier = Modifier
+        .fillMaxSize()
+        .background(DarkBackground)
+        .clickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = null
+        ) {}
+    ) {
 
         // Backdrop com gradientes cinematográficos
         AsyncImage(
@@ -139,7 +159,7 @@ fun MovieDetailsScreen(
                     // Sinopse em bloco visual com scroll e fade
                     Box(
                         modifier = Modifier
-                            .weight(1f)
+                            .heightIn(max = 140.dp)
                             .padding(vertical = 8.dp)
                             .clip(RoundedCornerShape(8.dp))
                             .background(Color.White.copy(alpha = 0.06f))
@@ -175,11 +195,17 @@ fun MovieDetailsScreen(
                         modifier = Modifier.padding(bottom = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        var isPlayFocused by remember { mutableStateOf(false) }
                         Button(
                             onClick = { onPlay(movie) },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isPlayFocused) Color.Yellow else Color.White
+                            ),
                             shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.height(52.dp),
+                            modifier = Modifier
+                                .height(52.dp)
+                                .focusRequester(playButtonRequester)
+                                .onFocusChanged { isPlayFocused = it.isFocused },
                             contentPadding = PaddingValues(horizontal = 24.dp)
                         ) {
                             Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black)
@@ -189,6 +215,7 @@ fun MovieDetailsScreen(
 
                         Spacer(modifier = Modifier.width(16.dp))
 
+                        var isTrailerFocused by remember { mutableStateOf(false) }
                         OutlinedButton(
                             onClick = {
                                 val searchQuery = java.net.URLEncoder.encode("${movie.name} trailer oficial", "UTF-8")
@@ -202,13 +229,19 @@ fun MovieDetailsScreen(
                                     context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, searchUri))
                                 }
                             },
-                            border = BorderStroke(2.dp, Color.White),
+                            border = BorderStroke(2.dp, if (isTrailerFocused) Color.Yellow else Color.White),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = if (isTrailerFocused) Color.White.copy(alpha = 0.2f) else Color.Transparent
+                            ),
                             shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier.height(52.dp).width(140.dp)
+                            modifier = Modifier
+                                .height(52.dp)
+                                .width(140.dp)
+                                .onFocusChanged { isTrailerFocused = it.isFocused }
                         ) {
                             Text(
                                 "TRAILER",
-                                color = Color.White,
+                                color = if (isTrailerFocused) Color.Yellow else Color.White,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp
                             )
