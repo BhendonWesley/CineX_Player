@@ -9,7 +9,9 @@
       "Bash(./gradlew compileDebugKotlin)",
       "Bash(./gradlew compileDebugKotlin --stacktrace)",
       "Bash(./gradlew compileDebugKotlin --info)",
-      "Bash(JAVA_HOME=\"C:/Program Files/Android/Android Studio1/jbr\" ./gradlew assembleDebug)"
+      "Bash(JAVA_HOME=\"C:/Program Files/Android/Android Studio1/jbr\" ./gradlew assembleDebug)",
+      "Bash(find 'c:\\\\Users\\\\Bhendon Wesley\\\\Desktop\\\\CineX Player' -name *.css -type f)",
+      "Bash(xargs grep:*)"
     ]
   }
 }

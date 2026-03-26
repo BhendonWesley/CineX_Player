@@ -6,13 +6,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.PlaylistAdd
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -23,11 +19,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.cinex.player.ui.MainViewModel
 import com.cinex.player.ui.theme.DarkBackground
-import com.cinex.player.ui.theme.DeepRed
 import com.cinex.player.ui.theme.TextWhite
 
 data class SettingItem(
@@ -49,66 +45,69 @@ fun SettingsScreen(
     val isSeriesHidden by viewModel.isSeriesHidden.collectAsState()
     val is24HourFormat by viewModel.is24HourFormat.collectAsState()
     val isParentalControlEnabled by viewModel.isParentalControlEnabled.collectAsState()
+    val updateCheckStatus by viewModel.updateCheckStatus.collectAsState()
 
-    val settingsItems = listOf(
-        SettingItem("Adicionar lista", Icons.AutoMirrored.Filled.PlaylistAdd) {
-            viewModel.swapServer()
-            onServerSwap()
-        },
+    // 9 items → 3 linhas de 3 colunas (mais equilibrado e cabe sem scroll)
+    val row1 = listOf(
+        SettingItem("Trocar servidor", Icons.Default.SwapHoriz) { onServerSwap() },
         SettingItem(
             if (isParentalControlEnabled) "Desativar Controle dos Pais" else "Ativar Controle dos Pais",
             if (isParentalControlEnabled) Icons.Default.LockOpen else Icons.Default.Lock
-        ) {
-            viewModel.updateParentalControl(!isParentalControlEnabled)
-        },
+        ) { viewModel.updateParentalControl(!isParentalControlEnabled) },
         SettingItem("Apagar Lista Atual", Icons.Default.Delete) {
             viewModel.swapServer()
             onServerSwap()
-        },
-        SettingItem("Mudar idioma", Icons.Default.Language) { /* Lang selection */ },
-        SettingItem("Limpar histórico", Icons.Default.DeleteSweep) {
-            viewModel.clearHistory()
-        },
+        }
+    )
+
+    val row2 = listOf(
         SettingItem(
             if (isLiveHidden) "Mostrar Categorias ao Vivo" else "Ocultar Categorias ao Vivo",
             if (isLiveHidden) Icons.Default.Visibility else Icons.Default.VisibilityOff
-        ) {
-            viewModel.updateLiveTvVisibility(!isLiveHidden)
-        },
+        ) { viewModel.updateLiveTvVisibility(!isLiveHidden) },
         SettingItem(
             if (isMoviesHidden) "Mostrar Categorias Vod" else "Ocultar Categorias Vod",
             if (isMoviesHidden) Icons.Default.Visibility else Icons.Default.VisibilityOff
-        ) {
-            viewModel.updateMoviesVisibility(!isMoviesHidden)
-        },
+        ) { viewModel.updateMoviesVisibility(!isMoviesHidden) },
         SettingItem(
             if (isSeriesHidden) "Mostrar Categorias Series" else "Ocultar Categorias Series",
             if (isSeriesHidden) Icons.Default.Visibility else Icons.Default.VisibilityOff
-        ) {
-            viewModel.updateSeriesVisibility(!isSeriesHidden)
-        },
-        SettingItem("Formato de vídeo", Icons.Default.LiveTv) { /* Format selection */ },
-        SettingItem("Player externo", Icons.Default.PlayCircleOutline) { /* Toggle player */ },
+        ) { viewModel.updateSeriesVisibility(!isSeriesHidden) }
+    )
+
+    val row3 = listOf(
         SettingItem(
             if (is24HourFormat) "Formato 12h" else "Formato 24h",
             Icons.Default.AccessTime
-        ) {
-            viewModel.updateTimeFormat(!is24HourFormat)
-        },
-        SettingItem("Legendas", Icons.Default.Subtitles) { /* Sub settings */ },
-        SettingItem("Tipo de dispositivo", Icons.Default.Devices) { /* TV/Mobile toggle */ },
-        SettingItem("Atualizar app", Icons.Default.Update) { /* Check update */ }
+        ) { viewModel.updateTimeFormat(!is24HourFormat) },
+        SettingItem("Limpar histórico", Icons.Default.DeleteSweep) { viewModel.clearHistory() },
+        SettingItem(
+            when (updateCheckStatus) {
+                "checking" -> "Verificando..."
+                "up_to_date" -> "App atualizado ✓"
+                else -> "Atualizar app"
+            },
+            Icons.Default.SystemUpdate
+        ) { viewModel.checkForUpdate() }
     )
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val versionName = remember {
+        try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName
+        } catch (e: Exception) { "1.0" }
+    }
 
     Column(
         modifier = modifier
             .fillMaxSize()
             .background(DarkBackground)
-            .padding(16.dp)
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.SpaceBetween
     ) {
         // Top Bar
         Row(
-            modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack) {
@@ -124,23 +123,24 @@ fun SettingsScreen(
             Spacer(modifier = Modifier.weight(1.2f))
         }
 
-        // Grid of Settings Controls
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(4), // 4 columns like in image
-            contentPadding = PaddingValues(8.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
-            modifier = Modifier.weight(1f)
+        // Grid 3x3
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f),
+            verticalArrangement = Arrangement.Center
         ) {
-            items(settingsItems) { item ->
-                SettingsTile(item)
-            }
+            SettingsRow(row1)
+            Spacer(Modifier.height(10.dp))
+            SettingsRow(row2)
+            Spacer(Modifier.height(10.dp))
+            SettingsRow(row3, updateCheckStatus)
         }
 
-        // Bottom Info
-        Box(
-            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            contentAlignment = Alignment.Center
+        // Bottom Info — MAC + Versão
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
                 text = "ENDEREÇO MAC: ${viewModel.deviceMacAddress}",
@@ -148,24 +148,68 @@ fun SettingsScreen(
                 fontSize = 14.sp,
                 fontWeight = FontWeight.Bold
             )
+            Text(
+                text = "CineX Player v$versionName",
+                color = Color.White.copy(alpha = 0.4f),
+                fontSize = 11.sp
+            )
         }
     }
 }
 
 @Composable
-fun SettingsTile(item: SettingItem) {
+private fun SettingsRow(
+    items: List<SettingItem>,
+    updateCheckStatus: String = "idle"
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        items.forEachIndexed { index, item ->
+            val isUpdateButton = item.icon == Icons.Default.SystemUpdate
+            Box(modifier = Modifier.weight(1f)) {
+                SettingsTile(
+                    item = item,
+                    isLoading = isUpdateButton && updateCheckStatus == "checking",
+                    isSuccess = isUpdateButton && updateCheckStatus == "up_to_date"
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun SettingsTile(
+    item: SettingItem,
+    isLoading: Boolean = false,
+    isSuccess: Boolean = false
+) {
     var isFocused by remember { mutableStateOf(false) }
+
+    val bgColor = when {
+        isSuccess -> Color(0xFF1B3A2A)
+        isFocused -> Color(0xFF2A2A2A)
+        else -> Color(0xFF1E1E1E)
+    }
+
+    val borderColor = when {
+        isSuccess -> Color(0xFF4ADE80)
+        isFocused -> Color(0xFFF59E0B)
+        else -> Color.Transparent
+    }
+
     Card(
         shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = if (isFocused) Color(0xFF2A2A2A) else Color(0xFF1E1E1E)),
+        colors = CardDefaults.cardColors(containerColor = bgColor),
         modifier = Modifier
             .fillMaxWidth()
-            .height(70.dp)
+            .height(62.dp)
             .then(
-                if (isFocused) Modifier.border(2.dp, Color(0xFFF59E0B), RoundedCornerShape(8.dp))
+                if (isFocused || isSuccess) Modifier.border(2.dp, borderColor, RoundedCornerShape(8.dp))
                 else Modifier
             )
-            .clickable { item.action() }
+            .clickable(enabled = !isLoading) { item.action() }
             .onFocusChanged { isFocused = it.isFocused }
             .focusable(interactionSource = remember { MutableInteractionSource() })
             .onKeyEvent { event ->
@@ -175,30 +219,39 @@ fun SettingsTile(item: SettingItem) {
             }
     ) {
         Row(
-            modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
                 modifier = Modifier
-                    .size(40.dp)
+                    .size(36.dp)
                     .background(Color(0xFF2A2A2A), RoundedCornerShape(4.dp)),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(
-                    imageVector = item.icon,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(24.dp)
-                )
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(18.dp),
+                        color = Color.White,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Icon(
+                        imageVector = item.icon,
+                        contentDescription = null,
+                        tint = if (isSuccess) Color(0xFF4ADE80) else Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
             }
-            Spacer(modifier = Modifier.width(12.dp))
+            Spacer(modifier = Modifier.width(10.dp))
             Text(
                 text = item.title,
-                color = Color.White,
+                color = if (isSuccess) Color(0xFF4ADE80) else Color.White,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Medium,
                 lineHeight = 14.sp,
                 maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.weight(1f)
             )
         }

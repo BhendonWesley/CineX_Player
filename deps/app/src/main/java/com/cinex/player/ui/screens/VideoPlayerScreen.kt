@@ -228,12 +228,15 @@ fun VideoPlayerScreen(
         if (!isLiveTv) {
             val mediaItem = MediaItem.fromUri(Uri.parse(channel.streamUrl))
             exoPlayer.setMediaItem(mediaItem)
-            exoPlayer.prepare()
-            
+
             if (showResumeDialog) {
+                // Pausa ANTES de preparar para não auto-tocar atrás do dialog
+                exoPlayer.playWhenReady = false
+                exoPlayer.prepare()
                 exoPlayer.seekTo(channel.resumePosition)
             } else {
-                exoPlayer.play()
+                exoPlayer.playWhenReady = true
+                exoPlayer.prepare()
             }
         }
         // Para Live TV, o player já deve estar tocando do preview
@@ -735,12 +738,12 @@ fun VideoPlayerScreen(
                 description = "Deseja retomar a reprodução de onde parou?",
                 onConfirm = {
                     showResumeDialog = false
-                    exoPlayer.play()
+                    exoPlayer.playWhenReady = true
                 },
                 onCancel = {
                     showResumeDialog = false
                     exoPlayer.seekTo(0)
-                    exoPlayer.play()
+                    exoPlayer.playWhenReady = true
                 }
             )
         }

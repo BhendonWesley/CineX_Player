@@ -20,6 +20,8 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import com.cinex.player.data.network.XtreamCodesApi
+import com.cinex.player.util.UpdateInfo
+import com.cinex.player.util.UpdateManager
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
@@ -44,7 +46,8 @@ class MainViewModel @Inject constructor(
     private val repository: ChannelRepository,
     private val app: android.app.Application,
     private val okHttpClient: OkHttpClient,
-    val liveTvPlayer: ExoPlayer
+    val liveTvPlayer: ExoPlayer,
+    private val updateManager: UpdateManager
 ) : ViewModel() {
 
     private val _currentPlaylist = MutableStateFlow<com.cinex.player.data.model.Playlist?>(null)
@@ -84,6 +87,23 @@ class MainViewModel @Inject constructor(
     private val _adultUnlocked = MutableStateFlow(false)
     val adultUnlocked = _adultUnlocked.asStateFlow()
     private val parentalPin = "0000"
+
+    // --- Auto Update ---
+    private val _updateAvailable = MutableStateFlow<UpdateInfo?>(null)
+    val updateAvailable = _updateAvailable.asStateFlow()
+
+    private val _showUpdateDialog = MutableStateFlow(false)
+    val showUpdateDialog = _showUpdateDialog.asStateFlow()
+
+    private val _showChangelog = MutableStateFlow(false)
+    val showChangelog = _showChangelog.asStateFlow()
+
+    private val _changelogText = MutableStateFlow("")
+    val changelogText = _changelogText.asStateFlow()
+
+    // Status: "idle", "checking", "up_to_date", "error"
+    private val _updateCheckStatus = MutableStateFlow("idle")
+    val updateCheckStatus: StateFlow<String> = _updateCheckStatus.asStateFlow()
 
     fun isAdultCategory(name: String): Boolean {
         val lower = name.lowercase()
@@ -217,6 +237,53 @@ class MainViewModel @Inject constructor(
                 validateDeviceAccess()
             }
         }
+
+        // Checagem de atualização ao abrir o app
+        checkForUpdate()
+
+        // Mostra changelog se acabou de atualizar
+        if (updateManager.shouldShowChangelog()) {
+            val changelog = updateManager.getChangelogForCurrentVersion()
+            if (changelog != null) {
+                _changelogText.value = changelog
+                _showChangelog.value = true
+                updateManager.markChangelogSeen()
+            }
+        }
+    }
+
+
+    // --- Update Actions ---
+    fun checkForUpdate() {
+        viewModelScope.launch {
+            _updateCheckStatus.value = "checking"
+            val update = updateManager.checkForUpdate()
+            if (update != null) {
+                _updateAvailable.value = update
+                _showUpdateDialog.value = true
+                updateManager.saveChangelogForVersion(update.newVersion, update.changelog)
+                _updateCheckStatus.value = "idle"
+            } else {
+                _updateCheckStatus.value = "up_to_date"
+                // Auto-dismiss após 3s
+                kotlinx.coroutines.delay(3000)
+                _updateCheckStatus.value = "idle"
+            }
+        }
+    }
+
+    fun acceptUpdate() {
+        val update = _updateAvailable.value ?: return
+        _showUpdateDialog.value = false
+        updateManager.downloadAndInstall(update)
+    }
+
+    fun dismissUpdate() {
+        _showUpdateDialog.value = false
+    }
+
+    fun dismissChangelog() {
+        _showChangelog.value = false
     }
 
 

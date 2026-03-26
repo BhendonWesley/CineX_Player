@@ -45,6 +45,7 @@ private val CardGold = Color(0xFFF59E0B)
 fun VodPosterItem(
     channel: Channel,
     modifier: Modifier = Modifier,
+    showProgress: Boolean = false,
     onClick: () -> Unit = {}
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -80,7 +81,14 @@ fun VodPosterItem(
                 onClick = onClick
             )
     ) {
-        val imageUrl = channel.logoUrl?.takeIf { it.isNotEmpty() } ?: channel.posterUrl
+        // Para séries, prioriza posterUrl (capa da série do TMDB) sobre logoUrl (ep sem capa)
+        val imageUrl = if (channel.category == "SERIES") {
+            channel.posterUrl?.takeIf { it.isNotEmpty() }
+                ?: channel.logoUrl?.takeIf { it.isNotEmpty() }
+        } else {
+            channel.logoUrl?.takeIf { it.isNotEmpty() }
+                ?: channel.posterUrl
+        }
 
         if (imageUrl != null) {
             val imageRequest = remember(imageUrl) {
@@ -201,7 +209,7 @@ fun VodPosterItem(
                     .fillMaxWidth()
                     .align(Alignment.BottomCenter)
             ) {
-                if (channel.resumePosition > 0 && channel.totalDuration > 0) {
+                if (showProgress && channel.resumePosition > 0 && channel.totalDuration > 0) {
                     val progress = channel.resumePosition.toFloat() / channel.totalDuration.toFloat()
                     LinearProgressIndicator(
                         progress = { progress.coerceIn(0f, 1f) },

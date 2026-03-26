@@ -40,6 +40,8 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.activity.compose.BackHandler
 import com.cinex.player.ui.MainViewModel
+import com.cinex.player.ui.components.UpdatePromptDialog
+import com.cinex.player.ui.components.ChangelogDialog
 import com.cinex.player.ui.theme.DarkBackground
 import androidx.paging.compose.collectAsLazyPagingItems
 
@@ -76,6 +78,13 @@ fun MainScreen(
     val isDeviceBlocked by viewModel.isDeviceBlocked.collectAsState()
     val livePagingItems = viewModel.liveTvPagingData.collectAsLazyPagingItems()
     val isSyncing by viewModel.isSyncing.collectAsState()
+    val playlists by viewModel.allPlaylists.collectAsState()
+
+    // Auto Update
+    val showUpdateDialog by viewModel.showUpdateDialog.collectAsState()
+    val updateAvailable by viewModel.updateAvailable.collectAsState()
+    val showChangelog by viewModel.showChangelog.collectAsState()
+    val changelogText by viewModel.changelogText.collectAsState()
 
     // Simplificamos a lógica de seleção de playlist: se não houver playlist ativa
     val showPlaylistSelectionDashboard = currentPlaylist == null || isServerSwapOpen
@@ -169,7 +178,13 @@ fun MainScreen(
             }
         )
     } else if (showPlaylistSelectionDashboard) {
-        if (isAddingPlaylist) {
+        if (isServerSwapOpen && playlists.isNotEmpty()) {
+            // Tela de perfis estilo Netflix — trocar entre servidores
+            ServerProfileScreen(
+                viewModel = viewModel,
+                onServerSelected = { isServerSwapOpen = false }
+            )
+        } else if (isAddingPlaylist) {
             LoginScreen(
                 isLoading = false,
                 errorMessage = errorMessage,
@@ -186,7 +201,7 @@ fun MainScreen(
         
         // Resetamos isServerSwapOpen quando uma playlist for carregada
         LaunchedEffect(currentPlaylist) {
-            if (currentPlaylist != null) {
+            if (currentPlaylist != null && !isServerSwapOpen) {
                 isServerSwapOpen = false
             }
         }
@@ -399,6 +414,25 @@ fun MainScreen(
             }
         )
         } // fim Box
+    } // fim else
+
+    // Update & Changelog Dialogs (global overlays — acima de tudo)
+    if (showUpdateDialog && updateAvailable != null) {
+        val sizeMb = "%.1f MB".format(updateAvailable!!.apkSize / (1024.0 * 1024.0))
+        UpdatePromptDialog(
+            newVersion = updateAvailable!!.newVersion,
+            apkSizeMb = sizeMb,
+            onUpdate = { viewModel.acceptUpdate() },
+            onDismiss = { viewModel.dismissUpdate() }
+        )
+    }
+
+    if (showChangelog) {
+        ChangelogDialog(
+            version = com.cinex.player.BuildConfig.VERSION_NAME,
+            changelog = changelogText,
+            onDismiss = { viewModel.dismissChangelog() }
+        )
     }
 }
 

@@ -3,7 +3,10 @@ package com.cinex.player.ui.screens
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -19,14 +22,20 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.input.key.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.compose.BackHandler
 import coil.compose.AsyncImage
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
@@ -61,7 +70,22 @@ fun SeriesDetailsScreen(
         viewModel.getEpisodesBySeasonPaged(series.seriesName ?: "", selectedSeason)
     }
     val pagingItems = episodesFlow.collectAsLazyPagingItems()
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
+    val playButtonRequester = remember { FocusRequester() }
+
+    LaunchedEffect(viewMode) {
+        if (viewMode == SeriesViewMode.LANDING) {
+            try { playButtonRequester.requestFocus() } catch (_: Exception) {}
+        }
+    }
+
+    BackHandler {
+        if (viewMode == SeriesViewMode.EPISODES) {
+            viewMode = SeriesViewMode.LANDING
+        } else {
+            onBack()
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize().background(DarkBackground)) {
         AsyncImage(
@@ -220,11 +244,17 @@ fun SeriesDetailsScreen(
                             modifier = Modifier.padding(bottom = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            var isPlayFocused by remember { mutableStateOf(false) }
                             Button(
                                 onClick = { viewMode = SeriesViewMode.EPISODES },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isPlayFocused) Color.Yellow else Color.White
+                                ),
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.height(52.dp),
+                                modifier = Modifier
+                                    .height(52.dp)
+                                    .focusRequester(playButtonRequester)
+                                    .onFocusChanged { isPlayFocused = it.isFocused },
                                 contentPadding = PaddingValues(horizontal = 24.dp)
                             ) {
                                 Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black)
@@ -234,6 +264,7 @@ fun SeriesDetailsScreen(
 
                             Spacer(modifier = Modifier.width(16.dp))
 
+                            var isTrailerFocused by remember { mutableStateOf(false) }
                             OutlinedButton(
                                 onClick = {
                                     val searchQuery = java.net.URLEncoder.encode("${series.name} trailer oficial", "UTF-8")
@@ -247,13 +278,19 @@ fun SeriesDetailsScreen(
                                         context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, searchUri))
                                     }
                                 },
-                                border = BorderStroke(2.dp, Color.White),
+                                border = BorderStroke(2.dp, if (isTrailerFocused) Color.Yellow else Color.White),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    containerColor = if (isTrailerFocused) Color.White.copy(alpha = 0.2f) else Color.Transparent
+                                ),
                                 shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier.height(52.dp).width(140.dp)
+                                modifier = Modifier
+                                    .height(52.dp)
+                                    .width(140.dp)
+                                    .onFocusChanged { isTrailerFocused = it.isFocused }
                             ) {
                                 Text(
                                     "TRAILER",
-                                    color = Color.White,
+                                    color = if (isTrailerFocused) Color.Yellow else Color.White,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 14.sp
                                 )
@@ -285,19 +322,35 @@ fun SeriesDetailsScreen(
                         ) {
                             items(sortedSeasons) { seasonNum ->
                                 val isSelected = selectedSeason == seasonNum
+                                var isFocused by remember { mutableStateOf(false) }
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
+                                        .onFocusChanged { isFocused = it.isFocused }
+                                        .focusable(interactionSource = remember { MutableInteractionSource() })
+                                        .onKeyEvent { event ->
+                                            if (event.type == KeyEventType.KeyUp &&
+                                                (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                                            ) { selectedSeason = seasonNum; true } else false
+                                        }
                                         .clip(RoundedCornerShape(8.dp))
-                                        .background(if (isSelected) Color.White.copy(alpha = 0.2f) else Color.Transparent)
+                                        .then(
+                                            if (isFocused) Modifier
+                                                .background(Color.White.copy(alpha = 0.15f))
+                                                .border(2.dp, Brush.linearGradient(listOf(Color(0xFFE11D2E), Color(0xFFF59E0B))), RoundedCornerShape(8.dp))
+                                            else if (isSelected) Modifier
+                                                .background(Color.White.copy(alpha = 0.2f))
+                                            else Modifier
+                                                .background(Color.Transparent)
+                                        )
                                         .clickable { selectedSeason = seasonNum }
                                         .padding(vertical = 12.dp, horizontal = 16.dp)
                                 ) {
                                     Text(
                                         text = "Temporada $seasonNum",
-                                        color = if (isSelected) Color.White else Color.Gray,
+                                        color = if (isFocused || isSelected) Color.White else Color.Gray,
                                         fontSize = 16.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                        fontWeight = if (isFocused || isSelected) FontWeight.Bold else FontWeight.Normal
                                     )
                                 }
                             }
@@ -437,11 +490,26 @@ fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: Stri
         else -> seriesPoster
     }
 
+    var isFocused by remember { mutableStateOf(false) }
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            .onFocusChanged { isFocused = it.isFocused }
+            .focusable(interactionSource = remember { MutableInteractionSource() })
+            .onKeyEvent { event ->
+                if (event.type == KeyEventType.KeyUp &&
+                    (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                ) { onClick(); true } else false
+            }
             .clip(RoundedCornerShape(12.dp))
-            .background(Color.White.copy(alpha = 0.05f))
+            .then(
+                if (isFocused) Modifier
+                    .background(Color.White.copy(alpha = 0.12f))
+                    .border(2.dp, Brush.linearGradient(listOf(Color(0xFFE11D2E), Color(0xFFF59E0B))), RoundedCornerShape(12.dp))
+                else Modifier
+                    .background(Color.White.copy(alpha = 0.05f))
+            )
             .clickable { onClick() }
             .padding(12.dp)
     ) {

@@ -1,5 +1,8 @@
 package com.cinex.player.ui.components
 
+import android.app.UiModeManager
+import android.content.Context
+import android.content.res.Configuration
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -16,7 +19,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
-import androidx.compose.ui.text.ExperimentalTextApi
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -37,6 +40,12 @@ fun CategoryItem(
     val shape = RoundedCornerShape(8.dp)
     var isFocused by remember { mutableStateOf(false) }
 
+    val context = LocalContext.current
+    val isTV = remember {
+        val uiModeManager = context.getSystemService(Context.UI_MODE_SERVICE) as UiModeManager
+        uiModeManager.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
+    }
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -52,6 +61,10 @@ fun CategoryItem(
                 if (isFocused)
                     Modifier
                         .background(Color(0x1AFFFFFF))
+                        .border(2.dp, ActiveBrush, shape)
+                else if (isSelected && !isTV)
+                    Modifier
+                        .background(Color(0x0DFFFFFF))
                         .border(2.dp, ActiveBrush, shape)
                 else if (isSelected)
                     Modifier.background(Color(0x0DFFFFFF))
@@ -69,31 +82,37 @@ fun CategoryItem(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            @OptIn(ExperimentalTextApi::class)
             Text(
                 text = name,
-                style = if (isSelected && !isFocused) TextStyle(
-                    brush = ActiveBrush,
+                style = if (isFocused) TextStyle(
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                ) else if (isSelected) TextStyle(
+                    color = ActiveGold,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
                 ) else TextStyle(
-                    color = if (isFocused) Color.White else Color(0xFF9CA3AF),
+                    color = Color(0xFF9CA3AF),
                     fontSize = 14.sp,
-                    fontWeight = if (isFocused) FontWeight.Bold else FontWeight.Normal
+                    fontWeight = FontWeight.Normal
                 ),
                 modifier = Modifier.weight(1f)
             )
             if (count > 0) {
                 Spacer(modifier = Modifier.width(8.dp))
-                @OptIn(ExperimentalTextApi::class)
                 Text(
                     text = count.toString(),
-                    style = if (isSelected && !isFocused) TextStyle(
-                        brush = ActiveBrush,
+                    style = if (isFocused) TextStyle(
+                        color = ActiveGold,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    ) else if (isSelected) TextStyle(
+                        color = ActiveGold,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
                     ) else TextStyle(
-                        color = if (isFocused) ActiveGold else Color(0xFF6B7280),
+                        color = Color(0xFF6B7280),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold
                     )

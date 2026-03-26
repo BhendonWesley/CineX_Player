@@ -181,6 +181,7 @@ class ChannelRepository @Inject constructor(
                 when (categoryId) {
                     "Tudo" -> channelDao.getChannelsByCategory("MOVIE", url)
                     "Favorito", "Favoritos" -> channelDao.getFavoritesPaged("MOVIE", url)
+                    "Continuar Assistindo" -> channelDao.getContinueWatchingPaged("MOVIE", url)
                     else -> channelDao.getChannelsByCategoryIdPaged(categoryId, url)
                 }
             }.flow
@@ -194,6 +195,7 @@ class ChannelRepository @Inject constructor(
                 when (categoryId) {
                     "Tudo" -> channelDao.getUniqueSeries(url)
                     "Favorito", "Favoritos" -> channelDao.getFavoriteSeriesPaged(url)
+                    "Continuar Assistindo" -> channelDao.getContinueWatchingPaged("SERIES", url)
                     else -> channelDao.getUniqueSeriesByCategoryId(categoryId, url)
                 }
             }.flow
@@ -871,6 +873,27 @@ class ChannelRepository @Inject constructor(
 
     suspend fun updateResumePosition(channelId: Int, position: Long, duration: Long) {
         channelDao.updateResumePosition(channelId, position, duration)
+        // Propaga a capa da série para o episódio (para "Continuar Assistindo" mostrar a capa correta)
+        propagateSeriesPoster(channelId)
+    }
+
+    private suspend fun propagateSeriesPoster(channelId: Int) {
+        val url = _activePlaylistUrl.value ?: return
+        val channel = channelDao.getChannelById(channelId) ?: return
+        if (channel.category != "SERIES" || channel.seriesName.isNullOrEmpty()) return
+        if (!channel.posterUrl.isNullOrEmpty()) return
+
+        val posterUrl = channelDao.getSeriesPosterUrl(channel.seriesName, url) ?: return
+        channelDao.updateTmdbInfo(
+            channelId = channelId,
+            rating = channel.tmdbRating,
+            synopsis = channel.tmdbSynopsis,
+            posterUrl = posterUrl,
+            bannerUrl = channel.bannerUrl,
+            year = channel.tmdbYear,
+            cast = channel.castMembers,
+            trailer = channel.trailerUrl
+        )
     }
 
     private fun pickBestTrailer(videos: List<com.cinex.player.data.network.TmdbVideo>): String? {

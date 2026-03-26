@@ -283,6 +283,7 @@ fun VodScreen(
                     }
                     VodPosterItem(
                         channel = channel,
+                        showProgress = selectedCategory == "Continuar Assistindo",
                         onClick = {
                             if (selectedCategory == "Continuar Assistindo") {
                                 onPlayDirect(channel)

@@ -139,4 +139,24 @@ object AppModule {
     fun provideEpgParser(): com.cinex.player.data.parser.EpgParser {
         return com.cinex.player.data.parser.EpgParser()
     }
+
+    @Provides
+    @Singleton
+    fun provideGitHubApi(okHttpClient: OkHttpClient): com.cinex.player.data.network.GitHubApi {
+        return retrofit2.Retrofit.Builder()
+            .baseUrl("https://api.github.com/")
+            .client(okHttpClient)
+            .addConverterFactory(retrofit2.converter.gson.GsonConverterFactory.create())
+            .build()
+            .create(com.cinex.player.data.network.GitHubApi::class.java)
+    }
+
+    @Provides
+    @Singleton
+    fun provideUpdateManager(
+        app: Application,
+        gitHubApi: com.cinex.player.data.network.GitHubApi
+    ): com.cinex.player.util.UpdateManager {
+        return com.cinex.player.util.UpdateManager(app, gitHubApi)
+    }
 }

@@ -79,11 +79,20 @@ interface ChannelDao {
     fun searchChannels(query: String, url: String): PagingSource<Int, Channel>
 
     // ---- Funções Premium (XC / IBO) ---- //
+    @Query("SELECT posterUrl FROM channels WHERE category = 'SERIES' AND seriesName = :seriesName AND playlistUrl = :url AND posterUrl IS NOT NULL AND posterUrl != '' LIMIT 1")
+    suspend fun getSeriesPosterUrl(seriesName: String, url: String): String?
+
+    @Query("SELECT * FROM channels WHERE id = :channelId LIMIT 1")
+    suspend fun getChannelById(channelId: Int): Channel?
+
     @Query("UPDATE channels SET resumePosition = :position, totalDuration = :duration WHERE id = :channelId")
     suspend fun updateResumePosition(channelId: Int, position: Long, duration: Long)
 
     @Query("SELECT * FROM channels WHERE resumePosition > 0 AND category IN ('MOVIE', 'SERIES') AND playlistUrl = :url ORDER BY id DESC LIMIT 20")
     fun getContinueWatching(url: String): Flow<List<Channel>>
+
+    @Query("SELECT * FROM channels WHERE resumePosition > 0 AND category = :category AND playlistUrl = :url ORDER BY id DESC")
+    fun getContinueWatchingPaged(category: String, url: String): PagingSource<Int, Channel>
 
     @Query("UPDATE channels SET isFavorite = :isFav WHERE id = :channelId")
     suspend fun updateFavorite(channelId: Int, isFav: Boolean)
