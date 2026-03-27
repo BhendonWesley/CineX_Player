@@ -2,6 +2,7 @@ package com.cinex.player.ui.screens
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -14,6 +15,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.runtime.*
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.Alignment
@@ -32,6 +34,10 @@ import coil.compose.AsyncImage
 import com.cinex.player.data.model.Channel
 import com.cinex.player.ui.theme.DarkBackground
 
+private val FocusRed = Color(0xFFE11D2E)
+private val FocusGold = Color(0xFFF59E0B)
+
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun MovieDetailsScreen(
     movie: Channel,
@@ -82,7 +88,10 @@ fun MovieDetailsScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = onBack) {
+                IconButton(
+                    onClick = onBack,
+                    modifier = Modifier.focusProperties { up = FocusRequester.Cancel }
+                ) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White)
                 }
             }
@@ -92,7 +101,7 @@ fun MovieDetailsScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(horizontal = 60.dp, vertical = 16.dp),
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.Top
             ) {
                 // Poster
                 AsyncImage(
@@ -190,22 +199,29 @@ fun MovieDetailsScreen(
                         }
                     }
 
-                    // Botões — sempre fixos e visíveis na parte inferior
+                    // Botões — logo abaixo da sinopse
                     Row(
-                        modifier = Modifier.padding(bottom = 8.dp),
+                        modifier = Modifier.padding(top = 12.dp, bottom = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        val gradientBrush = remember { Brush.linearGradient(listOf(FocusRed, FocusGold)) }
+
                         var isPlayFocused by remember { mutableStateOf(false) }
                         Button(
                             onClick = { onPlay(movie) },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isPlayFocused) Color.Yellow else Color.White
+                                containerColor = Color.White
                             ),
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier
                                 .height(52.dp)
                                 .focusRequester(playButtonRequester)
-                                .onFocusChanged { isPlayFocused = it.isFocused },
+                                .focusProperties { down = FocusRequester.Cancel; left = FocusRequester.Cancel }
+                                .onFocusChanged { isPlayFocused = it.isFocused }
+                                .then(
+                                    if (isPlayFocused) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(8.dp))
+                                    else Modifier
+                                ),
                             contentPadding = PaddingValues(horizontal = 24.dp)
                         ) {
                             Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black)
@@ -229,19 +245,24 @@ fun MovieDetailsScreen(
                                     context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, searchUri))
                                 }
                             },
-                            border = BorderStroke(2.dp, if (isTrailerFocused) Color.Yellow else Color.White),
+                            border = BorderStroke(2.dp, if (isTrailerFocused) Brush.linearGradient(listOf(FocusRed, FocusGold)).let { Color.White } else Color.White),
                             colors = ButtonDefaults.outlinedButtonColors(
-                                containerColor = if (isTrailerFocused) Color.White.copy(alpha = 0.2f) else Color.Transparent
+                                containerColor = if (isTrailerFocused) Color.White.copy(alpha = 0.1f) else Color.Transparent
                             ),
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier
                                 .height(52.dp)
                                 .width(140.dp)
+                                .focusProperties { down = FocusRequester.Cancel; right = FocusRequester.Cancel }
                                 .onFocusChanged { isTrailerFocused = it.isFocused }
+                                .then(
+                                    if (isTrailerFocused) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(8.dp))
+                                    else Modifier
+                                )
                         ) {
                             Text(
                                 "TRAILER",
-                                color = if (isTrailerFocused) Color.Yellow else Color.White,
+                                color = Color.White,
                                 fontWeight = FontWeight.Bold,
                                 fontSize = 14.sp
                             )

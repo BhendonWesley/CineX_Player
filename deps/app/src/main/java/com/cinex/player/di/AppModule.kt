@@ -15,6 +15,7 @@ import dagger.hilt.components.SingletonComponent
 import okhttp3.OkHttpClient
 import java.util.concurrent.TimeUnit
 import javax.inject.Singleton
+import javax.inject.Named
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -87,9 +88,9 @@ object AppModule {
             .create(com.cinex.player.data.network.TmdbApi::class.java)
     }
 
-    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     @Provides
     @Singleton
+    @Named("liveTv")
     fun provideLiveTvPlayer(app: Application): ExoPlayer {
         // LoadControl otimizado para live streaming — buffers generosos para evitar tela preta/loop/travamento
         val loadControl = DefaultLoadControl.Builder()
@@ -123,6 +124,32 @@ object AppModule {
             .setMediaSourceFactory(mediaSourceFactory)
             .setBandwidthMeter(bandwidthMeter)
             .setSeekParameters(androidx.media3.exoplayer.SeekParameters.CLOSEST_SYNC)
+            .build().apply {
+                playWhenReady = true
+            }
+    }
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    @Provides
+    @Singleton
+    @Named("vod")
+    fun provideVodPlayer(app: Application): ExoPlayer {
+        val loadControl = DefaultLoadControl.Builder()
+            .setBufferDurationsMs(15_000, 50_000, 2_000, 5_000)
+            .setPrioritizeTimeOverSizeThresholds(true)
+            .build()
+
+        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+            .setConnectTimeoutMs(20_000)
+            .setReadTimeoutMs(20_000)
+            .setAllowCrossProtocolRedirects(true)
+            .setUserAgent("CineXPlayer/1.0")
+
+        val mediaSourceFactory = DefaultMediaSourceFactory(httpDataSourceFactory)
+
+        return ExoPlayer.Builder(app)
+            .setLoadControl(loadControl)
+            .setMediaSourceFactory(mediaSourceFactory)
             .build().apply {
                 playWhenReady = true
             }

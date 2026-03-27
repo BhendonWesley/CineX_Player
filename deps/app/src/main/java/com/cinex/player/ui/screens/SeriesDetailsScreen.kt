@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
@@ -45,6 +46,7 @@ import com.cinex.player.ui.theme.DarkBackground
 
 enum class SeriesViewMode { LANDING, EPISODES }
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun SeriesDetailsScreen(
     series: Channel,
@@ -123,13 +125,16 @@ fun SeriesDetailsScreen(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = {
-                    if (viewMode == SeriesViewMode.EPISODES) {
-                        viewMode = SeriesViewMode.LANDING
-                    } else {
-                        onBack()
-                    }
-                }) {
+                IconButton(
+                    onClick = {
+                        if (viewMode == SeriesViewMode.EPISODES) {
+                            viewMode = SeriesViewMode.LANDING
+                        } else {
+                            onBack()
+                        }
+                    },
+                    modifier = Modifier.focusProperties { up = FocusRequester.Cancel }
+                ) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White)
                 }
                 Spacer(modifier = Modifier.width(16.dp))
@@ -147,7 +152,7 @@ fun SeriesDetailsScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = 60.dp, vertical = 16.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    verticalAlignment = Alignment.Top
                 ) {
                     AsyncImage(
                         model = series.posterUrl?.takeIf { it.isNotEmpty() } ?: series.logoUrl,
@@ -244,17 +249,24 @@ fun SeriesDetailsScreen(
                             modifier = Modifier.padding(bottom = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            val gradientBrush = remember { Brush.linearGradient(listOf(Color(0xFFE11D2E), Color(0xFFF59E0B))) }
+
                             var isPlayFocused by remember { mutableStateOf(false) }
                             Button(
                                 onClick = { viewMode = SeriesViewMode.EPISODES },
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = if (isPlayFocused) Color.Yellow else Color.White
+                                    containerColor = Color.White
                                 ),
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier
                                     .height(52.dp)
                                     .focusRequester(playButtonRequester)
-                                    .onFocusChanged { isPlayFocused = it.isFocused },
+                                    .focusProperties { down = FocusRequester.Cancel; left = FocusRequester.Cancel }
+                                    .onFocusChanged { isPlayFocused = it.isFocused }
+                                    .then(
+                                        if (isPlayFocused) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(8.dp))
+                                        else Modifier
+                                    ),
                                 contentPadding = PaddingValues(horizontal = 24.dp)
                             ) {
                                 Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black)
@@ -278,19 +290,24 @@ fun SeriesDetailsScreen(
                                         context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, searchUri))
                                     }
                                 },
-                                border = BorderStroke(2.dp, if (isTrailerFocused) Color.Yellow else Color.White),
+                                border = BorderStroke(2.dp, Color.White),
                                 colors = ButtonDefaults.outlinedButtonColors(
-                                    containerColor = if (isTrailerFocused) Color.White.copy(alpha = 0.2f) else Color.Transparent
+                                    containerColor = if (isTrailerFocused) Color.White.copy(alpha = 0.1f) else Color.Transparent
                                 ),
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier
                                     .height(52.dp)
                                     .width(140.dp)
+                                    .focusProperties { down = FocusRequester.Cancel; right = FocusRequester.Cancel }
                                     .onFocusChanged { isTrailerFocused = it.isFocused }
+                                    .then(
+                                        if (isTrailerFocused) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(8.dp))
+                                        else Modifier
+                                    )
                             ) {
                                 Text(
                                     "TRAILER",
-                                    color = if (isTrailerFocused) Color.Yellow else Color.White,
+                                    color = Color.White,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 14.sp
                                 )

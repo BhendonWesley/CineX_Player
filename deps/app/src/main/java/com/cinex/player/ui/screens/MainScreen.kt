@@ -178,12 +178,16 @@ fun MainScreen(
             }
         )
     } else if (showPlaylistSelectionDashboard) {
-        if (isServerSwapOpen && playlists.isNotEmpty()) {
-            // Tela de perfis estilo Netflix — trocar entre servidores
+        if (isServerSwapOpen && playlists.size > 1) {
+            // Tela de perfis estilo Netflix — trocar entre servidores (só com 2+ servidores)
             ServerProfileScreen(
                 viewModel = viewModel,
-                onServerSelected = { isServerSwapOpen = false }
+                onServerSelected = { isServerSwapOpen = false },
+                onBack = { isServerSwapOpen = false }
             )
+        } else if (isServerSwapOpen && playlists.size <= 1) {
+            // Só 1 servidor: não faz sentido abrir seletor, volta direto
+            LaunchedEffect(Unit) { isServerSwapOpen = false }
         } else if (isAddingPlaylist) {
             LoginScreen(
                 isLoading = false,

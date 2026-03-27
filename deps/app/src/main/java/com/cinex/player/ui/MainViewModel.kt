@@ -46,7 +46,8 @@ class MainViewModel @Inject constructor(
     private val repository: ChannelRepository,
     private val app: android.app.Application,
     private val okHttpClient: OkHttpClient,
-    val liveTvPlayer: ExoPlayer,
+    @javax.inject.Named("liveTv") val liveTvPlayer: ExoPlayer,
+    @javax.inject.Named("vod") val vodPlayer: ExoPlayer,
     private val updateManager: UpdateManager
 ) : ViewModel() {
 
@@ -980,6 +981,7 @@ class MainViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         liveTvPlayer.release()
+        vodPlayer.release()
     }
 
     fun updateLiveTvVisibility(hidden: Boolean) { _isLiveTvHidden.value = hidden }

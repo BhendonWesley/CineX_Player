@@ -39,6 +39,7 @@ import com.cinex.player.ui.components.VodPosterItem
 import com.cinex.player.ui.components.CategoryItem
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
+import com.cinex.player.ui.theme.CineX_BackgroundBlue
 import androidx.paging.PagingData
 
 private val AccentGold = Color(0xFFD8A63A)
@@ -136,7 +137,7 @@ fun VodScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color(0xFF0F172A))
+            .background(CineX_BackgroundBlue)
     ) {
         // Imagem de fundo com blur (mesma da tela de loading)
         Image(
@@ -150,7 +151,7 @@ fun VodScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Color(0xBB0A0F1E))
+                .background(CineX_BackgroundBlue.copy(alpha = 0.85f))
         )
 
         Row(

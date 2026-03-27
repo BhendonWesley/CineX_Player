@@ -61,6 +61,10 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.input.key.*
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.*
 import com.cinex.player.data.model.Channel
 import kotlinx.coroutines.delay
@@ -118,22 +122,12 @@ fun VideoPlayerScreen(
     }
 
     val isLiveTv = channel.category == "LIVE_TV"
-
-    val localPlayer = remember {
-        if (!isLiveTv) {
-            val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
-                .setBufferDurationsMs(15_000, 50_000, 2_000, 5_000)
-                .setPrioritizeTimeOverSizeThresholds(true)
-                .build()
-            ExoPlayer.Builder(context)
-                .setLoadControl(loadControl)
-                .build().apply {
-                    playWhenReady = true
-                }
-        } else null
+    val isTv = remember {
+        val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
+        uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     }
 
-    val exoPlayer = if (isLiveTv) viewModel.liveTvPlayer else localPlayer!!
+    val exoPlayer = if (isLiveTv) viewModel.liveTvPlayer else viewModel.vodPlayer
 
     var isPlaying by remember { mutableStateOf(false) }
     var currentPosition by remember { mutableLongStateOf(0L) }
@@ -250,7 +244,9 @@ fun VideoPlayerScreen(
                 if (currentPos > 10000) {
                     viewModel.saveResumePosition(channel.id, currentPos, if (totalDur > 0) totalDur else 0L)
                 }
-                exoPlayer.release()
+                // Singleton — não dá release, só limpa o media
+                exoPlayer.stop()
+                exoPlayer.clearMediaItems()
             }
         }
     }
@@ -298,9 +294,10 @@ fun VideoPlayerScreen(
             .focusable(interactionSource = remember { MutableInteractionSource() })
             .onKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                // Quando um dialog está visível, não consumir eventos — deixar o dialog tratar
+                if (showResumeDialog || showExitDialog || showPlaybackError || showNextEpisodeOverlay) return@onKeyEvent false
                 when (event.key) {
                     Key.DirectionCenter, Key.Enter -> {
-                        if (showResumeDialog || showExitDialog) return@onKeyEvent false
                         if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
                         isControlsVisible = true
                         true
@@ -330,27 +327,29 @@ fun VideoPlayerScreen(
                     else -> false
                 }
             }
-            .pointerInput(Unit) {
-                detectVerticalDragGestures { change, dragAmount ->
-                    if (showResumeDialog || showExitDialog) return@detectVerticalDragGestures
-                    isControlsVisible = true
-                    val isLeftHalf = change.position.x < (size.width / 2)
-                    if (isLeftHalf) {
-                        val newBrightness = (currentBrightness - (dragAmount / size.height)).coerceIn(0f, 1f)
-                        currentBrightness = newBrightness
-                        activity?.let {
-                            val lp = it.window.attributes
-                            lp.screenBrightness = newBrightness
-                            it.window.attributes = lp
+            .then(
+                if (!isTv) Modifier.pointerInput(Unit) {
+                    detectVerticalDragGestures { change, dragAmount ->
+                        if (showResumeDialog || showExitDialog) return@detectVerticalDragGestures
+                        isControlsVisible = true
+                        val isLeftHalf = change.position.x < (size.width / 2)
+                        if (isLeftHalf) {
+                            val newBrightness = (currentBrightness - (dragAmount / size.height)).coerceIn(0f, 1f)
+                            currentBrightness = newBrightness
+                            activity?.let {
+                                val lp = it.window.attributes
+                                lp.screenBrightness = newBrightness
+                                it.window.attributes = lp
+                            }
+                        } else {
+                            val newVolume = (currentVolume - (dragAmount / size.height)).coerceIn(0f, 1f)
+                            currentVolume = newVolume
+                            val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+                            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (newVolume * maxVol).toInt(), 0)
                         }
-                    } else {
-                        val newVolume = (currentVolume - (dragAmount / size.height)).coerceIn(0f, 1f)
-                        currentVolume = newVolume
-                        val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (newVolume * maxVol).toInt(), 0)
                     }
-                }
-            }
+                } else Modifier
+            )
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null
@@ -508,8 +507,8 @@ fun VideoPlayerScreen(
                     }
                 }
 
-                // Sliders de Brilho (Esquerda) e Volume (Direita)
-                BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+                // Sliders de Brilho (Esquerda) e Volume (Direita) — somente mobile
+                if (!isTv) BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
                     val sliderHeight = maxHeight * 0.45f
 
                     // Brilho (Esquerda)
@@ -787,9 +786,23 @@ fun PlayerDialog(
     onConfirm: () -> Unit,
     onCancel: () -> Unit
 ) {
+    val confirmRequester = remember { FocusRequester() }
+
+    LaunchedEffect(Unit) {
+        try { confirmRequester.requestFocus() } catch (_: Exception) {}
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .focusable()
+            .onPreviewKeyEvent { event ->
+                when (event.key) {
+                    Key.DirectionLeft, Key.DirectionRight, Key.DirectionUp, Key.DirectionDown,
+                    Key.DirectionCenter, Key.Enter, Key.Back -> false
+                    else -> true
+                }
+            }
             .background(Color(0xAA000000))
             .clickable(enabled = false) {},
         contentAlignment = Alignment.Center
@@ -809,38 +822,63 @@ fun PlayerDialog(
                 fontWeight = FontWeight.Bold,
                 textAlign = TextAlign.Center
             )
-            
+
             Spacer(modifier = Modifier.height(16.dp))
-            
+
             Text(
                 text = description,
                 color = Color.LightGray,
                 fontSize = 14.sp,
                 textAlign = TextAlign.Center
             )
-            
+
             Spacer(modifier = Modifier.height(32.dp))
-            
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
+                var isConfirmFocused by remember { mutableStateOf(false) }
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .height(56.dp)
+                        .focusRequester(confirmRequester)
+                        .onFocusChanged { isConfirmFocused = it.isFocused }
+                        .focusable()
+                        .onKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyUp &&
+                                (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                            ) { onConfirm(); true } else false
+                        }
                         .background(com.cinex.player.ui.theme.DeepRed, RoundedCornerShape(8.dp))
+                        .then(
+                            if (isConfirmFocused) Modifier.border(2.dp, Brush.linearGradient(listOf(Color(0xFFE11D2E), Color(0xFFF59E0B))), RoundedCornerShape(8.dp))
+                            else Modifier
+                        )
                         .clickable { onConfirm() },
                     contentAlignment = Alignment.Center
                 ) {
                     Text("SIM", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                 }
-                
+
+                var isCancelFocused by remember { mutableStateOf(false) }
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .height(56.dp)
+                        .onFocusChanged { isCancelFocused = it.isFocused }
+                        .focusable()
+                        .onKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyUp &&
+                                (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                            ) { onCancel(); true } else false
+                        }
                         .background(Color.DarkGray, RoundedCornerShape(8.dp))
+                        .then(
+                            if (isCancelFocused) Modifier.border(2.dp, Brush.linearGradient(listOf(Color(0xFFE11D2E), Color(0xFFF59E0B))), RoundedCornerShape(8.dp))
+                            else Modifier
+                        )
                         .clickable { onCancel() },
                     contentAlignment = Alignment.Center
                 ) {
@@ -857,9 +895,25 @@ fun PlaybackErrorOverlay(
     onRetry: () -> Unit,
     onPlayNext: (() -> Unit)? = null
 ) {
+    val retryRequester = remember { FocusRequester() }
+    val gradientBrush = remember { Brush.linearGradient(listOf(Color(0xFFE11D2E), Color(0xFFF59E0B))) }
+
+    LaunchedEffect(Unit) {
+        try { retryRequester.requestFocus() } catch (_: Exception) {}
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .focusable()
+            .onPreviewKeyEvent { event ->
+                // Permite navegação D-pad dentro do dialog, bloqueia todo o resto de vazar
+                when (event.key) {
+                    Key.DirectionLeft, Key.DirectionRight, Key.DirectionUp, Key.DirectionDown,
+                    Key.DirectionCenter, Key.Enter, Key.Back -> false
+                    else -> true
+                }
+            }
             .background(Color(0xDD000000))
             .clickable(enabled = false) {},
         contentAlignment = Alignment.Center
@@ -905,22 +959,47 @@ fun PlaybackErrorOverlay(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                var isExitFocused by remember { mutableStateOf(false) }
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .height(48.dp)
+                        .onFocusChanged { isExitFocused = it.isFocused }
+                        .focusable()
+                        .onKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyUp &&
+                                (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                            ) { onExit(); true } else false
+                        }
                         .background(Color.DarkGray, RoundedCornerShape(8.dp))
+                        .then(
+                            if (isExitFocused) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(8.dp))
+                            else Modifier
+                        )
                         .clickable { onExit() },
                     contentAlignment = Alignment.Center
                 ) {
                     Text("SAIR", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                 }
 
+                var isRetryFocused by remember { mutableStateOf(false) }
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .height(48.dp)
+                        .focusRequester(retryRequester)
+                        .onFocusChanged { isRetryFocused = it.isFocused }
+                        .focusable()
+                        .onKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyUp &&
+                                (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                            ) { onRetry(); true } else false
+                        }
                         .background(com.cinex.player.ui.theme.DeepRed, RoundedCornerShape(8.dp))
+                        .then(
+                            if (isRetryFocused) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(8.dp))
+                            else Modifier
+                        )
                         .clickable { onRetry() },
                     contentAlignment = Alignment.Center
                 ) {
@@ -930,11 +1009,23 @@ fun PlaybackErrorOverlay(
 
             if (onPlayNext != null) {
                 Spacer(modifier = Modifier.height(12.dp))
+                var isNextFocused by remember { mutableStateOf(false) }
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(48.dp)
+                        .onFocusChanged { isNextFocused = it.isFocused }
+                        .focusable()
+                        .onKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyUp &&
+                                (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                            ) { onPlayNext(); true } else false
+                        }
                         .background(Color.White.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
+                        .then(
+                            if (isNextFocused) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(8.dp))
+                            else Modifier
+                        )
                         .clickable { onPlayNext() },
                     contentAlignment = Alignment.Center
                 ) {
@@ -1011,11 +1102,20 @@ fun NextEpisodeOverlay(
                 Spacer(modifier = Modifier.height(32.dp))
                 NextEpisodeButton(progress = progress.value, accentColor = accentRed, onClick = onPlayNext)
                 Spacer(modifier = Modifier.height(16.dp))
+                var isBackFocused by remember { mutableStateOf(false) }
                 Text(
                     text = "Voltar",
-                    color = Color.White.copy(alpha = 0.4f),
+                    color = if (isBackFocused) Color.White else Color.White.copy(alpha = 0.4f),
                     fontSize = 14.sp,
-                    modifier = Modifier.clickable { onBack() }
+                    modifier = Modifier
+                        .onFocusChanged { isBackFocused = it.isFocused }
+                        .focusable()
+                        .onKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyUp &&
+                                (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                            ) { onBack(); true } else false
+                        }
+                        .clickable { onBack() }
                 )
             }
         }
@@ -1052,11 +1152,21 @@ fun NextEpisodeOverlay(
                             Text(text = seasonEp, color = accentGold, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                         }
                     }
+                    var isCloseFocused by remember { mutableStateOf(false) }
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Fechar",
-                        tint = Color.White.copy(alpha = 0.4f),
-                        modifier = Modifier.size(18.dp).clickable { onDismiss() }
+                        tint = if (isCloseFocused) Color.White else Color.White.copy(alpha = 0.4f),
+                        modifier = Modifier
+                            .size(18.dp)
+                            .onFocusChanged { isCloseFocused = it.isFocused }
+                            .focusable()
+                            .onKeyEvent { event ->
+                                if (event.type == KeyEventType.KeyUp &&
+                                    (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                                ) { onDismiss(); true } else false
+                            }
+                            .clickable { onDismiss() }
                     )
                 }
                 Spacer(modifier = Modifier.height(10.dp))
@@ -1068,12 +1178,32 @@ fun NextEpisodeOverlay(
 
 @Composable
 private fun NextEpisodeButton(progress: Float, accentColor: Color, onClick: () -> Unit) {
+    val btnRequester = remember { FocusRequester() }
+    var isFocused by remember { mutableStateOf(false) }
+    val gradientBrush = remember { Brush.linearGradient(listOf(Color(0xFFE11D2E), Color(0xFFF59E0B))) }
+
+    LaunchedEffect(Unit) {
+        try { btnRequester.requestFocus() } catch (_: Exception) {}
+    }
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(44.dp)
+            .focusRequester(btnRequester)
+            .onFocusChanged { isFocused = it.isFocused }
+            .focusable()
+            .onKeyEvent { event ->
+                if (event.type == KeyEventType.KeyUp &&
+                    (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                ) { onClick(); true } else false
+            }
             .clip(RoundedCornerShape(8.dp))
             .background(Color(0xFF1A1A1A))
+            .then(
+                if (isFocused) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(8.dp))
+                else Modifier
+            )
             .clickable { onClick() },
         contentAlignment = Alignment.CenterStart
     ) {

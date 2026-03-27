@@ -22,6 +22,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -39,6 +42,7 @@ private val NavGold     = Color(0xFFF59E0B)
 private val NavInactive = Color(0xFF9CA3AF)
 private val NavWhite    = Color(0xFFE5E7EB)
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun TopNavigationBar(
     selectedTab: Int,
@@ -100,6 +104,10 @@ fun TopNavigationBar(
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
+                        .then(
+                            if (index == 0) Modifier.focusProperties { left = FocusRequester.Cancel }
+                            else Modifier
+                        )
                         .onPreviewKeyEvent { event ->
                             if (event.key == Key.DirectionUp) true else false
                         }
@@ -171,13 +179,48 @@ fun TopNavigationBar(
         }
 
         // ── DIREITA: Barra de busca ──────────────────────────────
+        // Na TV, o teclado só abre após pressionar Enter (evita abrir ao receber foco acidental)
+        val context = androidx.compose.ui.platform.LocalContext.current
+        val isTv = remember {
+            val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
+            uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+        }
+        var isSearchActive by remember { mutableStateOf(false) }
+        val searchFocusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
+        var isSearchFocused by remember { mutableStateOf(false) }
+
         Box(
             modifier = Modifier
                 .width(260.dp)
                 .height(38.dp)
                 .clip(RoundedCornerShape(20.dp))
                 .background(Color(0x14FFFFFF))
-                .padding(horizontal = 14.dp),
+                .then(
+                    if (isSearchFocused && isTv) Modifier.border(2.dp, NavGold, RoundedCornerShape(20.dp))
+                    else Modifier
+                )
+                .padding(horizontal = 14.dp)
+                .focusProperties { right = FocusRequester.Cancel }
+                .onFocusChanged {
+                    isSearchFocused = it.isFocused
+                    // Na TV, ao perder foco da barra de busca, desativa o teclado
+                    if (!it.isFocused && isTv) isSearchActive = false
+                }
+                .then(
+                    if (isTv && !isSearchActive) {
+                        Modifier
+                            .focusable(interactionSource = remember { MutableInteractionSource() })
+                            .onKeyEvent { event ->
+                                if (event.type == KeyEventType.KeyUp &&
+                                    (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                                ) {
+                                    isSearchActive = true
+                                    true
+                                } else false
+                            }
+                            .clickable { isSearchActive = true }
+                    } else Modifier
+                ),
             contentAlignment = Alignment.CenterStart
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -196,19 +239,36 @@ fun TopNavigationBar(
                             fontSize = 12.sp
                         )
                     }
-                    BasicTextField(
-                        value = searchQuery,
-                        onValueChange = onSearchChange,
-                        textStyle = LocalTextStyle.current.copy(
-                            color = NavWhite,
-                            fontSize = 12.sp
-                        ),
-                        cursorBrush = SolidColor(NavWhite),
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(onSearch = { keyboardController?.hide() }),
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    if (!isTv || isSearchActive) {
+                        BasicTextField(
+                            value = searchQuery,
+                            onValueChange = onSearchChange,
+                            textStyle = LocalTextStyle.current.copy(
+                                color = NavWhite,
+                                fontSize = 12.sp
+                            ),
+                            cursorBrush = SolidColor(NavWhite),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                            keyboardActions = KeyboardActions(onSearch = {
+                                keyboardController?.hide()
+                                if (isTv) isSearchActive = false
+                            }),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .then(
+                                    if (isTv && isSearchActive) Modifier
+                                        .focusRequester(searchFocusRequester)
+                                    else Modifier
+                                )
+                        )
+                        // Auto-focus ao ativar no modo TV
+                        if (isTv && isSearchActive) {
+                            LaunchedEffect(Unit) {
+                                searchFocusRequester.requestFocus()
+                            }
+                        }
+                    }
                 }
                 if (searchQuery.isNotEmpty()) {
                     Icon(
@@ -217,7 +277,10 @@ fun TopNavigationBar(
                         tint = NavWhite,
                         modifier = Modifier
                             .size(16.dp)
-                            .clickable { onSearchChange("") }
+                            .clickable {
+                                onSearchChange("")
+                                if (isTv) isSearchActive = false
+                            }
                     )
                 }
             }

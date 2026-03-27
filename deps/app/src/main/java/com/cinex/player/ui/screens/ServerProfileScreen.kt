@@ -43,7 +43,8 @@ import com.cinex.player.ui.theme.*
 @Composable
 fun ServerProfileScreen(
     viewModel: MainViewModel,
-    onServerSelected: () -> Unit
+    onServerSelected: () -> Unit,
+    onBack: () -> Unit
 ) {
     val playlists by viewModel.allPlaylists.collectAsState()
     val currentPlaylist by viewModel.currentPlaylist.collectAsState()
@@ -53,7 +54,7 @@ fun ServerProfileScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF0A0F1E))
+            .background(DarkBackground)
     ) {
         // Background
         Image(
@@ -63,7 +64,7 @@ fun ServerProfileScreen(
                 .fillMaxSize()
                 .blur(6.dp),
             contentScale = ContentScale.Crop,
-            alpha = 0.4f
+            alpha = 0.3f
         )
         Box(
             modifier = Modifier
@@ -71,12 +72,26 @@ fun ServerProfileScreen(
                 .background(
                     Brush.verticalGradient(
                         colors = listOf(
-                            Color(0xDD0A0F1E),
-                            Color(0xFF0A0F1E)
+                            DarkBackground.copy(alpha = 0.85f),
+                            DarkBackground
                         )
                     )
                 )
         )
+
+        // Back button
+        IconButton(
+            onClick = onBack,
+            modifier = Modifier
+                .align(Alignment.TopStart)
+                .padding(16.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.ArrowBack,
+                contentDescription = "Voltar",
+                tint = Color.White
+            )
+        }
 
         Column(
             modifier = Modifier
@@ -132,12 +147,6 @@ fun ServerProfileScreen(
                     )
                 }
 
-                // Botão + Adicionar
-                item {
-                    AddServerCard(
-                        onClick = { viewModel.syncFromPanel() }
-                    )
-                }
             }
 
             Spacer(modifier = Modifier.height(32.dp))
@@ -331,66 +340,4 @@ fun ServerCard(
     }
 }
 
-@Composable
-fun AddServerCard(onClick: () -> Unit) {
-    var isFocused by remember { mutableStateOf(false) }
 
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
-        border = BorderStroke(
-            if (isFocused) 2.dp else 1.dp,
-            if (isFocused) CineX_DeepRed else Color.White.copy(alpha = 0.1f)
-        ),
-        modifier = Modifier
-            .width(160.dp)
-            .clickable { onClick() }
-            .onFocusChanged { isFocused = it.isFocused }
-            .focusable(interactionSource = remember { MutableInteractionSource() })
-            .onKeyEvent { event ->
-                if (event.type == KeyEventType.KeyUp &&
-                    (event.key == Key.DirectionCenter || event.key == Key.Enter)
-                ) { onClick(); true } else false
-            }
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(CircleShape)
-                    .border(2.dp, CineX_TextMuted.copy(alpha = 0.3f), CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = "Adicionar servidor",
-                    tint = CineX_TextMuted,
-                    modifier = Modifier.size(28.dp)
-                )
-            }
-
-            Spacer(modifier = Modifier.height(14.dp))
-
-            Text(
-                text = "Adicionar Servidor",
-                color = CineX_TextMuted,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                textAlign = TextAlign.Center
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            Text(
-                text = "Sincronizar",
-                color = CineX_TextMuted.copy(alpha = 0.5f),
-                fontSize = 10.sp
-            )
-        }
-    }
-}

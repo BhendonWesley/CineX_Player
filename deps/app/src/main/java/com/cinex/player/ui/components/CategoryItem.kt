@@ -57,19 +57,21 @@ fun CategoryItem(
                 ) { onClick(); true } else false
             }
             .clip(shape)
-            .then(
-                if (isFocused)
-                    Modifier
-                        .background(Color(0x1AFFFFFF))
-                        .border(2.dp, ActiveBrush, shape)
-                else if (isSelected && !isTV)
-                    Modifier
-                        .background(Color(0x0DFFFFFF))
-                        .border(2.dp, ActiveBrush, shape)
-                else if (isSelected)
-                    Modifier.background(Color(0x0DFFFFFF))
-                else
-                    Modifier.background(Color.Transparent)
+            .border(
+                2.dp,
+                when {
+                    isFocused -> ActiveBrush
+                    isSelected && !isTV -> ActiveBrush
+                    else -> Brush.linearGradient(listOf(Color.Transparent, Color.Transparent))
+                },
+                shape
+            )
+            .background(
+                when {
+                    isFocused -> Color(0x1AFFFFFF)
+                    isSelected -> Color(0x0DFFFFFF)
+                    else -> Color.Transparent
+                }
             )
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },

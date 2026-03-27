@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.*
@@ -53,6 +54,7 @@ import androidx.paging.compose.itemKey
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.TimeZone
 import kotlinx.coroutines.delay
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -106,6 +108,12 @@ fun LiveTvScreen(
     isActive: Boolean = false,
     modifier: Modifier = Modifier
 ) {
+    // Detecta se está rodando em Android TV
+    val context = LocalContext.current
+    val isTv = remember {
+        val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
+        uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    }
     val previewPlayerViewRef = remember { mutableStateOf<PlayerView?>(null) }
     val surfaceRefresh by viewModel.liveTvSurfaceRefresh.collectAsState()
 
@@ -198,7 +206,7 @@ fun LiveTvScreen(
         LazyColumn(
             state = catListState,
             modifier = Modifier
-                .width(200.dp)
+                .width(280.dp)
                 .fillMaxHeight()
                 .background(Color(0xCC141414))
                 .lazyScrollbar(catListState)
@@ -232,7 +240,7 @@ fun LiveTvScreen(
         // 2. Coluna de Canais
         Box(
             modifier = Modifier
-                .width(280.dp)
+                .width(200.dp)
                 .fillMaxHeight()
                 .background(Color(0xCC1A1A1A))
         ) {
@@ -338,8 +346,12 @@ fun LiveTvScreen(
                     .fillMaxWidth()
                     .weight(0.45f)
                     .background(Color.Black)
-                    .onFocusChanged { if (it.isFocused) try { favFocusRequester.requestFocus() } catch (_: Exception) {} }
-                    .focusable(interactionSource = remember { MutableInteractionSource() })
+                    .then(
+                        if (!isTv) Modifier
+                            .onFocusChanged { if (it.isFocused) try { favFocusRequester.requestFocus() } catch (_: Exception) {} }
+                            .focusable(interactionSource = remember { MutableInteractionSource() })
+                        else Modifier
+                    )
                     .clickable { selectedChannel?.let { onChannelExpand(it) } },
                 contentAlignment = Alignment.Center
             ) {
@@ -444,20 +456,24 @@ fun LiveTvScreen(
                         .align(Alignment.TopEnd)
                         .padding(8.dp)
                         .size(if (isFavFocused) 36.dp else 28.dp)
-                        .focusRequester(favFocusRequester)
-                        .onFocusChanged { isFavFocused = it.isFocused }
-                        .focusable(interactionSource = remember { MutableInteractionSource() })
-                        .onKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyUp &&
-                                (event.key == Key.DirectionCenter || event.key == Key.Enter)
-                            ) {
-                                selectedChannel?.let {
-                                    isFavLocal = !isFavLocal
-                                    viewModel.updateFavorite(it.id, isFavLocal)
+                        .then(
+                            if (!isTv) Modifier
+                                .focusRequester(favFocusRequester)
+                                .onFocusChanged { isFavFocused = it.isFocused }
+                                .focusable(interactionSource = remember { MutableInteractionSource() })
+                                .onKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyUp &&
+                                        (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                                    ) {
+                                        selectedChannel?.let {
+                                            isFavLocal = !isFavLocal
+                                            viewModel.updateFavorite(it.id, isFavLocal)
+                                        }
+                                        true
+                                    } else false
                                 }
-                                true
-                            } else false
-                        }
+                            else Modifier
+                        )
                         .clip(RoundedCornerShape(50))
                         .background(Color.Black.copy(alpha = if (isFavFocused) 0.8f else 0.5f))
                         .then(
@@ -540,7 +556,23 @@ fun LiveTvScreen(
                         // Programa Atual (Destaque Amarelo + Progresso)
                         if (currentProgram != null) {
                             item {
-                                Column(modifier = Modifier.fillMaxWidth()) {
+                                var isFocusedEpg by remember { mutableStateOf(false) }
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .then(
+                                            if (isTv) Modifier
+                                                .onFocusChanged { isFocusedEpg = it.isFocused }
+                                                .focusable(interactionSource = remember { MutableInteractionSource() })
+                                                .background(
+                                                    if (isFocusedEpg) Color.White.copy(alpha = 0.08f)
+                                                    else Color.Transparent,
+                                                    RoundedCornerShape(8.dp)
+                                                )
+                                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                                            else Modifier
+                                        )
+                                ) {
                                     EpgItem(program = currentProgram!!, isCurrent = true, is24Hour = is24Hour)
                                     val total = (currentProgram!!.endTime - currentProgram!!.startTime).coerceAtLeast(1)
                                     val passed = (System.currentTimeMillis() - currentProgram!!.startTime).coerceIn(0, total)
@@ -590,14 +622,46 @@ fun LiveTvScreen(
                         // Próximos Programas
                         if (upcomingPrograms.isNotEmpty()) {
                             items(upcomingPrograms.take(10)) { program ->
-                                EpgItem(program = program, isCurrent = false, is24Hour = is24Hour)
+                                var isFocusedEpg by remember { mutableStateOf(false) }
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .then(
+                                            if (isTv) Modifier
+                                                .onFocusChanged { isFocusedEpg = it.isFocused }
+                                                .focusable(interactionSource = remember { MutableInteractionSource() })
+                                                .background(
+                                                    if (isFocusedEpg) Color.White.copy(alpha = 0.08f)
+                                                    else Color.Transparent,
+                                                    RoundedCornerShape(8.dp)
+                                                )
+                                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                                            else Modifier
+                                        )
+                                ) {
+                                    EpgItem(program = program, isCurrent = false, is24Hour = is24Hour)
+                                }
                             }
                         } else if (epgListings.size > 1) {
                             items(epgListings.drop(1).take(10)) { epg ->
                                 val title = epg.title.decodeBase64IfNeeded()
                                 val timeRange = formatEpgTime(epg, is24Hour)
+                                var isFocusedEpg by remember { mutableStateOf(false) }
                                 Column(
-                                    modifier = Modifier.padding(vertical = 2.dp)
+                                    modifier = Modifier
+                                        .padding(vertical = 2.dp)
+                                        .then(
+                                            if (isTv) Modifier
+                                                .onFocusChanged { isFocusedEpg = it.isFocused }
+                                                .focusable(interactionSource = remember { MutableInteractionSource() })
+                                                .background(
+                                                    if (isFocusedEpg) Color.White.copy(alpha = 0.08f)
+                                                    else Color.Transparent,
+                                                    RoundedCornerShape(8.dp)
+                                                )
+                                                .padding(horizontal = 4.dp, vertical = 2.dp)
+                                            else Modifier
+                                        )
                                 ) {
                                     Text(
                                         text = timeRange,
@@ -734,9 +798,10 @@ fun formatEpgTime(epg: com.cinex.player.data.network.EpgListing, is24Hour: Boole
         return "$startStr - $endStr"
     }
     
-    // Prioridade 2: Tentar parsing do campo start/end como data formatada
+    // Prioridade 2: Tentar parsing do campo start/end como data formatada (Xtream envia em UTC)
     return try {
         val inputFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        inputFormat.timeZone = TimeZone.getTimeZone("UTC")
         val startStr = outputFormat.format(inputFormat.parse(epg.start)!!)
         val endStr = outputFormat.format(inputFormat.parse(epg.end)!!)
         "$startStr - $endStr"

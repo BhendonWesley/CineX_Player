@@ -214,17 +214,20 @@ private fun HeroBackdrop(
                 LaunchedEffect(tabActive) {
                     if (tabActive) {
                         launch {
-                            while (true) {
+                            while (isActive) {
                                 scale.animateTo(1.08f, tween(12000, easing = LinearEasing))
                                 scale.animateTo(1f, tween(12000, easing = LinearEasing))
                             }
                         }
                         launch {
-                            while (true) {
+                            while (isActive) {
                                 panX.animateTo(20f, tween(15000, easing = LinearEasing))
                                 panX.animateTo(-20f, tween(15000, easing = LinearEasing))
                             }
                         }
+                    } else {
+                        scale.snapTo(1f)
+                        panX.snapTo(0f)
                     }
                 }
 
@@ -476,7 +479,8 @@ private fun NavigationCardsRow(
             label = "TV AO VIVO",
             isActive = true,
             onClick = { onNavigate(1) },
-            modifier = Modifier.weight(1f)
+            modifier = Modifier.weight(1f),
+            blockLeft = true
         )
         NavCard(
             icon = Icons.Default.Movie,
@@ -490,7 +494,8 @@ private fun NavigationCardsRow(
             label = "SÉRIES",
             isActive = true,
             onClick = { onNavigate(3) },
-            modifier = Modifier.weight(1f)
+            modifier = Modifier.weight(1f),
+            blockRight = true
         )
     }
 }
@@ -501,13 +506,23 @@ private fun NavCard(
     label: String,
     isActive: Boolean = false,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    blockLeft: Boolean = false,
+    blockRight: Boolean = false
 ) {
     var isFocused by remember { mutableStateOf(false) }
 
     Box(
         modifier = modifier
             .height(100.dp)
+            .onPreviewKeyEvent { event ->
+                when (event.key) {
+                    Key.DirectionDown -> true
+                    Key.DirectionLeft -> blockLeft
+                    Key.DirectionRight -> blockRight
+                    else -> false
+                }
+            }
             .onFocusChanged { isFocused = it.isFocused }
             .focusable(interactionSource = remember { MutableInteractionSource() })
             .onKeyEvent { event ->

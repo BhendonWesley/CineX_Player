@@ -30,7 +30,7 @@ class CineXApplication : Application(), Configuration.Provider, ImageLoaderFacto
             .diskCache {
                 DiskCache.Builder()
                     .directory(cacheDir.resolve("coil_cache"))
-                    .maxSizePercent(0.05)
+                    .maxSizePercent(0.15)
                     .build()
             }
             .crossfade(true)

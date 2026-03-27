@@ -177,7 +177,7 @@ class ChannelRepository @Inject constructor(
     fun getPagedMoviesByCategory(categoryId: String): Flow<PagingData<Channel>> {
         return _activePlaylistUrl.flatMapLatest { url ->
             if (url == null) flowOf(PagingData.empty())
-            else Pager(PagingConfig(pageSize = 50)) {
+            else Pager(PagingConfig(pageSize = 50, initialLoadSize = 50, prefetchDistance = 10)) {
                 when (categoryId) {
                     "Tudo" -> channelDao.getChannelsByCategory("MOVIE", url)
                     "Favorito", "Favoritos" -> channelDao.getFavoritesPaged("MOVIE", url)
@@ -191,7 +191,7 @@ class ChannelRepository @Inject constructor(
     fun getPagedSeriesByCategory(categoryId: String): Flow<PagingData<Channel>> {
         return _activePlaylistUrl.flatMapLatest { url ->
             if (url == null) flowOf(PagingData.empty())
-            else Pager(PagingConfig(pageSize = 50)) {
+            else Pager(PagingConfig(pageSize = 50, initialLoadSize = 50, prefetchDistance = 10)) {
                 when (categoryId) {
                     "Tudo" -> channelDao.getUniqueSeries(url)
                     "Favorito", "Favoritos" -> channelDao.getFavoriteSeriesPaged(url)
