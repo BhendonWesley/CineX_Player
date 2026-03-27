@@ -306,9 +306,13 @@ class MainViewModel @Inject constructor(
     val featuredMovies: StateFlow<List<Channel>> = _currentPlaylist.flatMapLatest { playlist ->
         _homeReady.value = false
         if (playlist == null) flowOf(emptyList())
-        else repository.getFeaturedContent(playlist.url)
-            .distinctUntilChanged()
-            .map { it.shuffled().take(20) }
+        else {
+            // Seed fixa para manter a ordem consistente durante toda a sessão
+            val seed = playlist.url.hashCode().toLong()
+            repository.getFeaturedContent(playlist.url)
+                .distinctUntilChanged()
+                .map { it.shuffled(kotlin.random.Random(seed)).take(20) }
+        }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),

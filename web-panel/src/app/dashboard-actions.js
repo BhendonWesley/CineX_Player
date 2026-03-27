@@ -7,15 +7,11 @@ export async function getDashboardData() {
     try {
         const cookieStore = await cookies()
         const session = cookieStore.get('cinex_session')
-        
-        console.error(` >>> [DASHBOARD_ACTION] Session: ${session ? 'OK' : 'MISSING'}`);
 
         if (!session) return { success: false }
 
         const profile = JSON.parse(session.value)
         const username = profile.username
-        
-        console.error(` >>> [DASHBOARD_ACTION] Username: ${username}`);
 
         // Buscar dispositivos do revendedor
         const { data: devices, error } = await supabase
@@ -31,21 +27,24 @@ export async function getDashboardData() {
                 username,
                 totalDevices: 0,
                 activeDevices: 0,
-                inactiveDevices: 0,
-                recentDevices: []
+                blockedDevices: 0,
+                recentDevices: [],
+                lastCreated: null,
             }
         }
 
         const activeDevices = devices?.filter(d => d.status === 'Ativo').length || 0
-        const inactiveDevices = (devices?.length || 0) - activeDevices
+        const blockedDevices = devices?.filter(d => d.status === 'Bloqueado').length || 0
+        const lastCreated = devices?.[0]?.created_at || null
 
         return {
             success: true,
             username,
             totalDevices: devices?.length || 0,
             activeDevices,
-            inactiveDevices,
-            recentDevices: devices?.slice(0, 5) || []
+            blockedDevices,
+            recentDevices: devices?.slice(0, 5) || [],
+            lastCreated,
         }
     } catch (error) {
         console.error('Dashboard error:', error)

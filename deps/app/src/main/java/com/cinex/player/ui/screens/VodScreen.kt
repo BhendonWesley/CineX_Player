@@ -4,6 +4,11 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.SearchOff
+import androidx.compose.material.icons.filled.VideoLibrary
+import androidx.compose.material3.Icon
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.rememberScrollState
@@ -28,6 +33,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -37,6 +43,9 @@ import androidx.paging.compose.itemKey
 import com.cinex.player.data.model.Channel
 import com.cinex.player.ui.components.VodPosterItem
 import com.cinex.player.ui.components.CategoryItem
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import com.cinex.player.ui.theme.CineX_BackgroundBlue
@@ -105,6 +114,7 @@ fun VodScreen(
     continueWatching: List<Channel> = emptyList(),
     onVideoClick: (Channel) -> Unit,
     onPlayDirect: (Channel) -> Unit = onVideoClick,
+    isActive: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val categoriesFlow = when (type) {
@@ -132,6 +142,21 @@ fun VodScreen(
             if (type == "MOVIE") viewModel.getPagedMoviesByCategory(selectedCategory)
             else viewModel.getPagedSeriesByCategory(selectedCategory)
         }.collectAsLazyPagingItems()
+    }
+
+    val context = LocalContext.current
+    val isTv = remember {
+        val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
+        uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    }
+    val firstCategoryFocusRequester = remember { FocusRequester() }
+
+    // Request focus on the first category when screen becomes visible on TV
+    LaunchedEffect(isTv, isActive, categories) {
+        if (isTv && isActive && categories.isNotEmpty()) {
+            kotlinx.coroutines.delay(200)
+            try { firstCategoryFocusRequester.requestFocus() } catch (_: Exception) {}
+        }
     }
 
     Box(
@@ -230,7 +255,7 @@ fun VodScreen(
                     Spacer(Modifier.height(6.dp))
                 }
 
-                categories.forEach { category ->
+                categories.forEachIndexed { index, category ->
                     val isSelected = selectedCategory == category.id
                     val count = when (category.id) {
                         "Tudo"     -> typeCounts[type] ?: 0
@@ -256,7 +281,8 @@ fun VodScreen(
                                     if (type == "MOVIE") viewModel.setMovieCategory(category.id)
                                     else viewModel.setSeriesCategory(category.id)
                                 }
-                            }
+                            },
+                            modifier = if (index == 0 && isTv) Modifier.focusRequester(firstCategoryFocusRequester) else Modifier
                         )
                     }
                     Spacer(Modifier.height(6.dp))
@@ -265,34 +291,66 @@ fun VodScreen(
         }
 
         // ── GRID DE CONTEÚDO ──────────────────────────────────────
-        LazyVerticalGrid(
-            columns = GridCells.Fixed(4),
-            modifier = Modifier
-                .weight(1f)
-                .padding(horizontal = 12.dp, vertical = 0.dp),
-            contentPadding = PaddingValues(bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            items(
-                count = pagingItems.itemCount,
-                key = pagingItems.itemKey { it.id }
-            ) { index ->
-                pagingItems[index]?.let { channel ->
-                    LaunchedEffect(channel.id) {
-                        viewModel.onChannelVisible(channel)
-                    }
-                    VodPosterItem(
-                        channel = channel,
-                        showProgress = selectedCategory == "Continuar Assistindo",
-                        onClick = {
-                            if (selectedCategory == "Continuar Assistindo") {
-                                onPlayDirect(channel)
-                            } else {
-                                onVideoClick(channel)
-                            }
+        Box(modifier = Modifier.weight(1f)) {
+            if (pagingItems.itemCount == 0) {
+                // Empty state
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        val (icon, message) = when {
+                            type == "SEARCH" -> Icons.Default.SearchOff to "Nenhum resultado encontrado"
+                            selectedCategory == "Favorito" -> Icons.Default.FavoriteBorder to "Nenhum favorito adicionado"
+                            selectedCategory == "Continuar Assistindo" -> Icons.Default.VideoLibrary to "Nenhum conteúdo em andamento"
+                            else -> Icons.Default.VideoLibrary to "Nenhum conteúdo nesta categoria"
                         }
-                    )
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = null,
+                            tint = Color.White.copy(alpha = 0.3f),
+                            modifier = Modifier.size(56.dp)
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        Text(
+                            text = message,
+                            color = Color.White.copy(alpha = 0.4f),
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Medium,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            }
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(4),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 12.dp, vertical = 0.dp),
+                contentPadding = PaddingValues(bottom = 32.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                items(
+                    count = pagingItems.itemCount,
+                    key = pagingItems.itemKey { it.id }
+                ) { index ->
+                    pagingItems[index]?.let { channel ->
+                        LaunchedEffect(channel.id) {
+                            viewModel.onChannelVisible(channel)
+                        }
+                        VodPosterItem(
+                            channel = channel,
+                            showProgress = selectedCategory == "Continuar Assistindo",
+                            onClick = {
+                                if (selectedCategory == "Continuar Assistindo") {
+                                    onPlayDirect(channel)
+                                } else {
+                                    onVideoClick(channel)
+                                }
+                            }
+                        )
+                    }
                 }
             }
         }

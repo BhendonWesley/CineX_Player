@@ -232,6 +232,8 @@ export default function LoginPage() {
                 @keyframes spin{to{transform:rotate(360deg)}}
                 .spin{animation:spin 1s linear infinite}
                 .dv{height:1px;background:linear-gradient(90deg,transparent,rgba(216,166,58,.15),transparent);margin:16px 0}
+                .login-hint{white-space:nowrap}
+                @media(max-width:480px){.login-hint{white-space:normal;max-width:220px;margin:0 auto}}
             `}</style>
 
             <div style={{ position: 'relative', minHeight: '100vh', width: '100%', background: '#0B0F1A', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
@@ -333,9 +335,14 @@ export default function LoginPage() {
                             {loading ? <Loader2 className="spin" size={20} /> : 'ENTRAR'}
                         </button>
 
-                        <p style={{ textAlign: 'center', fontSize: '12px', color: '#9CA3AF', marginTop: '12px', lineHeight: '1.5' }}>
-                            Use o mesmo usuário e senha do Painel de Revendedor
-                        </p>
+                        <div style={{ textAlign: 'center', marginTop: '12px' }}>
+                            <p style={{ fontSize: '13px', color: '#F59E0B', fontWeight: '700', letterSpacing: '1px', marginBottom: '6px' }}>
+                                ⚠️ ATENÇÃO ⚠️
+                            </p>
+                            <p className="login-hint" style={{ fontSize: '13px', color: '#F59E0B', lineHeight: '1.6', opacity: 0.85 }}>
+                                Use o mesmo usuário e senha do seu Painel de Revendedor
+                            </p>
+                        </div>
                     </form>
 
                     <div style={{ textAlign: 'center', marginTop: '16px' }}>

@@ -35,7 +35,8 @@ fun CategoryItem(
     name: String,
     count: Int,
     isSelected: Boolean,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val shape = RoundedCornerShape(8.dp)
     var isFocused by remember { mutableStateOf(false) }
@@ -47,7 +48,7 @@ fun CategoryItem(
     }
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .onFocusChanged { isFocused = it.isFocused }
             .focusable(interactionSource = remember { MutableInteractionSource() })

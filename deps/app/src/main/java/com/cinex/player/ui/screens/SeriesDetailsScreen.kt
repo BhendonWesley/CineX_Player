@@ -397,6 +397,21 @@ fun SeriesDetailsScreen(
                                     ShimmerEpisodeItem()
                                 }
                             }
+                        } else if (!isLoadingEpisodes && pagingItems.itemCount == 0) {
+                            // Empty state — nenhum episódio
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 48.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "Nenhum episódio disponível",
+                                    color = Color.White.copy(alpha = 0.4f),
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
                         } else {
                             LazyColumn(
                                 verticalArrangement = Arrangement.spacedBy(16.dp),

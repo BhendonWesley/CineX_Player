@@ -18,6 +18,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.graphics.Brush
@@ -73,6 +75,14 @@ fun HomeScreen(
 
     // Auto-scroll do carousel — só roda quando a tab está ativa
     var currentIndex by remember { mutableIntStateOf(0) }
+
+    // Reseta o index quando a lista muda para evitar apontar pro filme errado
+    LaunchedEffect(validMovies) {
+        if (currentIndex >= validMovies.size) {
+            currentIndex = 0
+        }
+    }
+
     LaunchedEffect(validMovies.size, isActive) {
         if (validMovies.size <= 1 || !isActive) return@LaunchedEffect
         while (true) {
@@ -153,8 +163,23 @@ fun HomeScreen(
                 )
 
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    val isTv = remember {
+                        val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
+                        uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+                    }
+                    val initialFocusRequester = remember { FocusRequester() }
+
+                    LaunchedEffect(isTv, isActive) {
+                        if (isTv && isActive) {
+                            // Pequeno delay para garantir que o layout está pronto
+                            kotlinx.coroutines.delay(100)
+                            try { initialFocusRequester.requestFocus() } catch (_: Exception) {}
+                        }
+                    }
+
                     NavigationCardsRow(
-                        onNavigate = onNavigate
+                        onNavigate = onNavigate,
+                        initialFocusRequester = if (isTv) initialFocusRequester else null
                     )
                 }
             }
@@ -356,7 +381,7 @@ private fun HeroMovieInfo(
             Spacer(modifier = Modifier.height(8.dp))
 
             Text(
-                text = (currentMovie.seriesName ?: cleanSeriesTitle(currentMovie.name)).uppercase(),
+                text = cleanHeroTitle(currentMovie.seriesName ?: cleanSeriesTitle(currentMovie.name)).uppercase(),
                 color = Color.White,
                 fontSize = 30.sp,
                 fontWeight = FontWeight.Black,
@@ -467,7 +492,8 @@ private fun HeaderButton(
 
 @Composable
 private fun NavigationCardsRow(
-    onNavigate: (Int) -> Unit
+    onNavigate: (Int) -> Unit,
+    initialFocusRequester: FocusRequester? = null
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -479,7 +505,8 @@ private fun NavigationCardsRow(
             label = "TV AO VIVO",
             isActive = true,
             onClick = { onNavigate(1) },
-            modifier = Modifier.weight(1f),
+            modifier = Modifier.weight(1f)
+                .then(if (initialFocusRequester != null) Modifier.focusRequester(initialFocusRequester) else Modifier),
             blockLeft = true
         )
         NavCard(
@@ -688,4 +715,22 @@ private fun cleanSeriesTitle(title: String): String {
         cleanedTitle = cleanedTitle.replace(regex, "")
     }
     return cleanedTitle.trim()
+}
+
+/** Remove anos duplicados do título: "Absentia (2017) (2017)" → "Absentia (2017)" */
+private fun cleanHeroTitle(title: String): String {
+    // Encontra todos os anos no formato (YYYY)
+    val yearPattern = Regex("\\(\\d{4}\\)")
+    val matches = yearPattern.findAll(title).toList()
+    if (matches.size <= 1) return title
+    // Remove os anos duplicados, mantendo apenas o primeiro
+    val firstYear = matches.first().value
+    var result = title
+    // Remove todas as ocorrências depois da primeira
+    var count = 0
+    result = yearPattern.replace(title) { matchResult ->
+        count++
+        if (count == 1) matchResult.value else ""
+    }
+    return result.replace(Regex("\\s+"), " ").trim()
 }

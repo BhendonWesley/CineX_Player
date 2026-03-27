@@ -314,7 +314,8 @@ fun MainScreen(
                                 title = "FILMES",
                                 continueWatching = continueWatching.filter { it.category == "MOVIE" },
                                 onVideoClick = { viewModel.selectChannelForDetails(it) },
-                                onPlayDirect = { playingChannel = it }
+                                onPlayDirect = { playingChannel = it },
+                                isActive = selectedTab == 2
                             )
                         }
                         Box(modifier = Modifier.tabVisibility(3)) {
@@ -324,7 +325,8 @@ fun MainScreen(
                                 title = "SÉRIES",
                                 continueWatching = continueWatching.filter { it.category == "SERIES" },
                                 onVideoClick = { viewModel.selectChannelForDetails(it) },
-                                onPlayDirect = { playingChannel = it }
+                                onPlayDirect = { playingChannel = it },
+                                isActive = selectedTab == 3
                             )
                         }
                     }

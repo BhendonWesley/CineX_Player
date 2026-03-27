@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -129,6 +130,15 @@ fun LiveTvScreen(
 
     val categories by viewModel.liveCategories.collectAsState(initial = emptyList())
     val selectedCategory by viewModel.liveCategoryId.collectAsState()
+    val selectedCatFocusRequester = remember { FocusRequester() }
+
+    // Na TV, solicitar foco na categoria selecionada quando a tela fica ativa
+    LaunchedEffect(isTv, isActive, categories) {
+        if (isTv && isActive && categories.isNotEmpty()) {
+            delay(300)
+            try { selectedCatFocusRequester.requestFocus() } catch (_: Exception) {}
+        }
+    }
     val adultUnlocked by viewModel.adultUnlocked.collectAsState()
     var showParentalDialog by remember { mutableStateOf(false) }
     var pendingAdultCategoryId by remember { mutableStateOf<String?>(null) }
@@ -150,6 +160,8 @@ fun LiveTvScreen(
     // Auto-seleciona o primeiro canal apenas quando a aba Live TV está visível
     LaunchedEffect(pagingItems.itemCount, isActive) {
         if (isActive && selectedChannel == null && pagingItems.itemCount > 0) {
+            // Aguarda o Paging estabilizar para pegar o canal correto (primeiro da lista)
+            delay(300)
             pagingItems[0]?.let { firstChannel ->
                 viewModel.updateSelectedChannel(firstChannel)
             }
@@ -213,7 +225,7 @@ fun LiveTvScreen(
                 .padding(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(categories) { category ->
+            itemsIndexed(categories) { index, category ->
                 val countByCat = when (category.id) {
                     "Tudo" -> typeCounts["LIVE_TV"] ?: 0
                     "Favorito" -> favoriteCounts["LIVE_TV"] ?: 0
@@ -231,7 +243,8 @@ fun LiveTvScreen(
                         } else {
                             viewModel.setLiveCategory(category.id)
                         }
-                    }
+                    },
+                    modifier = if (isTv && category.id == selectedCategory) Modifier.focusRequester(selectedCatFocusRequester) else Modifier
                 )
             }
         }
@@ -246,20 +259,29 @@ fun LiveTvScreen(
         ) {
             if (pagingItems.itemCount == 0) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    val transition = rememberInfiniteTransition(label = "channelLoading")
-                    val rotation by transition.animateFloat(
-                        initialValue = 0f,
-                        targetValue = 360f,
-                        animationSpec = infiniteRepeatable(animation = tween(durationMillis = 1000)),
-                        label = "rotation"
-                    )
-                    Canvas(modifier = Modifier.size(32.dp)) {
-                        drawArc(
-                            color = Color(0xFFC62828),
-                            startAngle = rotation,
-                            sweepAngle = 270f,
-                            useCenter = false,
-                            style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        val transition = rememberInfiniteTransition(label = "channelLoading")
+                        val rotation by transition.animateFloat(
+                            initialValue = 0f,
+                            targetValue = 360f,
+                            animationSpec = infiniteRepeatable(animation = tween(durationMillis = 1000)),
+                            label = "rotation"
+                        )
+                        Canvas(modifier = Modifier.size(28.dp)) {
+                            drawArc(
+                                color = Color(0xFFC62828),
+                                startAngle = rotation,
+                                sweepAngle = 270f,
+                                useCenter = false,
+                                style = Stroke(width = 3.dp.toPx(), cap = StrokeCap.Round)
+                            )
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            text = if (selectedCategory == "Favorito") "Nenhum favorito" else "Carregando canais...",
+                            color = Color.White.copy(alpha = 0.4f),
+                            fontSize = 12.sp,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
                         )
                     }
                 }

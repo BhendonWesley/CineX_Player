@@ -2,8 +2,10 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { Plus, Smartphone, Trash2, Edit3, X, Loader2, RefreshCw, Lock, Unlock } from 'lucide-react'
+import { Plus, Smartphone, Trash2, Edit3, X, Loader2, RefreshCw, Lock, Unlock, Search, Copy, Check, ChevronLeft, ChevronRight, Clock, CalendarDays } from 'lucide-react'
 import { getDevices, addDevice, deleteDevice, updateDevice, toggleDeviceStatus } from './actions'
+
+const ITEMS_PER_PAGE = 10
 
 export default function DevicesPage() {
     const [devices, setDevices] = useState([])
@@ -23,6 +25,11 @@ export default function DevicesPage() {
     const [togglingStatus, setTogglingStatus] = useState(null)
     const [deviceToToggle, setDeviceToToggle] = useState(null)
     const [mounted, setMounted] = useState(false)
+
+    // Search & Pagination
+    const [searchQuery, setSearchQuery] = useState('')
+    const [currentPage, setCurrentPage] = useState(1)
+    const [copiedMac, setCopiedMac] = useState(null)
 
     useEffect(() => {
         const frame = requestAnimationFrame(() => setMounted(true))
@@ -53,6 +60,55 @@ export default function DevicesPage() {
         loadDevices()
     }, [loadDevices])
 
+    // Filtered devices based on search
+    const filteredDevices = devices.filter(device => {
+        if (!searchQuery.trim()) return true
+        const q = searchQuery.toLowerCase()
+        return device.name.toLowerCase().includes(q) || device.mac_address.toLowerCase().includes(q)
+    })
+
+    // Pagination
+    const totalPages = Math.max(1, Math.ceil(filteredDevices.length / ITEMS_PER_PAGE))
+    const safeCurrentPage = Math.min(currentPage, totalPages)
+    const paginatedDevices = filteredDevices.slice((safeCurrentPage - 1) * ITEMS_PER_PAGE, safeCurrentPage * ITEMS_PER_PAGE)
+
+    // Reset page when search changes
+    useEffect(() => {
+        setCurrentPage(1)
+    }, [searchQuery])
+
+    // Copy MAC
+    const handleCopyMac = async (mac) => {
+        try {
+            await navigator.clipboard.writeText(mac)
+            setCopiedMac(mac)
+            setTimeout(() => setCopiedMac(null), 2000)
+        } catch {
+            // Fallback
+            const el = document.createElement('textarea')
+            el.value = mac
+            document.body.appendChild(el)
+            el.select()
+            document.execCommand('copy')
+            document.body.removeChild(el)
+            setCopiedMac(mac)
+            setTimeout(() => setCopiedMac(null), 2000)
+        }
+    }
+
+    // Format date
+    const formatDate = (dateStr) => {
+        if (!dateStr) return '—'
+        const d = new Date(dateStr)
+        return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+    }
+
+    const formatDateTime = (dateStr) => {
+        if (!dateStr) return 'Nunca sincronizou'
+        const d = new Date(dateStr)
+        return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+    }
+
     const handleAdd = async (e) => {
         e.preventDefault()
         setSubmitting(true)
@@ -60,7 +116,15 @@ export default function DevicesPage() {
 
         const formData = new FormData(e.target)
         formData.set('playlist_type', playlistType)
-        formData.set('mac', macInput) // Use formatted MAC
+        formData.set('mac', macInput)
+
+        // Validar nome duplicado
+        const newName = formData.get('name')?.trim().toLowerCase()
+        if (devices.some(d => d.name.trim().toLowerCase() === newName)) {
+            setError('Já existe um dispositivo com esse nome. Escolha um nome diferente.')
+            setSubmitting(false)
+            return
+        }
 
         const result = await addDevice(formData)
         if (result.success) {
@@ -83,7 +147,7 @@ export default function DevicesPage() {
         const id = deviceToDelete.id
         setDeviceToDelete(null)
         setDeleting(id)
-        
+
         const result = await deleteDevice(id)
         if (!result.success) {
             alert(result.message || 'Erro ao remover dispositivo.')
@@ -106,6 +170,14 @@ export default function DevicesPage() {
 
         const formData = new FormData(e.target)
         formData.set('playlist_type', editPlaylistType)
+
+        // Validar nome duplicado (ignorando o próprio dispositivo)
+        const newName = formData.get('name')?.trim().toLowerCase()
+        if (devices.some(d => d.id !== deviceToEdit.id && d.name.trim().toLowerCase() === newName)) {
+            setEditError('Já existe um dispositivo com esse nome. Escolha um nome diferente.')
+            setEditSubmitting(false)
+            return
+        }
 
         const result = await updateDevice(deviceToEdit.id, formData)
         if (result.success) {
@@ -157,6 +229,102 @@ export default function DevicesPage() {
                     overflow-x: auto;
                     -webkit-overflow-scrolling: touch;
                 }
+                .table-container .premium-card:hover,
+                .table-container .premium-card {
+                    transform: none !important;
+                }
+                .search-box {
+                    position: relative;
+                    flex: 1;
+                    max-width: 400px;
+                    min-width: 200px;
+                }
+                .search-box input {
+                    width: 100%;
+                    padding: 12px 16px 12px 44px;
+                    background: rgba(0,0,0,0.2);
+                    border: 1px solid var(--glass-border);
+                    border-radius: 8px;
+                    color: white;
+                    font-size: 14px;
+                    outline: none;
+                    transition: border-color 0.3s ease;
+                }
+                .search-box input:focus {
+                    border-color: var(--premium-gold);
+                }
+                .search-box input::placeholder {
+                    color: var(--text-muted);
+                }
+                .search-box svg.search-icon {
+                    position: absolute;
+                    left: 14px;
+                    top: 50%;
+                    transform: translateY(-50%);
+                    pointer-events: none;
+                    color: var(--text-muted);
+                    z-index: 1;
+                }
+                .copy-btn {
+                    background: none;
+                    border: none;
+                    cursor: pointer;
+                    padding: 4px;
+                    border-radius: 4px;
+                    display: inline-flex;
+                    align-items: center;
+                    transition: all 0.2s;
+                    vertical-align: middle;
+                    margin-left: 8px;
+                }
+                .copy-btn:hover {
+                    background: rgba(216, 166, 58, 0.15);
+                }
+                .pagination {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 8px;
+                    padding: 20px 0 0;
+                }
+                .pagination button {
+                    background: rgba(0,0,0,0.2);
+                    border: 1px solid var(--glass-border);
+                    color: var(--text-secondary);
+                    border-radius: 8px;
+                    padding: 8px 14px;
+                    cursor: pointer;
+                    font-size: 13px;
+                    display: flex;
+                    align-items: center;
+                    gap: 4px;
+                    transition: all 0.2s;
+                }
+                .pagination button:hover:not(:disabled) {
+                    border-color: var(--premium-gold);
+                    color: var(--premium-gold);
+                }
+                .pagination button:disabled {
+                    opacity: 0.3;
+                    cursor: not-allowed;
+                }
+                .pagination .page-info {
+                    font-size: 13px;
+                    color: var(--text-muted);
+                    padding: 0 12px;
+                }
+                .date-info {
+                    display: flex;
+                    align-items: center;
+                    gap: 5px;
+                    font-size: 11px;
+                    color: var(--text-muted);
+                }
+                .results-info {
+                    font-size: 12px;
+                    color: var(--text-muted);
+                    padding: 8px 0;
+                }
                 @media screen and (max-width: 1024px) {
                     .main-container {
                         padding: 20px !important;
@@ -187,9 +355,13 @@ export default function DevicesPage() {
                     .mobile-only-list {
                         display: flex !important;
                     }
+                    .search-box {
+                        max-width: 100%;
+                        width: 100%;
+                    }
                 }
             `}</style>
-            <header className="dashboard-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px' }}>
+            <header className="dashboard-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
                 <div className="header-title-container">
                     <h1 className="glow-text" style={{ marginBottom: '4px' }}>Gerenciar Dispositivos</h1>
                     <p style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>Vincule listas IPTV aos endereços MAC dos seus clientes</p>
@@ -204,6 +376,26 @@ export default function DevicesPage() {
                 </div>
             </header>
 
+            {/* Search Bar */}
+            <div style={{ marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '16px', flexWrap: 'wrap' }}>
+                <div className="search-box">
+                    <div className="search-icon" style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: 'var(--text-muted)', zIndex: 1, display: 'flex' }}>
+                        <Search size={18} />
+                    </div>
+                    <input
+                        type="text"
+                        placeholder="Buscar por nome ou MAC..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                    />
+                </div>
+                {searchQuery && (
+                    <span className="results-info">
+                        {filteredDevices.length} resultado{filteredDevices.length !== 1 ? 's' : ''} encontrado{filteredDevices.length !== 1 ? 's' : ''}
+                    </span>
+                )}
+            </div>
+
             {devices.length === 0 ? (
                 <div className="premium-card" style={{ padding: '80px', textAlign: 'center' }}>
                     <Smartphone size={48} color="var(--text-muted)" style={{ margin: '0 auto 16px' }} />
@@ -215,31 +407,49 @@ export default function DevicesPage() {
                         <Plus size={20} /> Cadastrar Primeiro Dispositivo
                     </button>
                 </div>
+            ) : filteredDevices.length === 0 ? (
+                <div className="premium-card" style={{ padding: '60px', textAlign: 'center' }}>
+                    <Search size={40} color="var(--text-muted)" style={{ margin: '0 auto 16px' }} />
+                    <h3 style={{ marginBottom: '8px', fontSize: '16px' }}>Nenhum resultado encontrado</h3>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '13px' }}>
+                        Nenhum dispositivo corresponde a &quot;{searchQuery}&quot;
+                    </p>
+                </div>
             ) : (
                 <div className="premium-card table-container" style={{ background: 'transparent', border: 'none', boxShadow: 'none' }}>
                     {/* Desktop Table View */}
                     <div className="desktop-only-table premium-card" style={{ overflow: 'hidden' }}>
-                        <table style={{ width: '100%', minWidth: '800px', borderCollapse: 'collapse', textAlign: 'left' }}>
+                        <table style={{ width: '100%', minWidth: '900px', borderCollapse: 'collapse', textAlign: 'left' }}>
                             <thead>
                                 <tr style={{ background: 'rgba(216, 166, 58, 0.1)', color: 'var(--light-gold)', fontSize: '12px', letterSpacing: '1px' }}>
                                     <th style={{ padding: '16px 24px' }}>DISPOSITIVO</th>
                                     <th style={{ padding: '16px 24px' }}>ENDEREÇO MAC</th>
                                     <th style={{ padding: '16px 24px', textAlign: 'center' }}>TIPO</th>
                                     <th style={{ padding: '16px 24px', textAlign: 'center' }}>STATUS</th>
+                                    <th style={{ padding: '16px 24px', textAlign: 'center' }}>CRIADO EM</th>
+                                    <th style={{ padding: '16px 24px', textAlign: 'center' }}>ÚLTIMO SYNC</th>
                                     <th style={{ padding: '16px 24px', textAlign: 'center' }}>AÇÕES</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {devices.map(device => (
+                                {paginatedDevices.map(device => (
                                     <tr key={device.id} style={{ borderBottom: '1px solid var(--glass-border)' }}>
                                         <td style={{ padding: '16px 24px' }}>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                                <Smartphone size={18} color="var(--text-muted)" />
+                                                <Smartphone size={18} color="var(--premium-gold)" />
                                                 {device.name}
                                             </div>
                                         </td>
                                         <td style={{ padding: '16px 24px' }}>
-                                            <code style={{ color: 'var(--light-gold)', fontFamily: 'monospace' }}>{device.mac_address}</code>
+                                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', background: 'rgba(216, 166, 58, 0.08)', border: '1px solid rgba(216, 166, 58, 0.2)', borderRadius: '8px', padding: '6px 12px' }}>
+                                                <code style={{ color: 'var(--light-gold)', fontFamily: 'monospace', fontSize: '13px', letterSpacing: '0.5px' }}>{device.mac_address}</code>
+                                                <button className="copy-btn" onClick={() => handleCopyMac(device.mac_address)} title="Copiar MAC" style={{ marginLeft: 0 }}>
+                                                    {copiedMac === device.mac_address
+                                                        ? <Check size={14} style={{ color: '#22c55e' }} />
+                                                        : <Copy size={14} style={{ color: 'var(--premium-gold)', opacity: 0.6 }} />
+                                                    }
+                                                </button>
+                                            </div>
                                         </td>
                                         <td style={{ padding: '16px 24px', textAlign: 'center' }}>
                                             <span style={{ fontSize: '12px', background: 'var(--bg-dark)', padding: '4px 10px', borderRadius: '4px', textTransform: 'uppercase' }}>
@@ -247,23 +457,35 @@ export default function DevicesPage() {
                                             </span>
                                         </td>
                                         <td style={{ padding: '16px 24px', textAlign: 'center' }}>
-                                            <div style={{ 
+                                            <div style={{
                                                 display: 'inline-flex', alignItems: 'center', gap: '8px',
                                                 padding: '4px 12px', borderRadius: '20px',
                                                 background: device.status === 'Bloqueado' ? 'rgba(178, 30, 43, 0.1)' : 'rgba(34, 197, 94, 0.1)',
                                                 border: `1px solid ${device.status === 'Bloqueado' ? 'var(--primary-red)' : '#22c55e'}`
                                             }}>
-                                                <div style={{ 
+                                                <div style={{
                                                     width: '6px', height: '6px', borderRadius: '50%',
                                                     background: device.status === 'Bloqueado' ? 'var(--primary-red)' : '#22c55e',
                                                     boxShadow: `0 0 8px ${device.status === 'Bloqueado' ? 'var(--primary-red)' : '#22c55e'}`
                                                 }} />
-                                                <span style={{ 
+                                                <span style={{
                                                     fontSize: '12px', fontWeight: '600',
                                                     color: device.status === 'Bloqueado' ? 'var(--highlight-red)' : '#4ade80'
                                                 }}>
                                                     {device.status || 'Ativo'}
                                                 </span>
+                                            </div>
+                                        </td>
+                                        <td style={{ padding: '16px 24px', textAlign: 'center' }}>
+                                            <div className="date-info" style={{ justifyContent: 'center' }}>
+                                                <CalendarDays size={13} />
+                                                <span>{formatDate(device.created_at)}</span>
+                                            </div>
+                                        </td>
+                                        <td style={{ padding: '16px 24px', textAlign: 'center' }}>
+                                            <div className="date-info" style={{ justifyContent: 'center' }}>
+                                                <Clock size={13} />
+                                                <span>{formatDateTime(device.last_sync)}</span>
                                             </div>
                                         </td>
                                         <td style={{ padding: '16px 24px' }}>
@@ -280,7 +502,7 @@ export default function DevicesPage() {
                                                     {togglingStatus === device.id ? (
                                                         <Loader2 size={18} style={{ color: 'var(--text-muted)', animation: 'spin 1s linear infinite' }} />
                                                     ) : (
-                                                        device.status === 'Bloqueado' 
+                                                        device.status === 'Bloqueado'
                                                             ? <Lock size={18} style={{ color: 'var(--highlight-red)' }} />
                                                             : <Unlock size={18} style={{ color: 'var(--text-secondary)' }} />
                                                     )}
@@ -319,22 +541,22 @@ export default function DevicesPage() {
 
                     {/* Mobile Card View */}
                     <div className="mobile-only-list" style={{ display: 'none', flexDirection: 'column', gap: '16px' }}>
-                        {devices.map(device => (
+                        {paginatedDevices.map(device => (
                             <div key={device.id} className="premium-card animate-fade" style={{ padding: '20px' }}>
-                                <div style={{ marginBottom: '16px' }}>
+                                <div style={{ marginBottom: '12px' }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '8px' }}>
                                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 }}>
                                             <Smartphone size={16} color="var(--premium-gold)" />
                                             <span style={{ fontWeight: '700', fontSize: '16px', color: '#ffffff', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{device.name}</span>
                                         </div>
-                                        <div style={{ 
+                                        <div style={{
                                             display: 'flex', alignItems: 'center', gap: '6px',
                                             padding: '4px 12px', borderRadius: '12px',
                                             background: device.status === 'Bloqueado' ? 'rgba(178, 30, 43, 0.1)' : 'rgba(34, 197, 94, 0.1)',
                                             border: `1px solid ${device.status === 'Bloqueado' ? 'var(--primary-red)' : '#22c55e'}`,
                                             flexShrink: 0
                                         }}>
-                                            <span style={{ 
+                                            <span style={{
                                                 fontSize: '10px', fontWeight: '800',
                                                 color: device.status === 'Bloqueado' ? 'var(--highlight-red)' : '#4ade80',
                                                 textTransform: 'uppercase',
@@ -344,14 +566,34 @@ export default function DevicesPage() {
                                             </span>
                                         </div>
                                     </div>
-                                    <div style={{ paddingLeft: '24px' }}>
-                                        <code style={{ fontSize: '12px', color: 'var(--light-gold)', background: 'rgba(216, 166, 58, 0.08)', padding: '3px 8px', borderRadius: '4px', fontFamily: 'monospace', letterSpacing: '0.5px' }}>
-                                            {device.mac_address}
-                                        </code>
+                                    <div style={{ paddingLeft: '24px', display: 'flex', alignItems: 'center' }}>
+                                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'rgba(216, 166, 58, 0.08)', border: '1px solid rgba(216, 166, 58, 0.2)', borderRadius: '8px', padding: '5px 10px' }}>
+                                            <code style={{ fontSize: '12px', color: 'var(--light-gold)', fontFamily: 'monospace', letterSpacing: '0.5px' }}>
+                                                {device.mac_address}
+                                            </code>
+                                            <button className="copy-btn" onClick={() => handleCopyMac(device.mac_address)} title="Copiar MAC" style={{ marginLeft: 0 }}>
+                                                {copiedMac === device.mac_address
+                                                    ? <Check size={13} style={{ color: '#22c55e' }} />
+                                                    : <Copy size={13} style={{ color: 'var(--premium-gold)', opacity: 0.6 }} />
+                                                }
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
-                                
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--glass-border)' }}>
+
+                                {/* Dates row */}
+                                <div style={{ display: 'flex', gap: '16px', paddingLeft: '24px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                                    <div className="date-info">
+                                        <CalendarDays size={12} />
+                                        <span>Criado: {formatDate(device.created_at)}</span>
+                                    </div>
+                                    <div className="date-info">
+                                        <Clock size={12} />
+                                        <span>Sync: {formatDateTime(device.last_sync)}</span>
+                                    </div>
+                                </div>
+
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '12px', borderTop: '1px solid var(--glass-border)' }}>
                                     <span style={{ fontSize: '11px', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>
                                         LISTA: <strong style={{ color: 'var(--text-secondary)' }}>{device.playlist_type || 'XTREAM'}</strong>
                                     </span>
@@ -370,6 +612,21 @@ export default function DevicesPage() {
                             </div>
                         ))}
                     </div>
+
+                    {/* Pagination */}
+                    {totalPages > 1 && (
+                        <div className="pagination">
+                            <button disabled={safeCurrentPage <= 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))}>
+                                <ChevronLeft size={16} /> Anterior
+                            </button>
+                            <span className="page-info">
+                                Página {safeCurrentPage} de {totalPages}
+                            </span>
+                            <button disabled={safeCurrentPage >= totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}>
+                                Próxima <ChevronRight size={16} />
+                            </button>
+                        </div>
+                    )}
                 </div>
             )}
 
@@ -499,8 +756,8 @@ export default function DevicesPage() {
                             </div>
                             <div>
                                 <label style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '8px', display: 'block' }}>Endereço MAC (Somente leitura)</label>
-                                <input className="input-field" value={deviceToEdit.mac_address} readOnly 
-                                    style={{ background: 'rgba(0,0,0,0.4)', color: 'var(--text-muted)', fontFamily: 'monospace', letterSpacing: '1px' }} 
+                                <input className="input-field" value={deviceToEdit.mac_address} readOnly
+                                    style={{ background: 'rgba(0,0,0,0.4)', color: 'var(--text-muted)', fontFamily: 'monospace', letterSpacing: '1px' }}
                                 />
                             </div>
 
@@ -633,18 +890,18 @@ export default function DevicesPage() {
                         <p style={{ color: 'var(--text-muted)', marginBottom: '32px', fontSize: '13px' }}>
                             Esta ação não pode ser desfeita e ele perderá o acesso à lista IPTV.
                         </p>
-                        
+
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                            <button 
+                            <button
                                 onClick={() => setDeviceToDelete(null)}
-                                className="input-field" 
+                                className="input-field"
                                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', padding: '12px' }}
                             >
                                 Cancelar
                             </button>
-                            <button 
+                            <button
                                 onClick={executeDelete}
-                                className="btn-primary" 
+                                className="btn-primary"
                                 style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '12px' }}
                             >
                                 Sim, Remover

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Smartphone, Wifi, WifiOff, User } from 'lucide-react'
+import { Smartphone, Wifi, WifiOff, User, Shield, CalendarDays, Lock } from 'lucide-react'
 import { getDashboardData } from './dashboard-actions'
 
 export default function HomePage() {
@@ -14,8 +14,6 @@ export default function HomePage() {
       const result = await getDashboardData()
       if (result && result.success) {
         setData(result)
-      } else {
-        console.warn('Dashboard result unsuccessful', result)
       }
     } catch (err) {
       console.error('Failed to load dashboard:', err)
@@ -36,10 +34,22 @@ export default function HomePage() {
     )
   }
 
+  const formatDate = (dateStr) => {
+    if (!dateStr) return '—'
+    const d = new Date(dateStr)
+    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+  }
+
+  const formatDateTime = (dateStr) => {
+    if (!dateStr) return 'Nunca sincronizou'
+    const d = new Date(dateStr)
+    return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+  }
+
   const stats = [
-    { label: 'Total Dispositivos', value: data?.totalDevices || 0, icon: <Smartphone size={20} color="var(--premium-gold)" /> },
-    { label: 'Ativos', value: data?.activeDevices || 0, icon: <Wifi size={20} color="#44ff44" /> },
-    { label: 'Inativos', value: data?.inactiveDevices || 0, icon: <WifiOff size={20} color="#ff4444" /> },
+    { label: 'Total de Dispositivos', value: data?.totalDevices || 0, icon: <Smartphone size={22} color="var(--premium-gold)" />, color: 'var(--premium-gold)' },
+    { label: 'Dispositivos Ativos', value: data?.activeDevices || 0, icon: <Wifi size={22} color="#22c55e" />, color: '#22c55e' },
+    { label: 'Dispositivos Bloqueados', value: data?.blockedDevices || 0, icon: <Lock size={22} color="#ef4444" />, color: '#ef4444' },
   ]
 
   return (
@@ -78,16 +88,42 @@ export default function HomePage() {
                   justifyContent: 'space-between',
                   alignItems: 'center',
                   paddingBottom: '16px',
-                  borderBottom: '1px solid var(--glass-border)'
+                  borderBottom: '1px solid var(--glass-border)',
+                  gap: '12px'
                 }}>
-                  <div>
-                    <p style={{ fontWeight: '600' }}>{device.name}</p>
+                  <div style={{ minWidth: 0 }}>
+                    <p style={{ fontWeight: '600', marginBottom: '4px' }}>{device.name}</p>
                     <code style={{ fontSize: '12px', color: 'var(--premium-gold)' }}>{device.mac_address}</code>
+                    <div style={{ display: 'flex', gap: '16px', marginTop: '6px', flexWrap: 'wrap' }}>
+                      <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <CalendarDays size={11} /> {formatDate(device.created_at)}
+                      </span>
+                      {device.last_sync && (
+                        <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                          <Shield size={11} /> Sync: {formatDateTime(device.last_sync)}
+                        </span>
+                      )}
+                    </div>
                   </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <p style={{ color: device.status === 'Ativo' ? '#44ff44' : '#ff4444', fontSize: '12px', fontWeight: 'bold' }}>
-                      ● {device.status || 'Ativo'}
-                    </p>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{
+                      display: 'inline-flex', alignItems: 'center', gap: '6px',
+                      padding: '4px 10px', borderRadius: '16px',
+                      background: device.status === 'Bloqueado' ? 'rgba(178, 30, 43, 0.1)' : 'rgba(34, 197, 94, 0.1)',
+                      border: `1px solid ${device.status === 'Bloqueado' ? 'var(--primary-red)' : '#22c55e'}`
+                    }}>
+                      <div style={{
+                        width: '5px', height: '5px', borderRadius: '50%',
+                        background: device.status === 'Bloqueado' ? 'var(--primary-red)' : '#22c55e',
+                        boxShadow: `0 0 6px ${device.status === 'Bloqueado' ? 'var(--primary-red)' : '#22c55e'}`
+                      }} />
+                      <span style={{
+                        fontSize: '11px', fontWeight: '600',
+                        color: device.status === 'Bloqueado' ? 'var(--highlight-red)' : '#4ade80'
+                      }}>
+                        {device.status || 'Ativo'}
+                      </span>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -107,7 +143,7 @@ export default function HomePage() {
                 {stat.icon}
                 <p style={{ color: '#ffffff', fontSize: '13px', textTransform: 'uppercase', letterSpacing: '1px' }}>{stat.label}</p>
               </div>
-              <h2 style={{ fontSize: '32px', color: '#ffffff' }}>{stat.value}</h2>
+              <h2 style={{ fontSize: '32px', color: stat.color }}>{stat.value}</h2>
             </div>
           ))}
         </div>
