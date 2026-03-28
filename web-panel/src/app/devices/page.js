@@ -74,8 +74,10 @@ export default function DevicesPage() {
 
     // Reset page when search changes
     useEffect(() => {
-        setCurrentPage(1)
-    }, [searchQuery])
+        if (currentPage !== 1) {
+            setCurrentPage(1)
+        }
+    }, [searchQuery, currentPage])
 
     // Copy MAC
     const handleCopyMac = async (mac) => {
