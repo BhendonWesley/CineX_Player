@@ -47,6 +47,15 @@ export default function DevicesPage() {
         setMacInput(formatMac(e.target.value))
     }
 
+    const handleSearchChange = (e) => {
+        const nextQuery = e.target.value
+        setSearchQuery(nextQuery)
+
+        if (currentPage !== 1) {
+            setCurrentPage(1)
+        }
+    }
+
     const loadDevices = useCallback(async () => {
         const result = await getDevices()
         if (result.success) {
@@ -71,13 +80,6 @@ export default function DevicesPage() {
     const totalPages = Math.max(1, Math.ceil(filteredDevices.length / ITEMS_PER_PAGE))
     const safeCurrentPage = Math.min(currentPage, totalPages)
     const paginatedDevices = filteredDevices.slice((safeCurrentPage - 1) * ITEMS_PER_PAGE, safeCurrentPage * ITEMS_PER_PAGE)
-
-    // Reset page when search changes
-    useEffect(() => {
-        if (currentPage !== 1) {
-            setCurrentPage(1)
-        }
-    }, [searchQuery, currentPage])
 
     // Copy MAC
     const handleCopyMac = async (mac) => {
@@ -388,7 +390,7 @@ export default function DevicesPage() {
                         type="text"
                         placeholder="Buscar por nome ou MAC..."
                         value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onChange={handleSearchChange}
                     />
                 </div>
                 {searchQuery && (
