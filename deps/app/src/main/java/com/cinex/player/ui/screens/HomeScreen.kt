@@ -658,11 +658,28 @@ fun AccountInfoDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
+                val closeRequester = remember { FocusRequester() }
+                LaunchedEffect(Unit) {
+                    kotlinx.coroutines.delay(100)
+                    try { closeRequester.requestFocus() } catch (_: Exception) {}
+                }
+
                 Button(
                     onClick = onDismiss,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(40.dp),
+                        .height(40.dp)
+                        .focusRequester(closeRequester)
+                        .onKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyDown) {
+                                when (event.key) {
+                                    Key.DirectionUp, Key.DirectionDown,
+                                    Key.DirectionLeft, Key.DirectionRight -> true
+                                    Key.Back -> { onDismiss(); true }
+                                    else -> false
+                                }
+                            } else false
+                        },
                     colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(alpha = 0.05f)),
                     shape = RoundedCornerShape(12.dp),
                     border = androidx.compose.foundation.BorderStroke(1.dp, CineX_DeepRed.copy(alpha = 0.5f))

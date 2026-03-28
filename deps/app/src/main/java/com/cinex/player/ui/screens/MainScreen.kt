@@ -88,6 +88,7 @@ fun MainScreen(
 
     // Simplificamos a lógica de seleção de playlist: se não houver playlist ativa
     val showPlaylistSelectionDashboard = currentPlaylist == null || isServerSwapOpen
+    val canResumeLiveTv = !isInitializing && !isLoading && !showPlaylistSelectionDashboard && !isDeviceBlocked
 
     // Para o Live TV sempre que sair do contexto principal (playlist removida, bloqueio, etc.)
     LaunchedEffect(showPlaylistSelectionDashboard, isDeviceBlocked) {
@@ -130,10 +131,14 @@ fun MainScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE) {
+            if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
                 viewModel.stopLiveTv()
             }
-            if (event == Lifecycle.Event.ON_RESUME && (selectedTab == 1 || (playingChannel != null && playingChannel?.category == "LIVE_TV"))) {
+            if (
+                event == Lifecycle.Event.ON_RESUME &&
+                canResumeLiveTv &&
+                (selectedTab == 1 || (playingChannel != null && playingChannel?.category == "LIVE_TV"))
+            ) {
                 viewModel.resumeLiveTv()
             }
         }

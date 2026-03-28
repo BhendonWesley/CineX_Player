@@ -9,7 +9,7 @@ import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowInsetsController
 import android.widget.FrameLayout
-import androidx.annotation.OptIn
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
@@ -60,18 +60,43 @@ import androidx.media3.ui.PlayerView
 import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.*
+import androidx.compose.ui.ExperimentalComposeUiApi
 import com.cinex.player.data.model.Channel
 import kotlinx.coroutines.delay
 import com.cinex.player.ui.MainViewModel
 import com.cinex.player.ui.theme.DeepRed
+import kotlin.OptIn
 
-@OptIn(UnstableApi::class)
+private enum class PlayerTopFocusTarget { BACK, INFO, FAVORITE, ASPECT }
+
+private fun moveTopFocus(
+    target: PlayerTopFocusTarget,
+    backRequester: FocusRequester,
+    infoRequester: FocusRequester,
+    favoriteRequester: FocusRequester,
+    aspectRequester: FocusRequester
+): Boolean {
+    return try {
+        when (target) {
+            PlayerTopFocusTarget.BACK -> backRequester.requestFocus()
+            PlayerTopFocusTarget.INFO -> infoRequester.requestFocus()
+            PlayerTopFocusTarget.FAVORITE -> favoriteRequester.requestFocus()
+            PlayerTopFocusTarget.ASPECT -> aspectRequester.requestFocus()
+        }
+        true
+    } catch (_: Exception) {
+        false
+    }
+}
+
+@OptIn(UnstableApi::class, ExperimentalComposeUiApi::class)
 @Composable
 fun VideoPlayerScreen(
     channel: Channel,
@@ -183,17 +208,24 @@ fun VideoPlayerScreen(
     DisposableEffect(exoPlayer) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
+                isPlaying = exoPlayer.isPlaying
                 if (playbackState == Player.STATE_ENDED && !isLiveTv) {
                     isVideoEnded = true
                     showNextEpisodeOverlay = true
                 }
             }
+
+            override fun onIsPlayingChanged(isPlayingNow: Boolean) {
+                isPlaying = isPlayingNow
+            }
+
             override fun onPlayerError(error: PlaybackException) {
                 if (!isLiveTv) {
                     showPlaybackError = true
                 }
             }
         }
+        isPlaying = exoPlayer.isPlaying
         exoPlayer.addListener(listener)
         onDispose { exoPlayer.removeListener(listener) }
     }
@@ -265,7 +297,6 @@ fun VideoPlayerScreen(
         while (true) {
             currentPosition = exoPlayer.currentPosition
             duration = exoPlayer.duration.coerceAtLeast(0L)
-            isPlaying = exoPlayer.isPlaying
             if (!isControlsVisible) break
             delay(500)
         }
@@ -285,6 +316,11 @@ fun VideoPlayerScreen(
 
     val playerFocusRequester = remember { FocusRequester() }
     val backButtonFocusRequester = remember { FocusRequester() }
+    val infoButtonFocusRequester = remember { FocusRequester() }
+    val favoriteButtonFocusRequester = remember { FocusRequester() }
+    val aspectButtonFocusRequester = remember { FocusRequester() }
+    var pendingTopFocus by remember { mutableStateOf<PlayerTopFocusTarget?>(null) }
+    var focusedTopControl by remember { mutableStateOf<PlayerTopFocusTarget?>(null) }
     LaunchedEffect(Unit) { playerFocusRequester.requestFocus() }
 
     // Na TV: quando os controles aparecem em Live TV, foca o botão Voltar automaticamente
@@ -292,6 +328,52 @@ fun VideoPlayerScreen(
         if (isTv && isLiveTv && isControlsVisible) {
             delay(80)
             try { backButtonFocusRequester.requestFocus() } catch (_: Exception) {}
+        }
+    }
+
+    LaunchedEffect(isControlsVisible, pendingTopFocus, isTv) {
+        if (!isTv) return@LaunchedEffect
+        if (!isControlsVisible) {
+            pendingTopFocus = null
+            focusedTopControl = null
+            try { playerFocusRequester.requestFocus() } catch (_: Exception) {}
+            return@LaunchedEffect
+        }
+        when (pendingTopFocus) {
+            PlayerTopFocusTarget.BACK -> {
+                delay(80)
+                try { backButtonFocusRequester.requestFocus() } catch (_: Exception) {}
+                pendingTopFocus = null
+            }
+            PlayerTopFocusTarget.INFO -> {
+                delay(80)
+                try { infoButtonFocusRequester.requestFocus() } catch (_: Exception) {}
+                pendingTopFocus = null
+            }
+            PlayerTopFocusTarget.FAVORITE -> {
+                delay(80)
+                try { favoriteButtonFocusRequester.requestFocus() } catch (_: Exception) {}
+                pendingTopFocus = null
+            }
+            PlayerTopFocusTarget.ASPECT -> {
+                delay(80)
+                try { aspectButtonFocusRequester.requestFocus() } catch (_: Exception) {}
+                pendingTopFocus = null
+            }
+            null -> Unit
+        }
+    }
+
+    BackHandler(enabled = !showResumeDialog && !showExitDialog && !showPlaybackError && !showNextEpisodeOverlay) {
+        when {
+            showInfoPanel -> showInfoPanel = false
+            isControlsVisible -> {
+                pendingTopFocus = null
+                focusedTopControl = null
+                isControlsVisible = false
+                try { playerFocusRequester.requestFocus() } catch (_: Exception) {}
+            }
+            else -> onBack()
         }
     }
 
@@ -305,6 +387,7 @@ fun VideoPlayerScreen(
                 if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
                 // Quando um dialog está visível, não consumir eventos — deixar o dialog tratar
                 if (showResumeDialog || showExitDialog || showPlaybackError || showNextEpisodeOverlay) return@onKeyEvent false
+                if (focusedTopControl != null) return@onKeyEvent false
                 when (event.key) {
                     Key.DirectionCenter, Key.Enter -> {
                         if (!isControlsVisible) {
@@ -331,12 +414,25 @@ fun VideoPlayerScreen(
                         true
                     }
                     Key.DirectionRight -> {
-                        if (!isLiveTv) exoPlayer.seekTo(minOf(exoPlayer.duration, exoPlayer.currentPosition + 10_000))
-                        isControlsVisible = true
+                        if (isTv) {
+                            pendingTopFocus = PlayerTopFocusTarget.INFO
+                            isControlsVisible = true
+                        } else {
+                            if (!isLiveTv) exoPlayer.seekTo(minOf(exoPlayer.duration, exoPlayer.currentPosition + 10_000))
+                            isControlsVisible = true
+                        }
                         true
                     }
                     Key.DirectionUp -> {
-                        onNextChannel?.invoke()
+                        if (isTv && !isLiveTv) {
+                            pendingTopFocus = PlayerTopFocusTarget.BACK
+                            isControlsVisible = true
+                        } else if (isTv && isControlsVisible) {
+                            pendingTopFocus = PlayerTopFocusTarget.BACK
+                            isControlsVisible = true
+                        } else {
+                            onNextChannel?.invoke()
+                        }
                         true
                     }
                     Key.DirectionDown -> {
@@ -344,7 +440,16 @@ fun VideoPlayerScreen(
                         true
                     }
                     Key.Back -> {
-                        onBack()
+                        if (showInfoPanel) {
+                            showInfoPanel = false
+                        } else if (isControlsVisible) {
+                            pendingTopFocus = null
+                            focusedTopControl = null
+                            isControlsVisible = false
+                            try { playerFocusRequester.requestFocus() } catch (_: Exception) {}
+                        } else {
+                            onBack()
+                        }
                         true
                     }
                     else -> false
@@ -428,9 +533,49 @@ fun VideoPlayerScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    val topButtonFocusBorder = remember {
+                        Brush.linearGradient(listOf(Color(0xFFE11D2E), Color(0xFFF59E0B)))
+                    }
+
+                    var isBackFocused by remember { mutableStateOf(false) }
                     IconButton(
                         onClick = { if (isLiveTv) onBack() else showExitDialog = true },
-                        modifier = Modifier.focusRequester(backButtonFocusRequester)
+                        modifier = Modifier
+                            .focusRequester(backButtonFocusRequester)
+                            .focusProperties {
+                                right = infoButtonFocusRequester
+                                down = playerFocusRequester
+                                up = FocusRequester.Cancel
+                                left = FocusRequester.Cancel
+                            }
+                            .onFocusChanged {
+                                isBackFocused = it.isFocused
+                                if (it.isFocused) focusedTopControl = PlayerTopFocusTarget.BACK
+                                else if (focusedTopControl == PlayerTopFocusTarget.BACK) focusedTopControl = null
+                            }
+                            .onKeyEvent { event ->
+                                if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                                when (event.key) {
+                                    Key.DirectionRight -> moveTopFocus(
+                                        PlayerTopFocusTarget.INFO,
+                                        backButtonFocusRequester,
+                                        infoButtonFocusRequester,
+                                        favoriteButtonFocusRequester,
+                                        aspectButtonFocusRequester
+                                    )
+                                    Key.DirectionLeft, Key.DirectionUp -> true
+                                    Key.DirectionDown -> {
+                                        focusedTopControl = null
+                                        try { playerFocusRequester.requestFocus() } catch (_: Exception) {}
+                                        true
+                                    }
+                                    else -> false
+                                }
+                            }
+                            .then(
+                                if (isBackFocused) Modifier.border(2.dp, topButtonFocusBorder, RoundedCornerShape(999.dp))
+                                else Modifier
+                            )
                     ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White, modifier = Modifier.size(28.dp))
                     }
@@ -446,15 +591,107 @@ fun VideoPlayerScreen(
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        IconButton(onClick = { showInfoPanel = !showInfoPanel }) {
+                        var isInfoFocused by remember { mutableStateOf(false) }
+                        IconButton(
+                            onClick = { showInfoPanel = !showInfoPanel },
+                            modifier = Modifier
+                                .focusRequester(infoButtonFocusRequester)
+                                .focusProperties {
+                                    left = backButtonFocusRequester
+                                    right = favoriteButtonFocusRequester
+                                    down = playerFocusRequester
+                                    up = FocusRequester.Cancel
+                                }
+                                .onFocusChanged {
+                                    isInfoFocused = it.isFocused
+                                    if (it.isFocused) focusedTopControl = PlayerTopFocusTarget.INFO
+                                    else if (focusedTopControl == PlayerTopFocusTarget.INFO) focusedTopControl = null
+                                }
+                                .onKeyEvent { event ->
+                                    if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                                    when (event.key) {
+                                        Key.DirectionLeft -> moveTopFocus(
+                                            PlayerTopFocusTarget.BACK,
+                                            backButtonFocusRequester,
+                                            infoButtonFocusRequester,
+                                            favoriteButtonFocusRequester,
+                                            aspectButtonFocusRequester
+                                        )
+                                        Key.DirectionRight -> moveTopFocus(
+                                            PlayerTopFocusTarget.FAVORITE,
+                                            backButtonFocusRequester,
+                                            infoButtonFocusRequester,
+                                            favoriteButtonFocusRequester,
+                                            aspectButtonFocusRequester
+                                        )
+                                        Key.DirectionUp -> true
+                                        Key.DirectionDown -> {
+                                            focusedTopControl = null
+                                            try { playerFocusRequester.requestFocus() } catch (_: Exception) {}
+                                            true
+                                        }
+                                        else -> false
+                                    }
+                                }
+                                .then(
+                                    if (isInfoFocused) Modifier.border(2.dp, topButtonFocusBorder, RoundedCornerShape(999.dp))
+                                    else Modifier
+                                )
+                        ) {
                             Icon(Icons.Default.Info, contentDescription = "Info", tint = Color.White, modifier = Modifier.size(24.dp))
                         }
                         
                         var isFav by remember { mutableStateOf(channel.isFavorite) }
-                        IconButton(onClick = { 
-                            isFav = !isFav
-                            viewModel.updateFavorite(channel.id, isFav)
-                        }) {
+                        var isFavoriteFocused by remember { mutableStateOf(false) }
+                        IconButton(
+                            onClick = {
+                                isFav = !isFav
+                                viewModel.updateFavorite(channel.id, isFav)
+                            },
+                            modifier = Modifier
+                                .focusRequester(favoriteButtonFocusRequester)
+                                .focusProperties {
+                                    left = infoButtonFocusRequester
+                                    right = aspectButtonFocusRequester
+                                    down = playerFocusRequester
+                                    up = FocusRequester.Cancel
+                                }
+                                .onFocusChanged {
+                                    isFavoriteFocused = it.isFocused
+                                    if (it.isFocused) focusedTopControl = PlayerTopFocusTarget.FAVORITE
+                                    else if (focusedTopControl == PlayerTopFocusTarget.FAVORITE) focusedTopControl = null
+                                }
+                                .onKeyEvent { event ->
+                                    if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                                    when (event.key) {
+                                        Key.DirectionLeft -> moveTopFocus(
+                                            PlayerTopFocusTarget.INFO,
+                                            backButtonFocusRequester,
+                                            infoButtonFocusRequester,
+                                            favoriteButtonFocusRequester,
+                                            aspectButtonFocusRequester
+                                        )
+                                        Key.DirectionRight -> moveTopFocus(
+                                            PlayerTopFocusTarget.ASPECT,
+                                            backButtonFocusRequester,
+                                            infoButtonFocusRequester,
+                                            favoriteButtonFocusRequester,
+                                            aspectButtonFocusRequester
+                                        )
+                                        Key.DirectionUp -> true
+                                        Key.DirectionDown -> {
+                                            focusedTopControl = null
+                                            try { playerFocusRequester.requestFocus() } catch (_: Exception) {}
+                                            true
+                                        }
+                                        else -> false
+                                    }
+                                }
+                                .then(
+                                    if (isFavoriteFocused) Modifier.border(2.dp, topButtonFocusBorder, RoundedCornerShape(999.dp))
+                                    else Modifier
+                                )
+                        ) {
                             Icon(
                                 imageVector = if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                                 contentDescription = "Favoritar",
@@ -463,11 +700,50 @@ fun VideoPlayerScreen(
                             )
                         }
                         
-                        IconButton(onClick = {
-                            resizeMode = if (resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FILL)
-                                AspectRatioFrameLayout.RESIZE_MODE_FIT
-                            else AspectRatioFrameLayout.RESIZE_MODE_FILL
-                        }) {
+                        var isAspectFocused by remember { mutableStateOf(false) }
+                        IconButton(
+                            onClick = {
+                                resizeMode = if (resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FILL)
+                                    AspectRatioFrameLayout.RESIZE_MODE_FIT
+                                else AspectRatioFrameLayout.RESIZE_MODE_FILL
+                            },
+                            modifier = Modifier
+                                .focusRequester(aspectButtonFocusRequester)
+                                .focusProperties {
+                                    left = favoriteButtonFocusRequester
+                                    down = playerFocusRequester
+                                    up = FocusRequester.Cancel
+                                    right = FocusRequester.Cancel
+                                }
+                                .onFocusChanged {
+                                    isAspectFocused = it.isFocused
+                                    if (it.isFocused) focusedTopControl = PlayerTopFocusTarget.ASPECT
+                                    else if (focusedTopControl == PlayerTopFocusTarget.ASPECT) focusedTopControl = null
+                                }
+                                .onKeyEvent { event ->
+                                    if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                                    when (event.key) {
+                                        Key.DirectionLeft -> moveTopFocus(
+                                            PlayerTopFocusTarget.FAVORITE,
+                                            backButtonFocusRequester,
+                                            infoButtonFocusRequester,
+                                            favoriteButtonFocusRequester,
+                                            aspectButtonFocusRequester
+                                        )
+                                        Key.DirectionRight, Key.DirectionUp -> true
+                                        Key.DirectionDown -> {
+                                            focusedTopControl = null
+                                            try { playerFocusRequester.requestFocus() } catch (_: Exception) {}
+                                            true
+                                        }
+                                        else -> false
+                                    }
+                                }
+                                .then(
+                                    if (isAspectFocused) Modifier.border(2.dp, topButtonFocusBorder, RoundedCornerShape(999.dp))
+                                    else Modifier
+                                )
+                        ) {
                             Icon(
                                 imageVector = if (resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FILL) Icons.Default.FitScreen else Icons.Default.Fullscreen,
                                 contentDescription = "Tela Cheia", tint = Color.White, modifier = Modifier.size(24.dp)
@@ -803,6 +1079,7 @@ fun VideoPlayerScreen(
     }
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun PlayerDialog(
     title: String,
@@ -811,6 +1088,10 @@ fun PlayerDialog(
     onCancel: () -> Unit
 ) {
     val confirmRequester = remember { FocusRequester() }
+    val cancelRequester = remember { FocusRequester() }
+    val dialogFocusBorder = remember {
+        Brush.linearGradient(listOf(Color(0xFFE11D2E), Color(0xFFF59E0B)))
+    }
 
     LaunchedEffect(Unit) {
         try { confirmRequester.requestFocus() } catch (_: Exception) {}
@@ -868,16 +1149,33 @@ fun PlayerDialog(
                         .weight(1f)
                         .height(56.dp)
                         .focusRequester(confirmRequester)
+                        .focusProperties {
+                            right = cancelRequester
+                            left = FocusRequester.Cancel
+                            up = FocusRequester.Cancel
+                            down = FocusRequester.Cancel
+                        }
                         .onFocusChanged { isConfirmFocused = it.isFocused }
                         .focusable()
                         .onKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyUp &&
-                                (event.key == Key.DirectionCenter || event.key == Key.Enter)
-                            ) { onConfirm(); true } else false
+                            when {
+                                event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight -> {
+                                    cancelRequester.requestFocus()
+                                    true
+                                }
+                                event.type == KeyEventType.KeyDown &&
+                                    (event.key == Key.DirectionLeft || event.key == Key.DirectionUp || event.key == Key.DirectionDown) -> true
+                                event.type == KeyEventType.KeyUp &&
+                                    (event.key == Key.DirectionCenter || event.key == Key.Enter) -> {
+                                    onConfirm()
+                                    true
+                                }
+                                else -> false
+                            }
                         }
                         .background(com.cinex.player.ui.theme.DeepRed, RoundedCornerShape(8.dp))
                         .then(
-                            if (isConfirmFocused) Modifier.border(2.dp, Brush.linearGradient(listOf(Color(0xFFE11D2E), Color(0xFFF59E0B))), RoundedCornerShape(8.dp))
+                            if (isConfirmFocused) Modifier.border(2.dp, dialogFocusBorder, RoundedCornerShape(8.dp))
                             else Modifier
                         )
                         .clickable { onConfirm() },
@@ -891,16 +1189,34 @@ fun PlayerDialog(
                     modifier = Modifier
                         .weight(1f)
                         .height(56.dp)
+                        .focusRequester(cancelRequester)
+                        .focusProperties {
+                            left = confirmRequester
+                            right = FocusRequester.Cancel
+                            up = FocusRequester.Cancel
+                            down = FocusRequester.Cancel
+                        }
                         .onFocusChanged { isCancelFocused = it.isFocused }
                         .focusable()
                         .onKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyUp &&
-                                (event.key == Key.DirectionCenter || event.key == Key.Enter)
-                            ) { onCancel(); true } else false
+                            when {
+                                event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft -> {
+                                    confirmRequester.requestFocus()
+                                    true
+                                }
+                                event.type == KeyEventType.KeyDown &&
+                                    (event.key == Key.DirectionRight || event.key == Key.DirectionUp || event.key == Key.DirectionDown) -> true
+                                event.type == KeyEventType.KeyUp &&
+                                    (event.key == Key.DirectionCenter || event.key == Key.Enter) -> {
+                                    onCancel()
+                                    true
+                                }
+                                else -> false
+                            }
                         }
                         .background(Color.DarkGray, RoundedCornerShape(8.dp))
                         .then(
-                            if (isCancelFocused) Modifier.border(2.dp, Brush.linearGradient(listOf(Color(0xFFE11D2E), Color(0xFFF59E0B))), RoundedCornerShape(8.dp))
+                            if (isCancelFocused) Modifier.border(2.dp, dialogFocusBorder, RoundedCornerShape(8.dp))
                             else Modifier
                         )
                         .clickable { onCancel() },

@@ -10,6 +10,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -144,7 +145,10 @@ fun SeriesDetailsScreen(
 
     LaunchedEffect(viewMode) {
         when (viewMode) {
-            SeriesViewMode.LANDING -> try { playButtonRequester.requestFocus() } catch (_: Exception) {}
+            SeriesViewMode.LANDING -> if (isTv) {
+                kotlinx.coroutines.delay(200)
+                try { playButtonRequester.requestFocus() } catch (_: Exception) {}
+            }
             SeriesViewMode.EPISODES -> if (isTv) {
                 kotlinx.coroutines.delay(150)
                 try { selectedSeasonFocusRequester.requestFocus() } catch (_: Exception) {}
@@ -206,15 +210,15 @@ fun SeriesDetailsScreen(
                     },
                     modifier = Modifier
                         .then(if (isTv) Modifier.focusRequester(backArrowFocusRequester) else Modifier)
-                        .focusProperties { up = FocusRequester.Cancel }
                         .onKeyEvent { event ->
-                            if (!isTv || viewMode != SeriesViewMode.EPISODES) return@onKeyEvent false
-                            when (event.type) {
-                                KeyEventType.KeyDown -> when (event.key) {
-                                    Key.DirectionDown -> { focusSeasonRequest++; true }
-                                    Key.DirectionUp, Key.DirectionLeft, Key.DirectionRight -> true
-                                    else -> false
+                            if (!isTv || event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                            when (event.key) {
+                                Key.DirectionDown -> {
+                                    if (viewMode == SeriesViewMode.EPISODES) focusSeasonRequest++
+                                    else try { playButtonRequester.requestFocus() } catch (_: Exception) {}
+                                    true
                                 }
+                                Key.DirectionUp, Key.DirectionLeft, Key.DirectionRight -> true
                                 else -> false
                             }
                         }
@@ -337,8 +341,15 @@ fun SeriesDetailsScreen(
                                 modifier = Modifier
                                     .height(52.dp)
                                     .focusRequester(playButtonRequester)
-                                    .focusProperties { down = FocusRequester.Cancel; left = FocusRequester.Cancel }
                                     .onFocusChanged { isPlayFocused = it.isFocused }
+                                    .onKeyEvent { event ->
+                                        if (!isTv || event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                                        when (event.key) {
+                                            Key.DirectionUp -> { focusBackArrowRequest++; true }
+                                            Key.DirectionDown, Key.DirectionLeft -> true
+                                            else -> false
+                                        }
+                                    }
                                     .then(
                                         if (isPlayFocused) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(8.dp))
                                         else Modifier
@@ -374,8 +385,15 @@ fun SeriesDetailsScreen(
                                 modifier = Modifier
                                     .height(52.dp)
                                     .width(140.dp)
-                                    .focusProperties { down = FocusRequester.Cancel; right = FocusRequester.Cancel }
                                     .onFocusChanged { isTrailerFocused = it.isFocused }
+                                    .onKeyEvent { event ->
+                                        if (!isTv || event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                                        when (event.key) {
+                                            Key.DirectionUp -> { focusBackArrowRequest++; true }
+                                            Key.DirectionDown, Key.DirectionRight -> true
+                                            else -> false
+                                        }
+                                    }
                                     .then(
                                         if (isTrailerFocused) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(8.dp))
                                         else Modifier
