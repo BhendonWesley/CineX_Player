@@ -51,7 +51,7 @@ class UpdateManager @Inject constructor(
 
                 UpdateInfo(
                     newVersion = release.tagName.removePrefix("v"),
-                    changelog = release.body ?: "",
+                    changelog = cleanChangelog(release.body),
                     apkUrl = apkAsset.downloadUrl,
                     apkSize = apkAsset.size
                 )
@@ -151,6 +151,24 @@ class UpdateManager @Inject constructor(
         prefs.edit()
             .putString(KEY_CHANGELOG_SEEN_VERSION, BuildConfig.VERSION_NAME)
             .apply()
+    }
+
+    private fun cleanChangelog(body: String?): String {
+        if (body.isNullOrBlank()) return "Melhorias de desempenho e correções de bugs."
+
+        // Remove markdown formatting
+        var clean = body
+            .replace(Regex("\\*\\*Full Changelog\\*\\*:.*", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("https?://\\S+"), "")          // Remove URLs
+            .replace(Regex("\\*\\*([^*]+)\\*\\*"), "$1")  // **bold** → bold
+            .replace(Regex("\\*([^*]+)\\*"), "$1")         // *italic* → italic
+            .replace(Regex("^#+\\s*", RegexOption.MULTILINE), "") // Remove # headers
+            .replace(Regex("^[-*]\\s+", RegexOption.MULTILINE), "• ") // Bullet points
+            .replace(Regex("\\n{3,}"), "\n\n")             // Múltiplas linhas vazias
+            .trim()
+
+        if (clean.isBlank()) return "Melhorias de desempenho e correções de bugs."
+        return clean
     }
 
     private fun parseVersion(tag: String): List<Int> {

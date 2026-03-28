@@ -3,8 +3,9 @@
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
-import { Lock, User, Loader2, Shield, Smartphone, Zap, Eye, EyeOff } from 'lucide-react'
+import { Lock, User, Loader2, Shield, Smartphone, Zap, Eye, EyeOff, Download, MonitorSmartphone } from 'lucide-react'
 import { loginAction } from './actions'
+import { getLoginStats } from './stats-action'
 
 // ═══════════════════════════════════════════════════════════
 //  70 unique TMDB posters — no duplicates
@@ -114,7 +115,12 @@ export default function LoginPage() {
     const [showPassword, setShowPassword] = useState(false)
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState('')
+    const [stats, setStats] = useState(null)
     const router = useRouter()
+
+    useEffect(() => {
+        getLoginStats().then(setStats).catch(() => {})
+    }, [])
 
     useEffect(() => {
         let isMounted = true;
@@ -344,6 +350,29 @@ export default function LoginPage() {
                             </p>
                         </div>
                     </form>
+
+                    {stats && (
+                        <div style={{ display: 'flex', gap: '10px', marginTop: '16px', justifyContent: 'center' }}>
+                            <div style={{
+                                display: 'flex', alignItems: 'center', gap: '6px',
+                                padding: '6px 14px', borderRadius: '20px',
+                                background: 'rgba(178,30,43,.1)', border: '1px solid rgba(178,30,43,.25)',
+                                fontSize: '11px', color: '#e8e8e8', fontWeight: '600'
+                            }}>
+                                <Download size={13} style={{ color: '#E23A3A' }} />
+                                <span style={{ color: '#E23A3A', fontWeight: '700' }}>{stats.downloads}</span> DOWNLOADS
+                            </div>
+                            <div style={{
+                                display: 'flex', alignItems: 'center', gap: '6px',
+                                padding: '6px 14px', borderRadius: '20px',
+                                background: 'rgba(216,166,58,.08)', border: '1px solid rgba(216,166,58,.2)',
+                                fontSize: '11px', color: '#e8e8e8', fontWeight: '600'
+                            }}>
+                                <MonitorSmartphone size={13} style={{ color: '#D8A63A' }} />
+                                <span style={{ color: '#D8A63A', fontWeight: '700' }}>{stats.macs}</span> DISPOSITIVOS
+                            </div>
+                        </div>
+                    )}
 
                     <div style={{ textAlign: 'center', marginTop: '16px' }}>
                         <p style={{ fontSize: '10px', color: '#4a5063' }}>© CineX Player — Acesso restrito para revendedores autorizados.</p>

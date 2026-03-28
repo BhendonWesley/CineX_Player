@@ -11,6 +11,7 @@ import android.view.WindowInsetsController
 import android.widget.FrameLayout
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
@@ -25,6 +26,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -46,6 +48,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -414,13 +417,10 @@ fun VideoPlayerScreen(
                         true
                     }
                     Key.DirectionRight -> {
-                        if (isTv) {
-                            pendingTopFocus = PlayerTopFocusTarget.INFO
-                            isControlsVisible = true
-                        } else {
-                            if (!isLiveTv) exoPlayer.seekTo(minOf(exoPlayer.duration, exoPlayer.currentPosition + 10_000))
-                            isControlsVisible = true
+                        if (!isLiveTv) {
+                            exoPlayer.seekTo(minOf(exoPlayer.duration, exoPlayer.currentPosition + 10_000))
                         }
+                        isControlsVisible = true
                         true
                     }
                     Key.DirectionUp -> {
@@ -478,14 +478,6 @@ fun VideoPlayerScreen(
                     }
                 } else Modifier
             )
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null
-            ) { 
-                if (!showResumeDialog && !showExitDialog) {
-                    isControlsVisible = !isControlsVisible 
-                }
-            }
     ) {
         val fullscreenPlayerViewRef = remember { mutableStateOf<PlayerView?>(null) }
 
@@ -501,8 +493,10 @@ fun VideoPlayerScreen(
 
         AndroidView(
             factory = { context ->
+                val layoutRes = if (isTv) com.cinex.player.R.layout.player_view_surface
+                    else com.cinex.player.R.layout.player_view_texture
                 val view = android.view.LayoutInflater.from(context)
-                    .inflate(com.cinex.player.R.layout.player_view_texture, null, false) as PlayerView
+                    .inflate(layoutRes, null, false) as PlayerView
                 view.apply {
                     player = exoPlayer
                     useController = false
@@ -517,16 +511,26 @@ fun VideoPlayerScreen(
                 it.resizeMode = resizeMode
                 if (it.player !== exoPlayer) it.player = exoPlayer
             },
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize().clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) {
+                if (!showResumeDialog && !showExitDialog) {
+                    isControlsVisible = !isControlsVisible
+                }
+            }
         )
-        
+
         AnimatedVisibility(
             visible = isControlsVisible && !showResumeDialog && !showExitDialog,
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.fillMaxSize()
         ) {
-            Box(modifier = Modifier.fillMaxSize().background(Color(0x66000000))) {
+            Box(modifier = Modifier.fillMaxSize().background(Color(0x66000000)).clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null
+            ) { isControlsVisible = false }) {
                 
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(24.dp).align(Alignment.TopCenter),
@@ -785,8 +789,8 @@ fun VideoPlayerScreen(
                         }
                     } else {
                         // VOD: seek -10s / play / seek +10s
-                        IconButton(onClick = { exoPlayer.seekBack() }, modifier = Modifier.size(56.dp)) {
-                            Icon(Icons.Default.Replay10, contentDescription = "-10s", tint = Color.White, modifier = Modifier.fillMaxSize())
+                        SeekButton(icon = Icons.Default.Replay10, description = "-10s", size = 56.dp) {
+                            exoPlayer.seekBack()
                         }
 
                         IconButton(
@@ -801,8 +805,8 @@ fun VideoPlayerScreen(
                             )
                         }
 
-                        IconButton(onClick = { exoPlayer.seekForward() }, modifier = Modifier.size(56.dp)) {
-                            Icon(Icons.Default.Forward10, contentDescription = "+10s", tint = Color.White, modifier = Modifier.fillMaxSize())
+                        SeekButton(icon = Icons.Default.Forward10, description = "+10s", size = 56.dp) {
+                            exoPlayer.seekForward()
                         }
                     }
                 }
@@ -1513,6 +1517,30 @@ fun NextEpisodeOverlay(
                 NextEpisodeButton(progress = progress.value, accentColor = accentRed, onClick = onPlayNext)
             }
         }
+    }
+}
+
+@Composable
+private fun SeekButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    description: String,
+    size: Dp,
+    onClick: () -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.7f else 1f,
+        animationSpec = tween(durationMillis = 100), label = "seekScale"
+    )
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier
+            .size(size)
+            .graphicsLayer(scaleX = scale, scaleY = scale),
+        interactionSource = interactionSource
+    ) {
+        Icon(icon, contentDescription = description, tint = Color.White, modifier = Modifier.fillMaxSize())
     }
 }
 

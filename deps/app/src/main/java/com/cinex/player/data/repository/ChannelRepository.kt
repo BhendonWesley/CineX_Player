@@ -242,25 +242,19 @@ class ChannelRepository @Inject constructor(
             if (parsedChannels.isNotEmpty()) {
                 onProgress(50, 50, 50, "Sincronizando metadados...")
                 
-                // Preservar dados TMDB e do usuário (favoritos, progresso)
-                val existingTmdbData = channelDao.getTmdbAndUserDataByPlaylist(url).associateBy { it.remoteId }
+                // Preservar apenas dados do usuário (favoritos, progresso)
+                // Dados TMDB são re-enriquecidos do zero para evitar metadados incorretos
+                val existingUserData = channelDao.getTmdbAndUserDataByPlaylist(url).associateBy { it.remoteId }
 
                 onProgress(50, 50, 50, "Limpando dados antigos...")
                 channelDao.clearByPlaylist(url)
-                categoryDao.clearByPlaylist(url) 
-                
+                categoryDao.clearByPlaylist(url)
+
                 val channelsWithOldData = parsedChannels.mapIndexed { index, channel ->
-                    val old = existingTmdbData[channel.remoteId]
+                    val old = existingUserData[channel.remoteId]
                     channel.copy(
                         orderIndex = index,
                         categoryId = channel.groupTitle,
-                        tmdbRating = old?.tmdbRating,
-                        tmdbSynopsis = old?.tmdbSynopsis,
-                        posterUrl = old?.posterUrl,
-                        bannerUrl = old?.bannerUrl,
-                        tmdbYear = old?.tmdbYear,
-                        castMembers = old?.castMembers,
-                        trailerUrl = old?.trailerUrl,
                         resumePosition = old?.resumePosition ?: 0L,
                         totalDuration = old?.totalDuration ?: 0L,
                         isFavorite = old?.isFavorite ?: false
@@ -565,7 +559,8 @@ class ChannelRepository @Inject constructor(
             
             onProgress(10, 10, 10, "Conectando ao servidor...")
             
-            // Busca metadados existentes para preservar capas e dados do usuário
+            // Preservar apenas dados do usuário (favoritos, progresso)
+            // Dados TMDB são re-enriquecidos do zero para evitar metadados incorretos
             val existingTmdbData = withContext(Dispatchers.IO) {
                 channelDao.getTmdbAndUserDataByPlaylist(playlistUrl).associateBy { it.remoteId }
             }
@@ -744,13 +739,6 @@ class ChannelRepository @Inject constructor(
                     orderIndex = index,
                     remoteId = "live_${stream.stream_id}",
                     tvgId = stream.epg_channel_id,
-                    tmdbRating = old?.tmdbRating,
-                    tmdbSynopsis = old?.tmdbSynopsis,
-                    posterUrl = old?.posterUrl,
-                    bannerUrl = old?.bannerUrl,
-                    tmdbYear = old?.tmdbYear,
-                    castMembers = old?.castMembers,
-                    trailerUrl = old?.trailerUrl,
                     isFavorite = old?.isFavorite ?: false
                 )
             }
@@ -791,13 +779,6 @@ class ChannelRepository @Inject constructor(
                     playlistUrl = playlistUrl,
                     orderIndex = index,
                     remoteId = "vod_${m.stream_id}",
-                    tmdbRating = old?.tmdbRating,
-                    tmdbSynopsis = old?.tmdbSynopsis,
-                    posterUrl = old?.posterUrl,
-                    bannerUrl = old?.bannerUrl,
-                    tmdbYear = old?.tmdbYear,
-                    castMembers = old?.castMembers,
-                    trailerUrl = old?.trailerUrl,
                     resumePosition = old?.resumePosition ?: 0L,
                     totalDuration = old?.totalDuration ?: 0L,
                     isFavorite = old?.isFavorite ?: false
@@ -840,13 +821,6 @@ class ChannelRepository @Inject constructor(
                     playlistUrl = playlistUrl,
                     orderIndex = index,
                     remoteId = "series_${s.series_id}",
-                    tmdbRating = old?.tmdbRating,
-                    tmdbSynopsis = old?.tmdbSynopsis,
-                    posterUrl = old?.posterUrl,
-                    bannerUrl = old?.bannerUrl,
-                    tmdbYear = old?.tmdbYear,
-                    castMembers = old?.castMembers,
-                    trailerUrl = old?.trailerUrl,
                     resumePosition = old?.resumePosition ?: 0L,
                     totalDuration = old?.totalDuration ?: 0L,
                     isFavorite = old?.isFavorite ?: false
@@ -947,11 +921,36 @@ class ChannelRepository @Inject constructor(
                 tmdbApi.searchSeries(tmdbApiKey, seriesQuery, year = extractedYear)
             }
 
-            // Busca o resultado com ano exato
+            // Normaliza texto para comparação (remove acentos, pontuação, minúsculo)
+            fun normalize(s: String): String = java.text.Normalizer
+                .normalize(s, java.text.Normalizer.Form.NFD)
+                .replace(Regex("[\\p{InCombiningDiacriticalMarks}]"), "")
+                .lowercase()
+                .replace(Regex("[^a-z0-9 ]"), "")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+
+            // Verifica se o resultado do TMDb é compatível com a query buscada
+            fun isNameMatch(result: com.cinex.player.data.network.TmdbMovieResult, queryStr: String): Boolean {
+                val nq = normalize(queryStr)
+                val resultNames = listOfNotNull(result.title, result.name)
+                return resultNames.any { name ->
+                    val nr = normalize(name)
+                    nr.contains(nq) || nq.contains(nr) ||
+                    // Aceita se pelo menos 70% das palavras da query aparecem no resultado
+                    nq.split(" ").filter { it.length > 2 }.let { words ->
+                        words.isEmpty() || words.count { nr.contains(it) } >= (words.size * 0.7).toInt().coerceAtLeast(1)
+                    }
+                }
+            }
+
+            val effectiveQuery = if (isMovie) query else seriesQuery
+
+            // Busca o resultado com ano exato E nome compatível
             fun findExactYear(results: List<com.cinex.player.data.network.TmdbMovieResult>): com.cinex.player.data.network.TmdbMovieResult? =
                 results.find { res ->
                     val resYear = (res.release_date ?: res.first_air_date)?.take(4)
-                    resYear == extractedYear
+                    resYear == extractedYear && isNameMatch(res, effectiveQuery)
                 }
 
             val tmdbResult = if (extractedYear != null) {
@@ -968,7 +967,8 @@ class ChannelRepository @Inject constructor(
                         // Se ainda não encontrou, retorna null — melhor sem dados que com dados errados
                     }
             } else {
-                searchResponse.results.firstOrNull()
+                // Sem ano: valida que o nome do resultado bate com a query
+                searchResponse.results.firstOrNull { isNameMatch(it, effectiveQuery) }
             }
 
             tmdbResult?.let { bestMatch ->
@@ -1166,7 +1166,7 @@ class ChannelRepository @Inject constructor(
                 
                 val response = api.getSeriesInfo(username, password, seriesId)
 
-                // Preservar dados TMDB existentes (stills, posters, etc.)
+                // Preservar apenas dados do usuário (progresso)
                 val existingEpisodes = channelDao.getEpisodesForSeriesList(seriesName, url)
                     .associateBy { it.remoteId }
 
@@ -1187,13 +1187,12 @@ class ChannelRepository @Inject constructor(
                             episodeNumber = ep.episode_num,
                             playlistUrl = url,
                             remoteId = remoteId,
-                            tmdbSynopsis = ep.info?.plot ?: old?.tmdbSynopsis,
-                            tmdbRating = ep.info?.rating?.toDoubleOrNull() ?: old?.tmdbRating,
-                            tmdbYear = ep.info?.release_date?.take(4) ?: old?.tmdbYear,
-                            bannerUrl = old?.bannerUrl,
-                            posterUrl = old?.posterUrl,
-                            castMembers = old?.castMembers,
-                            trailerUrl = old?.trailerUrl
+                            tmdbSynopsis = ep.info?.plot,
+                            tmdbRating = ep.info?.rating?.toDoubleOrNull(),
+                            tmdbYear = ep.info?.release_date?.take(4),
+                            resumePosition = old?.resumePosition ?: 0L,
+                            totalDuration = old?.totalDuration ?: 0L,
+                            isFavorite = old?.isFavorite ?: false
                         )
                     }
 

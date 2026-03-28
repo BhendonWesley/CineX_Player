@@ -187,6 +187,13 @@ fun LiveTvScreen(
         }
     }
 
+    // Gate de carregamento inicial — só aparece uma vez até os dados carregarem pela primeira vez
+    var initialLoadComplete by remember { mutableStateOf(false) }
+    if (!initialLoadComplete && categories.isNotEmpty() && pagingItems.itemCount > 0) {
+        initialLoadComplete = true
+    }
+    val isDataReady = initialLoadComplete
+
     Box(modifier = modifier.fillMaxSize()) {
         // Imagem de fundo com blur
         androidx.compose.foundation.Image(
@@ -202,8 +209,39 @@ fun LiveTvScreen(
                 .fillMaxSize()
                 .background(Color(0xBB101010))
         )
-        // Conteúdo por cima do fundo
-    Row(modifier = Modifier.fillMaxSize()) {
+
+        if (!isDataReady) {
+            // Loading centralizado enquanto categorias e canais carregam
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    val transition = rememberInfiniteTransition(label = "screenLoading")
+                    val rotation by transition.animateFloat(
+                        initialValue = 0f,
+                        targetValue = 360f,
+                        animationSpec = infiniteRepeatable(animation = tween(durationMillis = 1000)),
+                        label = "rotation"
+                    )
+                    Canvas(modifier = Modifier.size(40.dp)) {
+                        drawArc(
+                            color = Color(0xFFC62828),
+                            startAngle = rotation,
+                            sweepAngle = 270f,
+                            useCenter = false,
+                            style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
+                        )
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        text = "Carregando TV ao Vivo...",
+                        color = Color.White.copy(alpha = 0.5f),
+                        fontSize = 14.sp
+                    )
+                }
+            }
+        }
+
+        // Conteúdo por cima do fundo — só visível quando dados estão prontos
+    if (isDataReady) Row(modifier = Modifier.fillMaxSize()) {
         // 1. Coluna de Categorias
         val catListState = rememberLazyListState()
 
@@ -380,8 +418,10 @@ fun LiveTvScreen(
                 if (selectedChannel != null) {
                     AndroidView(
                         factory = { ctx ->
+                            val layoutRes = if (isTv) com.cinex.player.R.layout.player_view_surface
+                                else com.cinex.player.R.layout.player_view_texture
                             (LayoutInflater.from(ctx).inflate(
-                                com.cinex.player.R.layout.player_view_texture, null
+                                layoutRes, null
                             ) as PlayerView).apply {
                                 player = viewModel.liveTvPlayer
                                 useController = false
@@ -706,7 +746,7 @@ fun LiveTvScreen(
                 }
             }
         }
-    } // fim Row
+    } // fim Row + isDataReady
 
     // Fullscreen agora é via VideoPlayerScreen (MainScreen.playingChannel)
 

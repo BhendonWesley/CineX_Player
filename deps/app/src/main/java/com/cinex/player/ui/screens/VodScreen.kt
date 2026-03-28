@@ -50,6 +50,11 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import com.cinex.player.ui.theme.CineX_BackgroundBlue
 import androidx.paging.PagingData
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 
 private val AccentGold = Color(0xFFD8A63A)
 private val AccentRed  = Color(0xFFE11D2E)
@@ -179,7 +184,43 @@ fun VodScreen(
                 .background(CineX_BackgroundBlue.copy(alpha = 0.85f))
         )
 
-        Row(
+        // Gate de carregamento inicial — só aparece uma vez até os dados carregarem pela primeira vez
+        var initialLoadComplete by remember { mutableStateOf(type == "SEARCH") }
+        if (!initialLoadComplete && categories.isNotEmpty() && pagingItems.itemCount > 0) {
+            initialLoadComplete = true
+        }
+        val isDataReady = initialLoadComplete
+
+        if (!isDataReady) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    val transition = rememberInfiniteTransition(label = "vodLoading")
+                    val rotation by transition.animateFloat(
+                        initialValue = 0f,
+                        targetValue = 360f,
+                        animationSpec = infiniteRepeatable(animation = tween(durationMillis = 1000)),
+                        label = "rotation"
+                    )
+                    Canvas(modifier = Modifier.size(40.dp)) {
+                        drawArc(
+                            color = Color(0xFFC62828),
+                            startAngle = rotation,
+                            sweepAngle = 270f,
+                            useCenter = false,
+                            style = Stroke(width = 4.dp.toPx(), cap = StrokeCap.Round)
+                        )
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    Text(
+                        text = if (type == "MOVIE") "Carregando Filmes..." else "Carregando Séries...",
+                        color = Color.White.copy(alpha = 0.5f),
+                        fontSize = 14.sp
+                    )
+                }
+            }
+        }
+
+        if (isDataReady) Row(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(top = 12.dp)
