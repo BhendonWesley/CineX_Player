@@ -288,7 +288,7 @@ export default function LoginPage() {
                             <Image src="/cinex-logo-final.png" alt="CineX" width={80} height={80} style={{ objectFit: 'contain', filter: 'drop-shadow(0 4px 12px rgba(178,30,43,0.3))' }} />
                         </div>
                         <h1 style={{ fontSize: '24px', fontWeight: '800', color: '#B21E2B', marginBottom: '2px', letterSpacing: '-0.5px' }}>
-                            CENTRAL DE CONTROLE
+                            PAINEL DE CONTROLE
                         </h1>
                         <p style={{ fontSize: '10px', color: '#D8A63A', fontWeight: '600', letterSpacing: '2.5px', textTransform: 'uppercase' }}>
                             Painel oficial de revendedores
