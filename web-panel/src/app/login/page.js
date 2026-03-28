@@ -222,8 +222,8 @@ export default function LoginPage() {
                 .ov{position:absolute;inset:0;z-index:2;pointer-events:none;background:radial-gradient(ellipse at center,rgba(11,15,26,.55)0%,rgba(11,15,26,.9)70%)}
                 .gw{position:absolute;top:10%;left:50%;transform:translateX(-50%);width:500px;height:500px;background:radial-gradient(circle,rgba(178,30,43,.12)0%,transparent 55%);pointer-events:none;z-index:3}
 
-                .cc{background:rgba(11,15,26,.92);backdrop-filter:blur(28px)saturate(1.5);-webkit-backdrop-filter:blur(28px)saturate(1.5);border:1px solid rgba(216,166,58,.12);border-radius:20px;box-shadow:0 32px 80px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.04),inset 0 1px 0 rgba(255,255,255,.06);width:100%;max-width:420px;padding:36px 32px;position:relative;z-index:10}
-                @media(max-width:480px){.cc{margin:16px;padding:28px 20px;max-width:calc(100vw - 32px);border-radius:16px}}
+                .cc{background:rgba(11,15,26,.92);backdrop-filter:blur(28px)saturate(1.5);-webkit-backdrop-filter:blur(28px)saturate(1.5);border:1px solid rgba(216,166,58,.12);border-radius:20px;box-shadow:0 32px 80px rgba(0,0,0,.7),0 0 0 1px rgba(255,255,255,.04),inset 0 1px 0 rgba(255,255,255,.06);width:100%;max-width:420px;padding:36px 32px;position:relative;z-index:10;max-height:calc(100vh - 32px);overflow-y:auto}
+                @media(max-width:480px){.cc{margin:16px;padding:28px 20px;max-width:calc(100vw - 32px);border-radius:16px;max-height:calc(100vh - 32px)}}
 
                 .ci{width:100%;padding:13px 16px 13px 44px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.07);border-radius:10px;color:#fff;font-size:14px;outline:none;transition:border-color .3s,box-shadow .3s;box-sizing:border-box}
                 .ci:focus{border-color:rgba(216,166,58,.45);box-shadow:0 0 20px rgba(216,166,58,.08)}
@@ -242,7 +242,7 @@ export default function LoginPage() {
                 @media(max-width:480px){.login-hint{white-space:normal;max-width:220px;margin:0 auto}}
             `}</style>
 
-            <div style={{ position: 'relative', minHeight: '100vh', width: '100%', background: '#0B0F1A', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+            <div style={{ position: 'relative', height: '100vh', width: '100%', background: '#0B0F1A', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
                 {/* ═══ FULLSCREEN POSTER WALL — 14 unique columns ═══ */}
                 <div className="pw">
                     {displayCols.map((col, ci) => {
