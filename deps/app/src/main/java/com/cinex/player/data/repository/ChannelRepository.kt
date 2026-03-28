@@ -996,7 +996,7 @@ class ChannelRepository @Inject constructor(
                 val trailerUrl = pickBestTrailer(allVideos)
 
                 if (channel.category == "SERIES" && channel.seriesName != null) {
-                    // Atualiza o canal da série em si (não os episódios)
+                    // Atualiza o canal representativo da série
                     channelDao.updateTmdbInfo(
                         channel.id,
                         tmdbResult.vote_average,
@@ -1006,6 +1006,17 @@ class ChannelRepository @Inject constructor(
                         year,
                         cast,
                         trailerUrl
+                    )
+                    // Propaga backdrop e poster para TODOS os episódios da série
+                    // (garante que getFeaturedContent sempre encontre /original/ em qualquer linha do grupo)
+                    channelDao.propagateSeriesBackdrop(
+                        channel.seriesName!!,
+                        channel.playlistUrl,
+                        tmdbResult.vote_average,
+                        posterUrl,
+                        backdropUrl,
+                        year,
+                        cast
                     )
 
                     // Busca thumbnails e sinopses específicas de episódios em uma única passada

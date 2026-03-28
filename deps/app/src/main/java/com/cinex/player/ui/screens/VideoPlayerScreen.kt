@@ -284,7 +284,16 @@ fun VideoPlayerScreen(
     }
 
     val playerFocusRequester = remember { FocusRequester() }
+    val backButtonFocusRequester = remember { FocusRequester() }
     LaunchedEffect(Unit) { playerFocusRequester.requestFocus() }
+
+    // Na TV: quando os controles aparecem em Live TV, foca o botão Voltar automaticamente
+    LaunchedEffect(isControlsVisible) {
+        if (isTv && isLiveTv && isControlsVisible) {
+            delay(80)
+            try { backButtonFocusRequester.requestFocus() } catch (_: Exception) {}
+        }
+    }
 
     Box(
         modifier = modifier
@@ -298,13 +307,27 @@ fun VideoPlayerScreen(
                 if (showResumeDialog || showExitDialog || showPlaybackError || showNextEpisodeOverlay) return@onKeyEvent false
                 when (event.key) {
                     Key.DirectionCenter, Key.Enter -> {
-                        if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
-                        isControlsVisible = true
+                        if (!isControlsVisible) {
+                            // Primeira pressão: apenas mostra os controles
+                            isControlsVisible = true
+                        } else {
+                            // Controles já visíveis: pausar/retomar
+                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                        }
                         true
                     }
                     Key.DirectionLeft -> {
-                        if (!isLiveTv) exoPlayer.seekTo(maxOf(0, exoPlayer.currentPosition - 10_000))
-                        isControlsVisible = true
+                        if (isLiveTv) {
+                            // Live TV: mostra controles; se já visíveis, foca o botão Voltar
+                            if (!isControlsVisible) {
+                                isControlsVisible = true
+                            } else {
+                                try { backButtonFocusRequester.requestFocus() } catch (_: Exception) {}
+                            }
+                        } else {
+                            exoPlayer.seekTo(maxOf(0, exoPlayer.currentPosition - 10_000))
+                            isControlsVisible = true
+                        }
                         true
                     }
                     Key.DirectionRight -> {
@@ -405,9 +428,10 @@ fun VideoPlayerScreen(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    IconButton(onClick = { 
-                        if (isLiveTv) onBack() else showExitDialog = true 
-                    }) {
+                    IconButton(
+                        onClick = { if (isLiveTv) onBack() else showExitDialog = true },
+                        modifier = Modifier.focusRequester(backButtonFocusRequester)
+                    ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White, modifier = Modifier.size(28.dp))
                     }
 

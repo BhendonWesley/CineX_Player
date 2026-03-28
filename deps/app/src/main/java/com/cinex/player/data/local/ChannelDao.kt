@@ -43,11 +43,15 @@ interface ChannelDao {
 
     @Query("""
         SELECT * FROM channels
-        WHERE category IN ('MOVIE', 'SERIES')
-        AND playlistUrl = :url
-        AND bannerUrl IS NOT NULL AND bannerUrl != '' AND bannerUrl NOT LIKE '%null'
-        AND tmdbSynopsis IS NOT NULL AND tmdbSynopsis != ''
-        GROUP BY CASE WHEN category = 'SERIES' THEN seriesName ELSE name END
+        WHERE id IN (
+            SELECT MIN(id) FROM channels
+            WHERE category IN ('MOVIE', 'SERIES')
+            AND playlistUrl = :url
+            AND bannerUrl IS NOT NULL AND bannerUrl != '' AND bannerUrl NOT LIKE '%null'
+            AND bannerUrl LIKE '%/original/%'
+            AND tmdbSynopsis IS NOT NULL AND tmdbSynopsis != ''
+            GROUP BY CASE WHEN category = 'SERIES' THEN seriesName ELSE name END
+        )
         ORDER BY tmdbRating DESC
         LIMIT 40
     """)
@@ -66,7 +70,7 @@ interface ChannelDao {
     @Query("SELECT DISTINCT seasonNumber FROM channels WHERE category = 'SERIES' AND seriesName = :seriesName AND playlistUrl = :url ORDER BY seasonNumber ASC")
     fun getSeasonsForSeries(seriesName: String, url: String): Flow<List<Int>>
 
-    @Query("SELECT * FROM channels WHERE category = 'SERIES' AND seriesName = :seriesName AND seasonNumber = :season AND playlistUrl = :url ORDER BY episodeNumber ASC")
+    @Query("SELECT * FROM channels WHERE category = 'SERIES' AND seriesName = :seriesName AND seasonNumber = :season AND playlistUrl = :url GROUP BY episodeNumber ORDER BY episodeNumber ASC")
     fun getEpisodesBySeasonPaged(seriesName: String, season: Int, url: String): PagingSource<Int, Channel>
 
     @Query("""
@@ -106,9 +110,20 @@ interface ChannelDao {
     @Query("SELECT * FROM channels WHERE isFavorite = 1 AND category = 'SERIES' AND playlistUrl = :url GROUP BY seriesName ORDER BY orderIndex ASC")
     fun getFavoriteSeriesPaged(url: String): PagingSource<Int, Channel>
 
-    // Atualiza metadados do TMDB
+    // Atualiza metadados do TMDB em uma linha específica
     @Query("UPDATE channels SET tmdbRating = :rating, tmdbSynopsis = :synopsis, posterUrl = :posterUrl, bannerUrl = :bannerUrl, tmdbYear = :year, castMembers = :cast, trailerUrl = :trailer WHERE id = :channelId")
     suspend fun updateTmdbInfo(channelId: Int, rating: Double?, synopsis: String?, posterUrl: String?, bannerUrl: String?, year: String?, cast: String?, trailer: String?)
+
+    // Propaga o backdrop da série para TODOS os episódios que ainda não têm bannerUrl (/original/)
+    // Garante que getFeaturedContent sempre encontre uma linha com backdrop válido para a série
+    @Query("""UPDATE channels SET
+        tmdbRating = :rating,
+        tmdbYear = :year,
+        castMembers = :cast,
+        posterUrl = CASE WHEN posterUrl IS NULL OR posterUrl = '' THEN :posterUrl ELSE posterUrl END,
+        bannerUrl = CASE WHEN bannerUrl IS NULL OR bannerUrl = '' OR bannerUrl NOT LIKE '%/original/%' THEN :bannerUrl ELSE bannerUrl END
+        WHERE category = 'SERIES' AND seriesName = :seriesName AND playlistUrl = :url""")
+    suspend fun propagateSeriesBackdrop(seriesName: String, url: String, rating: Double?, posterUrl: String?, bannerUrl: String?, year: String?, cast: String?)
 
     @Query("DELETE FROM channels WHERE playlistUrl = :url")
     suspend fun clearByPlaylist(url: String)
@@ -146,7 +161,13 @@ interface ChannelDao {
     @Query("UPDATE channels SET bannerUrl = :stillUrl WHERE seriesName = :seriesName AND seasonNumber = :season AND episodeNumber = :episode AND playlistUrl = :url")
     suspend fun updateEpisodeStill(seriesName: String, season: Int, episode: Int, stillUrl: String, url: String)
 
-    @Query("UPDATE channels SET bannerUrl = CASE WHEN :stillUrl IS NOT NULL AND :stillUrl != '' THEN :stillUrl ELSE bannerUrl END, tmdbSynopsis = CASE WHEN :synopsis IS NOT NULL AND :synopsis != '' THEN :synopsis ELSE tmdbSynopsis END WHERE seriesName = :seriesName AND seasonNumber = :season AND episodeNumber = :episode AND playlistUrl = :url")
+    @Query("""UPDATE channels SET
+        bannerUrl = CASE
+            WHEN :stillUrl IS NOT NULL AND :stillUrl != ''
+             AND (bannerUrl IS NULL OR bannerUrl = '' OR bannerUrl NOT LIKE '%/original/%')
+            THEN :stillUrl ELSE bannerUrl END,
+        tmdbSynopsis = CASE WHEN :synopsis IS NOT NULL AND :synopsis != '' THEN :synopsis ELSE tmdbSynopsis END
+        WHERE seriesName = :seriesName AND seasonNumber = :season AND episodeNumber = :episode AND playlistUrl = :url""")
     suspend fun updateEpisodeStillAndSynopsis(seriesName: String, season: Int, episode: Int, stillUrl: String?, synopsis: String?, url: String)
 
     @Query("""

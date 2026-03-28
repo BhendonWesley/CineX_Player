@@ -46,6 +46,39 @@ import com.cinex.player.ui.theme.DarkBackground
 
 enum class SeriesViewMode { LANDING, EPISODES }
 
+// Remove anos duplicados tipo "(2021) (2021)" → "(2021)"
+private fun cleanSeriesTitle(title: String): String {
+    val yearPattern = Regex("\\(\\d{4}\\)")
+    val matches = yearPattern.findAll(title).toList()
+    if (matches.size <= 1) return title
+    var count = 0
+    val result = yearPattern.replace(title) { m ->
+        count++
+        if (count == 1) m.value else ""
+    }
+    return result.replace(Regex("\\s+"), " ").trim()
+}
+
+// Remove o prefixo "{SeriesName} (YYYY) S{N} E{N}" do nome do episódio,
+// deixando apenas o título real do episódio se existir.
+private fun cleanEpisodeName(episodeName: String, seriesName: String?): String {
+    var name = episodeName.trim()
+    // Remove prefixo do nome da série (com ou sem ano)
+    if (seriesName != null) {
+        val base = seriesName.trim()
+        if (name.startsWith(base, ignoreCase = true)) {
+            name = name.removePrefix(base).trim()
+        }
+    }
+    // Remove (YYYY) do início
+    name = name.replace(Regex("^\\(\\d{4}\\)\\s*"), "")
+    // Remove padrão "S{N} E{N}" ou "S{NN} E{NN}" do início
+    name = name.replace(Regex("^S\\d+\\s*E\\d+\\s*[-–]?\\s*"), "")
+    // Remove ano entre parênteses solto no início
+    name = name.replace(Regex("^\\(\\d{4}\\)\\s*"), "")
+    return if (name.isBlank()) episodeName else name.trim()
+}
+
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun SeriesDetailsScreen(
@@ -73,11 +106,49 @@ fun SeriesDetailsScreen(
     }
     val pagingItems = episodesFlow.collectAsLazyPagingItems()
     val context = LocalContext.current
+    val isTv = remember {
+        val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
+        uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    }
     val playButtonRequester = remember { FocusRequester() }
+    val selectedSeasonFocusRequester = remember { FocusRequester() }
+    val firstEpisodeFocusRequester = remember { FocusRequester() }
+
+    val backArrowFocusRequester = remember { FocusRequester() }
+
+    // Contadores usados para disparar foco de forma segura via LaunchedEffect
+    var focusEpisodesRequest by remember { mutableIntStateOf(0) }
+    var focusSeasonRequest by remember { mutableIntStateOf(0) }
+    var focusBackArrowRequest by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(focusEpisodesRequest) {
+        if (focusEpisodesRequest > 0) {
+            kotlinx.coroutines.delay(80)
+            try { firstEpisodeFocusRequester.requestFocus() } catch (_: Exception) {}
+        }
+    }
+
+    LaunchedEffect(focusSeasonRequest) {
+        if (focusSeasonRequest > 0) {
+            kotlinx.coroutines.delay(80)
+            try { selectedSeasonFocusRequester.requestFocus() } catch (_: Exception) {}
+        }
+    }
+
+    LaunchedEffect(focusBackArrowRequest) {
+        if (focusBackArrowRequest > 0) {
+            kotlinx.coroutines.delay(80)
+            try { backArrowFocusRequester.requestFocus() } catch (_: Exception) {}
+        }
+    }
 
     LaunchedEffect(viewMode) {
-        if (viewMode == SeriesViewMode.LANDING) {
-            try { playButtonRequester.requestFocus() } catch (_: Exception) {}
+        when (viewMode) {
+            SeriesViewMode.LANDING -> try { playButtonRequester.requestFocus() } catch (_: Exception) {}
+            SeriesViewMode.EPISODES -> if (isTv) {
+                kotlinx.coroutines.delay(150)
+                try { selectedSeasonFocusRequester.requestFocus() } catch (_: Exception) {}
+            }
         }
     }
 
@@ -133,18 +204,23 @@ fun SeriesDetailsScreen(
                             onBack()
                         }
                     },
-                    modifier = Modifier.focusProperties { up = FocusRequester.Cancel }
+                    modifier = Modifier
+                        .then(if (isTv) Modifier.focusRequester(backArrowFocusRequester) else Modifier)
+                        .focusProperties { up = FocusRequester.Cancel }
+                        .onKeyEvent { event ->
+                            if (!isTv || viewMode != SeriesViewMode.EPISODES) return@onKeyEvent false
+                            when (event.type) {
+                                KeyEventType.KeyDown -> when (event.key) {
+                                    Key.DirectionDown -> { focusSeasonRequest++; true }
+                                    Key.DirectionUp, Key.DirectionLeft, Key.DirectionRight -> true
+                                    else -> false
+                                }
+                                else -> false
+                            }
+                        }
                 ) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White)
                 }
-                Spacer(modifier = Modifier.width(16.dp))
-                Text(
-                    text = (series.seriesName ?: series.name).uppercase(),
-                    color = Color.White,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    letterSpacing = 1.sp
-                )
             }
 
             if (viewMode == SeriesViewMode.LANDING) {
@@ -171,7 +247,7 @@ fun SeriesDetailsScreen(
                         modifier = Modifier.weight(1f).fillMaxHeight()
                     ) {
                         Text(
-                            text = (series.seriesName ?: series.name).uppercase(),
+                            text = cleanSeriesTitle(series.seriesName ?: series.name).uppercase(),
                             color = Color.White,
                             fontSize = 28.sp,
                             fontWeight = FontWeight.Black,
@@ -337,18 +413,31 @@ fun SeriesDetailsScreen(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            items(sortedSeasons) { seasonNum ->
+                            itemsIndexed(sortedSeasons) { seasonIndex, seasonNum ->
+                                val isFirst = seasonIndex == 0
                                 val isSelected = selectedSeason == seasonNum
                                 var isFocused by remember { mutableStateOf(false) }
                                 Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
+                                        .then(if (isTv && isSelected) Modifier.focusRequester(selectedSeasonFocusRequester) else Modifier)
                                         .onFocusChanged { isFocused = it.isFocused }
                                         .focusable(interactionSource = remember { MutableInteractionSource() })
                                         .onKeyEvent { event ->
-                                            if (event.type == KeyEventType.KeyUp &&
-                                                (event.key == Key.DirectionCenter || event.key == Key.Enter)
-                                            ) { selectedSeason = seasonNum; true } else false
+                                            when (event.type) {
+                                                KeyEventType.KeyDown -> when (event.key) {
+                                                    Key.DirectionRight -> { if (pagingItems.itemCount > 0) focusEpisodesRequest++; true }
+                                                    Key.DirectionLeft -> true
+                                                    // Primeira temporada: sobe para a seta de voltar
+                                                    Key.DirectionUp -> if (isFirst) { focusBackArrowRequest++; true } else false
+                                                    else -> false
+                                                }
+                                                KeyEventType.KeyUp -> when (event.key) {
+                                                    Key.DirectionCenter, Key.Enter -> { selectedSeason = seasonNum; true }
+                                                    else -> false
+                                                }
+                                                else -> false
+                                            }
                                         }
                                         .clip(RoundedCornerShape(8.dp))
                                         .then(
@@ -426,6 +515,10 @@ fun SeriesDetailsScreen(
                                         EpisodeItem(
                                             episode = episode,
                                             seriesPoster = series.bannerUrl ?: series.logoUrl,
+                                            seriesName = series.seriesName ?: series.name,
+                                            modifier = if (isTv && index == 0) Modifier.focusRequester(firstEpisodeFocusRequester) else Modifier,
+                                            onKeyLeft = if (isTv) { { focusSeasonRequest++ } } else null,
+                                            blockUp = isTv && index == 0,
                                             onClick = { onPlayEpisode(episode) }
                                         )
                                     }
@@ -514,7 +607,7 @@ fun ShimmerEpisodeItem() {
 }
 
 @Composable
-fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: String?, onClick: () -> Unit) {
+fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: String?, seriesName: String? = null, modifier: Modifier = Modifier, onKeyLeft: (() -> Unit)? = null, blockUp: Boolean = false, onClick: () -> Unit) {
     val imageModel = when {
         !episode.bannerUrl.isNullOrBlank() -> episode.bannerUrl
         !episode.logoUrl.isNullOrBlank() -> episode.logoUrl
@@ -525,14 +618,25 @@ fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: Stri
     var isFocused by remember { mutableStateOf(false) }
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .onFocusChanged { isFocused = it.isFocused }
             .focusable(interactionSource = remember { MutableInteractionSource() })
             .onKeyEvent { event ->
-                if (event.type == KeyEventType.KeyUp &&
-                    (event.key == Key.DirectionCenter || event.key == Key.Enter)
-                ) { onClick(); true } else false
+                when (event.type) {
+                    KeyEventType.KeyDown -> when (event.key) {
+                        Key.DirectionLeft -> { onKeyLeft?.invoke(); true }
+                        Key.DirectionRight -> true
+                        // Primeiro episódio: bloqueia UP (não pode vazar para fora)
+                        Key.DirectionUp -> if (blockUp) true else false
+                        else -> false
+                    }
+                    KeyEventType.KeyUp -> when (event.key) {
+                        Key.DirectionCenter, Key.Enter -> { onClick(); true }
+                        else -> false
+                    }
+                    else -> false
+                }
             }
             .clip(RoundedCornerShape(12.dp))
             .then(
@@ -582,7 +686,7 @@ fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: Stri
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "E${episode.episodeNumber}: ${episode.name}",
+                    text = "E${episode.episodeNumber}: ${cleanEpisodeName(episode.name, seriesName ?: episode.seriesName)}",
                     color = Color.White,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,

@@ -9,6 +9,12 @@ function getUsername(cookieStore) {
     return JSON.parse(session.value).username
 }
 
+// Força http:// removendo o "s" de https://
+function forceHttp(url) {
+    if (!url) return url
+    return url.replace(/^https:\/\//i, 'http://')
+}
+
 export async function getDevices() {
     const cookieStore = await cookies()
     const username = getUsername(cookieStore)
@@ -40,13 +46,13 @@ export async function addDevice(formData) {
         return { success: false, message: 'Nome e MAC são obrigatórios.' }
     }
 
-    // Montar config da playlist
+    // Montar config da playlist (forçar http:// nas URLs)
     let playlistConfig = {}
     if (playlistType === 'm3u') {
-        playlistConfig = { url: formData.get('m3u_url') || '' }
+        playlistConfig = { url: forceHttp(formData.get('m3u_url') || '') }
     } else {
         playlistConfig = {
-            dns: formData.get('xtream_dns') || '',
+            dns: forceHttp(formData.get('xtream_dns') || ''),
             user: formData.get('xtream_user') || '',
             pass: formData.get('xtream_pass') || '',
         }
@@ -112,10 +118,10 @@ export async function updateDevice(deviceId, formData) {
 
     let playlistConfig = {}
     if (playlistType === 'm3u') {
-        playlistConfig = { url: formData.get('m3u_url') || '' }
+        playlistConfig = { url: forceHttp(formData.get('m3u_url') || '') }
     } else {
         playlistConfig = {
-            dns: formData.get('xtream_dns') || '',
+            dns: forceHttp(formData.get('xtream_dns') || ''),
             user: formData.get('xtream_user') || '',
             pass: formData.get('xtream_pass') || '',
         }
