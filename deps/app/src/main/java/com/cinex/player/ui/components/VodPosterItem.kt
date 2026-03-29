@@ -7,44 +7,63 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
-import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.key.*
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.Image
-import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
+import coil.compose.SubcomposeAsyncImageContent
 import com.cinex.player.data.model.Channel
 import com.cinex.player.ui.theme.CineX_SecondaryBackground
 import com.cinex.player.ui.theme.DeepRed
 import com.cinex.player.ui.theme.TextWhite
 
-private val CardRed  = Color(0xFFE11D2E)
+private val CardRed = Color(0xFFE11D2E)
 private val CardGold = Color(0xFFF59E0B)
 
 @Composable
@@ -59,7 +78,9 @@ fun VodPosterItem(
     var isFocused by remember { mutableStateOf(false) }
 
     val gradientBrush = remember { Brush.linearGradient(listOf(CardRed, CardGold)) }
-    val overlayGradient = remember { Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.92f))) }
+    val overlayGradient = remember {
+        Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.92f)))
+    }
     val context = androidx.compose.ui.platform.LocalContext.current
 
     val showOverlay = isPressed || isFocused
@@ -73,7 +94,12 @@ fun VodPosterItem(
             .onKeyEvent { event ->
                 if (event.type == KeyEventType.KeyUp &&
                     (event.key == Key.DirectionCenter || event.key == Key.Enter)
-                ) { onClick(); true } else false
+                ) {
+                    onClick()
+                    true
+                } else {
+                    false
+                }
             }
             .clip(RoundedCornerShape(12.dp))
             .then(
@@ -87,14 +113,27 @@ fun VodPosterItem(
                 onClick = onClick
             )
     ) {
-        // Para séries, prioriza posterUrl (capa da série do TMDB) sobre logoUrl (ep sem capa)
-        val imageUrl = if (channel.category == "SERIES") {
-            channel.posterUrl?.takeIf { it.isNotEmpty() }
-                ?: channel.logoUrl?.takeIf { it.isNotEmpty() }
-        } else {
-            channel.logoUrl?.takeIf { it.isNotEmpty() }
-                ?: channel.posterUrl
+        fun String?.asValidImageUrl(): String? {
+            val value = this?.trim()
+            if (value.isNullOrEmpty()) return null
+            if (value.equals("null", ignoreCase = true)) return null
+            return value
         }
+
+        val imageCandidates = if (channel.category == "SERIES") {
+            listOfNotNull(
+                channel.posterUrl.asValidImageUrl(),
+                channel.logoUrl.asValidImageUrl()
+            ).distinct()
+        } else {
+            listOfNotNull(
+                channel.logoUrl.asValidImageUrl(),
+                channel.posterUrl.asValidImageUrl()
+            ).distinct()
+        }
+
+        var imageIndex by remember(channel.id, imageCandidates) { mutableIntStateOf(0) }
+        val imageUrl = imageCandidates.getOrNull(imageIndex)
 
         if (imageUrl != null) {
             val imageRequest = remember(imageUrl) {
@@ -113,6 +152,9 @@ fun VodPosterItem(
                 contentScale = ContentScale.Crop,
                 alignment = Alignment.TopCenter,
                 modifier = Modifier.fillMaxSize(),
+                success = {
+                    SubcomposeAsyncImageContent()
+                },
                 loading = {
                     val transition = rememberInfiniteTransition(label = "shimmer")
                     val translateAnim by transition.animateFloat(
@@ -141,17 +183,23 @@ fun VodPosterItem(
                     )
                 },
                 error = {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Image(
-                            painter = painterResource(id = com.cinex.player.R.drawable.logo_cinex),
-                            contentDescription = null,
-                            modifier = Modifier.fillMaxWidth(0.55f),
-                            contentScale = ContentScale.Fit,
-                            alpha = 0.5f
-                        )
+                    if (imageIndex < imageCandidates.lastIndex) {
+                        LaunchedEffect(imageIndex, imageCandidates) {
+                            imageIndex++
+                        }
+                    } else {
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Image(
+                                painter = painterResource(id = com.cinex.player.R.drawable.logo_cinex),
+                                contentDescription = null,
+                                modifier = Modifier.fillMaxWidth(0.55f),
+                                contentScale = ContentScale.Fit,
+                                alpha = 0.5f
+                            )
+                        }
                     }
                 }
             )
@@ -171,17 +219,13 @@ fun VodPosterItem(
         }
 
         if (showOverlay) {
-            // Overlay escuro
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black.copy(alpha = 0.52f))
             )
 
-            Column(
-                modifier = Modifier.fillMaxSize()
-            ) {
-                // Área superior: Botão play dinamicamente centralizado
+            Column(modifier = Modifier.fillMaxSize()) {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -204,7 +248,6 @@ fun VodPosterItem(
                     }
                 }
 
-                // Título + metadados (inferior)
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -220,7 +263,7 @@ fun VodPosterItem(
                         overflow = TextOverflow.Ellipsis
                     )
                     val meta = listOfNotNull(
-                        channel.groupTitle?.takeIf { it.isNotBlank() },
+                        channel.groupTitle.takeIf { it.isNotBlank() },
                         channel.tmdbYear?.takeIf { it.isNotBlank() }
                     ).joinToString(" | ")
                     if (meta.isNotEmpty()) {
@@ -236,7 +279,6 @@ fun VodPosterItem(
                 }
             }
         } else {
-            // Estado normal: barra de progresso + título
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -246,7 +288,9 @@ fun VodPosterItem(
                     val progress = channel.resumePosition.toFloat() / channel.totalDuration.toFloat()
                     LinearProgressIndicator(
                         progress = { progress.coerceIn(0f, 1f) },
-                        modifier = Modifier.fillMaxWidth().height(4.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(4.dp),
                         color = DeepRed,
                         trackColor = Color.DarkGray.copy(alpha = 0.6f),
                         strokeCap = StrokeCap.Square

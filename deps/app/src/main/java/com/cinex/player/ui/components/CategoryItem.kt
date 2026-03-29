@@ -13,8 +13,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -30,6 +33,7 @@ private val ActiveGold = Color(0xFFF59E0B)
 private val ActiveGradient = listOf(ActiveRed, ActiveGold)
 private val ActiveBrush = Brush.linearGradient(ActiveGradient)
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun CategoryItem(
     name: String,
@@ -50,6 +54,9 @@ fun CategoryItem(
     Box(
         modifier = modifier
             .fillMaxWidth()
+            .focusProperties {
+                left = FocusRequester.Cancel
+            }
             .onFocusChanged { isFocused = it.isFocused }
             .focusable(interactionSource = remember { MutableInteractionSource() })
             .onKeyEvent { event ->

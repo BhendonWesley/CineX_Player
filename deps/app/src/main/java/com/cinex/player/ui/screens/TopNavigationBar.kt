@@ -19,6 +19,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -50,6 +51,7 @@ fun TopNavigationBar(
     searchQuery: String,
     onSearchChange: (String) -> Unit,
     @Suppress("UNUSED_PARAMETER") onMenuClick: () -> Unit = {},
+    onSearchFocusChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
     showLive: Boolean = true,
     showMovies: Boolean = true,
@@ -185,9 +187,15 @@ fun TopNavigationBar(
             val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
             uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
         }
-        var isSearchActive by remember { mutableStateOf(false) }
-        val searchFocusRequester = remember { androidx.compose.ui.focus.FocusRequester() }
-        var isSearchFocused by remember { mutableStateOf(false) }
+        val searchFieldRequester = remember { FocusRequester() }
+        val searchBoxRequester = remember { FocusRequester() }
+        var isBoxFocused by remember { mutableStateOf(false) }
+        var isTextFieldFocused by remember { mutableStateOf(false) }
+        val isSearchHighlighted = isBoxFocused || isTextFieldFocused
+        // Estado local para digitação — evita recomposição pesada ao apagar última letra
+        var localQuery by remember { mutableStateOf(searchQuery) }
+        // Sincroniza quando o valor externo muda (ex: limpar busca ao trocar de aba)
+        LaunchedEffect(searchQuery) { if (!isTextFieldFocused) localQuery = searchQuery }
 
         Box(
             modifier = Modifier
@@ -196,30 +204,33 @@ fun TopNavigationBar(
                 .clip(RoundedCornerShape(20.dp))
                 .background(Color(0x14FFFFFF))
                 .then(
-                    if (isSearchFocused && isTv) Modifier.border(2.dp, NavGold, RoundedCornerShape(20.dp))
+                    if (isSearchHighlighted && isTv) Modifier.border(2.dp, NavGold, RoundedCornerShape(20.dp))
                     else Modifier
                 )
                 .padding(horizontal = 14.dp)
-                .focusProperties { right = FocusRequester.Cancel }
-                .onFocusChanged {
-                    isSearchFocused = it.isFocused
-                    // Na TV, ao perder foco da barra de busca, desativa o teclado
-                    if (!it.isFocused && isTv) isSearchActive = false
-                }
                 .then(
-                    if (isTv && !isSearchActive) {
+                    if (isTv) {
                         Modifier
-                            .focusable(interactionSource = remember { MutableInteractionSource() })
+                            .focusRequester(searchBoxRequester)
+                            .onFocusChanged { isBoxFocused = it.isFocused }
+                            .focusable()
                             .onKeyEvent { event ->
                                 if (event.type == KeyEventType.KeyUp &&
                                     (event.key == Key.DirectionCenter || event.key == Key.Enter)
                                 ) {
-                                    isSearchActive = true
+                                    try { searchFieldRequester.requestFocus() } catch (_: Exception) {}
                                     true
                                 } else false
                             }
-                            .clickable { isSearchActive = true }
-                    } else Modifier
+                            .focusProperties { right = FocusRequester.Cancel }
+                    } else {
+                        Modifier.clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) {
+                            try { searchFieldRequester.requestFocus() } catch (_: Exception) {}
+                        }
+                    }
                 ),
             contentAlignment = Alignment.CenterStart
         ) {
@@ -227,50 +238,58 @@ fun TopNavigationBar(
                 Icon(
                     imageVector = Icons.Default.Search,
                     contentDescription = "Pesquisar",
-                    tint = NavInactive,
+                    tint = if (isSearchHighlighted) NavGold else NavInactive,
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(Modifier.width(8.dp))
                 Box(modifier = Modifier.weight(1f)) {
-                    if (searchQuery.isEmpty()) {
+                    if (localQuery.isEmpty() && !isTextFieldFocused) {
                         Text(
                             text = "Buscar filme ou série...",
                             color = NavInactive,
                             fontSize = 12.sp
                         )
                     }
-                    if (!isTv || isSearchActive) {
-                        BasicTextField(
-                            value = searchQuery,
-                            onValueChange = onSearchChange,
-                            textStyle = LocalTextStyle.current.copy(
-                                color = NavWhite,
-                                fontSize = 12.sp
-                            ),
-                            cursorBrush = SolidColor(NavWhite),
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                            keyboardActions = KeyboardActions(onSearch = {
-                                keyboardController?.hide()
-                                if (isTv) isSearchActive = false
-                            }),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .then(
-                                    if (isTv && isSearchActive) Modifier
-                                        .focusRequester(searchFocusRequester)
-                                    else Modifier
-                                )
-                        )
-                        // Auto-focus ao ativar no modo TV
-                        if (isTv && isSearchActive) {
-                            LaunchedEffect(Unit) {
-                                searchFocusRequester.requestFocus()
-                            }
+                    // Debounce: propaga a query pro ViewModel após 300ms de inatividade
+                    LaunchedEffect(localQuery) {
+                        if (localQuery != searchQuery) {
+                            delay(300)
+                            onSearchChange(localQuery)
                         }
                     }
+                    BasicTextField(
+                        value = localQuery,
+                        onValueChange = { localQuery = it },
+                        textStyle = LocalTextStyle.current.copy(
+                            color = NavWhite,
+                            fontSize = 12.sp
+                        ),
+                        cursorBrush = SolidColor(NavWhite),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                        keyboardActions = KeyboardActions(onSearch = {
+                            keyboardController?.hide()
+                            if (isTv) try { searchBoxRequester.requestFocus() } catch (_: Exception) {}
+                        }),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .focusRequester(searchFieldRequester)
+                            .onFocusChanged {
+                                isTextFieldFocused = it.isFocused
+                                onSearchFocusChange(it.isFocused)
+                            }
+                            .then(
+                                if (isTv) Modifier.onPreviewKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown && event.key == Key.Back) {
+                                        keyboardController?.hide()
+                                        try { searchBoxRequester.requestFocus() } catch (_: Exception) {}
+                                        true
+                                    } else false
+                                } else Modifier
+                            )
+                    )
                 }
-                if (searchQuery.isNotEmpty()) {
+                if (localQuery.isNotEmpty()) {
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Limpar",
@@ -278,8 +297,8 @@ fun TopNavigationBar(
                         modifier = Modifier
                             .size(16.dp)
                             .clickable {
+                                localQuery = ""
                                 onSearchChange("")
-                                if (isTv) isSearchActive = false
                             }
                     )
                 }

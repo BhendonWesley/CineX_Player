@@ -73,6 +73,14 @@ fun HomeScreen(
             .take(10)
     }
 
+    // Debug: log para diagnosticar banners ausentes
+    LaunchedEffect(featuredMovies, validMovies) {
+        android.util.Log.d("CineX-Home", "featuredMovies count: ${featuredMovies.size}, validMovies count: ${validMovies.size}")
+        featuredMovies.take(3).forEach { m ->
+            android.util.Log.d("CineX-Home", "  -> ${m.name} | banner=${m.bannerUrl} | synopsis=${m.tmdbSynopsis?.take(30)}")
+        }
+    }
+
     // Auto-scroll do carousel — só roda quando a tab está ativa
     var currentIndex by remember { mutableIntStateOf(0) }
 
@@ -88,6 +96,18 @@ fun HomeScreen(
         while (true) {
             delay(8000)
             currentIndex = (currentIndex + 1) % validMovies.size
+        }
+    }
+
+    // Timeout de segurança: se os banners não carregarem em 8s, mostra a home mesmo assim
+    LaunchedEffect(Unit) {
+        if (!isHomeReady) {
+            delay(8000)
+            if (showInitialLoading) {
+                isFirstBannerReady = true
+                showInitialLoading = false
+                onHomeReady()
+            }
         }
     }
 
@@ -120,7 +140,6 @@ fun HomeScreen(
             showInitialLoading = false
             onHomeReady()
         }
-        // Sem timeout — a LoadingScreen fica visível até os banners carregarem
     }
 
     Box(

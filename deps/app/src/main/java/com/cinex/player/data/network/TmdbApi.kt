@@ -12,6 +12,8 @@ data class TmdbMovieResult(
     val id: Int,
     val title: String?,
     val name: String?, // Para TV
+    val original_title: String? = null,
+    val original_name: String? = null,
     val overview: String,
     val poster_path: String?,
     val backdrop_path: String?,

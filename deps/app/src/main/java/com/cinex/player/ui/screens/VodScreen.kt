@@ -44,6 +44,7 @@ import com.cinex.player.data.model.Channel
 import com.cinex.player.ui.components.VodPosterItem
 import com.cinex.player.ui.components.CategoryItem
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.flow.Flow
@@ -110,6 +111,7 @@ private fun Modifier.verticalScrollbar(
     )
 }
 
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 @Composable
 fun VodScreen(
     type: String = "MOVIE",
@@ -164,25 +166,29 @@ fun VodScreen(
         }
     }
 
+    val isSearchWithNoResults = type == "SEARCH" && pagingItems.itemCount == 0
+
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(CineX_BackgroundBlue)
+            .then(if (!isSearchWithNoResults) Modifier.background(CineX_BackgroundBlue) else Modifier)
     ) {
-        // Imagem de fundo com blur (mesma da tela de loading)
-        Image(
-            painter = painterResource(id = com.cinex.player.R.drawable.bg_loading),
-            contentDescription = null,
-            modifier = Modifier.fillMaxSize().blur(4.dp),
-            contentScale = ContentScale.Crop,
-            alpha = 0.55f
-        )
-        // Overlay escuro para garantir legibilidade
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(CineX_BackgroundBlue.copy(alpha = 0.85f))
-        )
+        if (!isSearchWithNoResults) {
+            // Imagem de fundo com blur (mesma da tela de loading)
+            Image(
+                painter = painterResource(id = com.cinex.player.R.drawable.bg_loading),
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize().blur(4.dp),
+                contentScale = ContentScale.Crop,
+                alpha = 0.55f
+            )
+            // Overlay escuro para garantir legibilidade
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(CineX_BackgroundBlue.copy(alpha = 0.85f))
+            )
+        }
 
         // Gate de carregamento inicial — só aparece uma vez até os dados carregarem pela primeira vez
         var initialLoadComplete by remember { mutableStateOf(type == "SEARCH") }
@@ -244,6 +250,7 @@ fun VodScreen(
                 modifier = Modifier
                     .width(260.dp)
                     .fillMaxHeight()
+                    .focusProperties { left = FocusRequester.Cancel }
                     .padding(start = 16.dp, end = 8.dp, bottom = 16.dp)
                     .clip(RoundedCornerShape(16.dp))
                     .background(Color(0x0DFFFFFF))
@@ -333,15 +340,14 @@ fun VodScreen(
 
         // ── GRID DE CONTEÚDO ──────────────────────────────────────
         Box(modifier = Modifier.weight(1f)) {
-            if (pagingItems.itemCount == 0) {
-                // Empty state
+            if (pagingItems.itemCount == 0 && type != "SEARCH") {
+                // Empty state (não para busca — deixa transparente para o grid aparecer por baixo)
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         val (icon, message) = when {
-                            type == "SEARCH" -> Icons.Default.SearchOff to "Nenhum resultado encontrado"
                             selectedCategory == "Favorito" -> Icons.Default.FavoriteBorder to "Nenhum favorito adicionado"
                             selectedCategory == "Continuar Assistindo" -> Icons.Default.VideoLibrary to "Nenhum conteúdo em andamento"
                             else -> Icons.Default.VideoLibrary to "Nenhum conteúdo nesta categoria"

@@ -260,8 +260,58 @@ fun MainScreen(
             val isHomeReady by viewModel.homeReady.collectAsState()
 
             Box(modifier = Modifier.weight(1f).clipToBounds()) {
+                // Abas SEMPRE renderizadas — nunca destruídas
+                fun Modifier.tabVisibility(tabIndex: Int): Modifier = this
+                    .alpha(if (selectedTab == tabIndex && searchQuery.isEmpty()) 1f else 0f)
+                    .then(if (selectedTab != tabIndex || searchQuery.isNotEmpty()) Modifier.size(0.dp) else Modifier.fillMaxSize())
+
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Box(modifier = Modifier.tabVisibility(0)) {
+                        HomeScreen(
+                            featuredMovies = featuredMovies,
+                            isHomeReady = isHomeReady,
+                            onHomeReady = { viewModel.setHomeReady(true) },
+                            onNavigate = { selectedTab = it },
+                            onSettingsClick = { isSettingsOpen = true },
+                            onRefresh = { viewModel.refreshPlaylist() },
+                            accountInfo = accountInfo,
+                            onAccountOpen = { viewModel.refreshAccountFromPanel() },
+                            isActive = selectedTab == 0
+                        )
+                    }
+                    Box(modifier = Modifier.tabVisibility(1)) {
+                        LiveTvScreen(
+                            viewModel = viewModel,
+                            onChannelExpand = { playingChannel = it },
+                            isActive = selectedTab == 1
+                        )
+                    }
+                    Box(modifier = Modifier.tabVisibility(2)) {
+                        VodScreen(
+                            type = "MOVIE",
+                            viewModel = viewModel,
+                            title = "FILMES",
+                            continueWatching = continueWatching.filter { it.category == "MOVIE" },
+                            onVideoClick = { viewModel.selectChannelForDetails(it) },
+                            onPlayDirect = { playingChannel = it },
+                            isActive = selectedTab == 2
+                        )
+                    }
+                    Box(modifier = Modifier.tabVisibility(3)) {
+                        VodScreen(
+                            type = "SERIES",
+                            viewModel = viewModel,
+                            title = "SÉRIES",
+                            continueWatching = continueWatching.filter { it.category == "SERIES" },
+                            onVideoClick = { viewModel.selectChannelForDetails(it) },
+                            onPlayDirect = { playingChannel = it },
+                            isActive = selectedTab == 3
+                        )
+                    }
+                }
+
+                // Resultados de busca: OVERLAY por cima das abas
                 if (searchQuery.isNotEmpty()) {
-                    // TELA DE BUSCA GLOBAL
                     VodScreen(
                         channels = searchResults,
                         type = "SEARCH",
@@ -270,7 +320,6 @@ fun MainScreen(
                         continueWatching = emptyList(),
                         onVideoClick = { channel ->
                             if (channel.category == "LIVE_TV") {
-                                // Leva direto para o preview na aba TV ao Vivo, na categoria correta
                                 if (channel.categoryId.isNotEmpty()) {
                                     viewModel.setLiveCategory(channel.categoryId)
                                 }
@@ -284,57 +333,6 @@ fun MainScreen(
                             }
                         }
                     )
-                } else {
-                    // Mantém todas as telas compostas para preservar o estado do Paging.
-                    // Apenas a aba ativa é visível e recebe input.
-                    fun Modifier.tabVisibility(tabIndex: Int): Modifier = this
-                        .alpha(if (selectedTab == tabIndex) 1f else 0f)
-                        .then(if (selectedTab != tabIndex) Modifier.size(0.dp) else Modifier.fillMaxSize())
-
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        Box(modifier = Modifier.tabVisibility(0)) {
-                            HomeScreen(
-                                featuredMovies = featuredMovies,
-                                isHomeReady = isHomeReady,
-                                onHomeReady = { viewModel.setHomeReady(true) },
-                                onNavigate = { selectedTab = it },
-                                onSettingsClick = { isSettingsOpen = true },
-                                onRefresh = { viewModel.refreshPlaylist() },
-                                accountInfo = accountInfo,
-                                onAccountOpen = { viewModel.refreshAccountFromPanel() },
-                                isActive = selectedTab == 0
-                            )
-                        }
-                        Box(modifier = Modifier.tabVisibility(1)) {
-                            LiveTvScreen(
-                                viewModel = viewModel,
-                                onChannelExpand = { playingChannel = it },
-                                isActive = selectedTab == 1
-                            )
-                        }
-                        Box(modifier = Modifier.tabVisibility(2)) {
-                            VodScreen(
-                                type = "MOVIE",
-                                viewModel = viewModel,
-                                title = "FILMES",
-                                continueWatching = continueWatching.filter { it.category == "MOVIE" },
-                                onVideoClick = { viewModel.selectChannelForDetails(it) },
-                                onPlayDirect = { playingChannel = it },
-                                isActive = selectedTab == 2
-                            )
-                        }
-                        Box(modifier = Modifier.tabVisibility(3)) {
-                            VodScreen(
-                                type = "SERIES",
-                                viewModel = viewModel,
-                                title = "SÉRIES",
-                                continueWatching = continueWatching.filter { it.category == "SERIES" },
-                                onVideoClick = { viewModel.selectChannelForDetails(it) },
-                                onPlayDirect = { playingChannel = it },
-                                isActive = selectedTab == 3
-                            )
-                        }
-                    }
                 }
             }
         }

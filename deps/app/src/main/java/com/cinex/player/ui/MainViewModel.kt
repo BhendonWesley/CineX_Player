@@ -220,6 +220,17 @@ class MainViewModel @Inject constructor(
             if (elapsed < 3000) kotlinx.coroutines.delay(3000 - elapsed)
             _isInitializing.value = false
 
+            // Se a Home não tem banners, enriquece apenas 20 filmes aleatórios (rápido)
+            _currentPlaylist.value?.let { pl ->
+                val featured = repository.getFeaturedContent(pl.url).first()
+                if (featured.isEmpty()) {
+                    android.util.Log.d("CineX-Home", "Sem featured content — enriquecendo 20 filmes para a Home...")
+                    repository.enrichRandomForHome(pl.url, 20)
+                    // Depois continua o resto em background silencioso
+                    repository.triggerBackgroundEnrichment(pl.url)
+                }
+            }
+
             // Delta sync silencioso — atualiza conteúdo sempre que o app abre
             if (_currentPlaylist.value != null) {
                 val result = repository.syncPlaylistDelta()
@@ -307,11 +318,20 @@ class MainViewModel @Inject constructor(
         _homeReady.value = false
         if (playlist == null) flowOf(emptyList())
         else {
-            // Seed fixa para manter a ordem consistente durante toda a sessão
             val seed = playlist.url.hashCode().toLong()
+            var locked = false
             repository.getFeaturedContent(playlist.url)
-                .distinctUntilChanged()
-                .map { it.shuffled(kotlin.random.Random(seed)).take(20) }
+                .map { channels ->
+                    channels.shuffled(kotlin.random.Random(seed)).take(10)
+                }
+                .distinctUntilChanged { old, new ->
+                    // Trava a lista assim que tiver 5+ filmes — para de reagir ao enrichment
+                    if (locked) true
+                    else {
+                        if (old.size >= 5) { locked = true; true }
+                        else false
+                    }
+                }
         }
     }.stateIn(
         scope = viewModelScope,
@@ -403,11 +423,28 @@ class MainViewModel @Inject constructor(
         java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
     )
 
+    private fun shouldEnrichChannelMetadata(channel: Channel): Boolean {
+        if (channel.category == "LIVE_TV") return false
+
+        return channel.tmdbSynopsis.isNullOrEmpty() ||
+            channel.posterUrl.isNullOrEmpty() ||
+            channel.bannerUrl.isNullOrEmpty() ||
+            channel.tmdbYear.isNullOrEmpty() ||
+            channel.tmdbRating == null ||
+            channel.tmdbRating <= 0.0
+    }
+
+    private fun shouldEnrichChannelVisualFallback(channel: Channel): Boolean {
+        if (channel.category == "LIVE_TV") return false
+
+        val hasDefaultImage = !channel.logoUrl.isNullOrEmpty()
+        val hasTmdbPoster = !channel.posterUrl.isNullOrEmpty()
+
+        return !hasDefaultImage && !hasTmdbPoster
+    }
+
     fun onChannelVisible(channel: Channel) {
-        if (channel.category != "LIVE_TV"
-            && channel.tmdbSynopsis.isNullOrEmpty()
-            && enrichingIds.add(channel.id)
-        ) {
+        if (shouldEnrichChannelVisualFallback(channel) && enrichingIds.add(channel.id)) {
             viewModelScope.launch {
                 repository.enrichChannelWithTmdb(channel)
             }
@@ -900,7 +937,7 @@ class MainViewModel @Inject constructor(
 
     fun selectChannelForDetails(channel: Channel?) {
         _selectedChannelForDetails.value = channel
-        if (channel != null) {
+        if (channel != null && shouldEnrichChannelMetadata(channel)) {
             enrichChannelMetadata(channel)
         }
     }

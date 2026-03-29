@@ -206,6 +206,40 @@ class ChannelRepository @Inject constructor(
         return channelDao.getFeaturedContent(url)
     }
 
+    suspend fun getTmdbDiagnostics(url: String): List<Channel> = withContext(Dispatchers.IO) {
+        channelDao.getAllByPlaylist(url)
+    }
+
+    suspend fun countMoviesToEnrich(url: String): Int = withContext(Dispatchers.IO) {
+        channelDao.getMoviesToEnrich(url).size
+    }
+
+    /**
+     * Enriquece apenas N filmes aleatórios para popular a Home rapidamente.
+     * Não tenta enriquecer o catálogo inteiro — só o necessário para mostrar banners.
+     */
+    suspend fun enrichRandomForHome(url: String, count: Int = 20) = withContext(Dispatchers.IO) {
+        val movies = channelDao.getMoviesToEnrich(url).shuffled().take(count / 2)
+        val series = channelDao.getSeriesToEnrich(url).shuffled().take(count / 2)
+        val toEnrich = (movies + series).shuffled()
+        android.util.Log.d("CineX-Home", "Enriquecendo ${toEnrich.size} conteúdos aleatórios (filmes+séries) para a Home...")
+        toEnrich.chunked(10).forEach { chunk ->
+            coroutineScope {
+                chunk.forEach { channel ->
+                    launch { enrichChannelWithTmdb(channel) }
+                }
+            }
+        }
+        val featuredAfter = channelDao.getFeaturedContent(url).first().size
+        android.util.Log.d("CineX-Home", "Featured após enriquecimento rápido: $featuredAfter")
+    }
+
+    fun triggerBackgroundEnrichment(url: String) {
+        launchBackgroundEnrichment(url) { _, _, _, status ->
+            android.util.Log.d("CineX-Home", "Enrichment: $status")
+        }
+    }
+
     suspend fun syncPlaylist(
         url: String,
         onProgress: (livePct: Int, moviePct: Int, seriesPct: Int, status: String) -> Unit
@@ -227,6 +261,8 @@ class ChannelRepository @Inject constructor(
                 val syncResult = syncXtream(baseUrl, username, password, url, onProgress)
                 if (syncResult.isSuccess) {
                     _activePlaylistUrl.value = url
+                    // Dispara enriquecimento TMDB em background (mesmo do path M3U)
+                    launchBackgroundEnrichment(url, onProgress)
                     return@withContext Result.success(Unit)
                 }
             }
@@ -242,8 +278,9 @@ class ChannelRepository @Inject constructor(
             if (parsedChannels.isNotEmpty()) {
                 onProgress(50, 50, 50, "Sincronizando metadados...")
                 
-                // Preservar apenas dados do usuário (favoritos, progresso)
-                // Dados TMDB são re-enriquecidos do zero para evitar metadados incorretos
+                // Preservar dados do usuário E dados TMDB existentes
+                // TMDB será re-enriquecido em background, mas os dados antigos
+                // garantem que a Home mostre banners imediatamente após resync
                 val existingUserData = channelDao.getTmdbAndUserDataByPlaylist(url).associateBy { it.remoteId }
 
                 onProgress(50, 50, 50, "Limpando dados antigos...")
@@ -257,7 +294,14 @@ class ChannelRepository @Inject constructor(
                         categoryId = channel.groupTitle,
                         resumePosition = old?.resumePosition ?: 0L,
                         totalDuration = old?.totalDuration ?: 0L,
-                        isFavorite = old?.isFavorite ?: false
+                        isFavorite = old?.isFavorite ?: false,
+                        tmdbRating = old?.tmdbRating,
+                        tmdbSynopsis = old?.tmdbSynopsis,
+                        posterUrl = old?.posterUrl ?: channel.posterUrl,
+                        bannerUrl = old?.bannerUrl ?: channel.bannerUrl,
+                        tmdbYear = old?.tmdbYear,
+                        castMembers = old?.castMembers,
+                        trailerUrl = old?.trailerUrl
                     )
                 }
 
@@ -288,65 +332,110 @@ class ChannelRepository @Inject constructor(
 
                 _activePlaylistUrl.value = url
                 playlistDao.updateLastSyncTime(url, System.currentTimeMillis())
+
+                // Enriquecer 20 conteúdos aleatórios (filmes+séries) para a Home ter banners
+                val featured = channelDao.getFeaturedContent(url).first()
+                if (featured.isEmpty()) {
+                    onProgress(100, 100, 100, "Buscando capas oficiais...")
+                    val seedMovies = channelDao.getMoviesToEnrich(url).shuffled().take(10)
+                    val seedSeries = channelDao.getSeriesToEnrich(url).shuffled().take(10)
+                    (seedMovies + seedSeries).shuffled().chunked(10).forEach { chunk ->
+                        coroutineScope {
+                            chunk.forEach { channel ->
+                                launch { enrichChannelWithTmdb(channel) }
+                            }
+                        }
+                    }
+                }
+
                 onProgress(100, 100, 100, "Iniciando em segundo plano...")
             } else {
                 return@withContext Result.failure(Exception("Nenhum conteúdo encontrado na lista. Verifique a URL."))
             }
 
-            repositoryScope.launch {
-                val initialFeatured = channelDao.getFeaturedContent(url).first().take(5)
-                initialFeatured.forEach { channel ->
-                    enrichChannelWithTmdb(channel)
-                }
-                
-                val moviesToEnrich = channelDao.getMoviesToEnrich(url)
-                val seriesToEnrich = channelDao.getSeriesToEnrich(url)
-                
-                val totalMovies = moviesToEnrich.size
-                if (totalMovies > 0) {
-                    val movieCount = AtomicInteger(0)
-                    // Processamento em blocos de 5 para não estourar memória
-                    moviesToEnrich.chunked(5).forEach { chunk ->
-                        coroutineScope {
-                            chunk.forEach { channel ->
-                                launch {
-                                    enrichChannelWithTmdb(channel)
-                                    val current = movieCount.incrementAndGet()
-                                    if (current % 10 == 0 || current == totalMovies) {
-                                        val pct = ((current.toDouble() / totalMovies.toDouble()) * 100.0).toInt()
-                                        onProgress(100, pct, 0, "Segundo plano: Filmes $pct%")
-                                    }
-                                }
-                            }
-                        }
-                        delay(200) // Pequeno fôlego entre blocos
-                    }
-                }
-
-                val totalSeries = seriesToEnrich.size
-                if (totalSeries > 0) {
-                    val seriesCount = AtomicInteger(0)
-                    seriesToEnrich.chunked(5).forEach { chunk ->
-                        coroutineScope {
-                            chunk.forEach { channel ->
-                                launch {
-                                    enrichChannelWithTmdb(channel)
-                                    val current = seriesCount.incrementAndGet()
-                                    if (current % 5 == 0 || current == totalSeries) {
-                                        val pct = ((current.toDouble() / totalSeries.toDouble()) * 100.0).toInt()
-                                        onProgress(100, 100, pct, "Segundo plano: Séries $pct%")
-                                    }
-                                }
-                            }
-                        }
-                        delay(200)
-                    }
-                }
-            }
+            launchBackgroundEnrichment(url, onProgress)
             Result.success(Unit)
         } catch (e: Exception) {
             e.printStackTrace()
             Result.failure(e)
+        }
+    }
+
+    /**
+     * Enriquecimento TMDB em background: primeiro os destaques da Home, depois filmes e séries.
+     * Roda em repositoryScope para não bloquear o sync.
+     */
+    private fun launchBackgroundEnrichment(
+        url: String,
+        onProgress: (livePct: Int, moviePct: Int, seriesPct: Int, status: String) -> Unit
+    ) {
+        repositoryScope.launch {
+            // Prioridade 1: enriquecer os featured da Home primeiro
+            val initialFeatured = channelDao.getFeaturedContent(url).first().take(5)
+            if (initialFeatured.isNotEmpty()) {
+                initialFeatured.forEach { channel ->
+                    enrichChannelWithTmdb(channel)
+                }
+            } else {
+                // Sem featured ainda (dados TMDB vazios) — enriquecer os primeiros filmes
+                // com alta paralelização para que a Home tenha banners o mais rápido possível
+                android.util.Log.d("CineX-Home", "Seed: enriquecendo primeiros 50 filmes com paralelismo 10...")
+                val seedMovies = channelDao.getMoviesToEnrich(url).take(50)
+                seedMovies.chunked(10).forEach { chunk ->
+                    coroutineScope {
+                        chunk.forEach { channel ->
+                            launch { enrichChannelWithTmdb(channel) }
+                        }
+                    }
+                }
+                android.util.Log.d("CineX-Home", "Seed concluído. Verificando featured...")
+                val postSeedFeatured = channelDao.getFeaturedContent(url).first()
+                android.util.Log.d("CineX-Home", "Featured após seed: ${postSeedFeatured.size}")
+            }
+
+            // Resto em background com blocos de 10 (mais rápido)
+            val moviesToEnrich = channelDao.getMoviesToEnrich(url)
+            val seriesToEnrich = channelDao.getSeriesToEnrich(url)
+
+            val totalMovies = moviesToEnrich.size
+            if (totalMovies > 0) {
+                val movieCount = AtomicInteger(0)
+                moviesToEnrich.chunked(10).forEach { chunk ->
+                    coroutineScope {
+                        chunk.forEach { channel ->
+                            launch {
+                                enrichChannelWithTmdb(channel)
+                                val current = movieCount.incrementAndGet()
+                                if (current % 20 == 0 || current == totalMovies) {
+                                    val pct = ((current.toDouble() / totalMovies.toDouble()) * 100.0).toInt()
+                                    onProgress(100, pct, 0, "Segundo plano: Filmes $pct%")
+                                }
+                            }
+                        }
+                    }
+                    delay(50)
+                }
+            }
+
+            val totalSeries = seriesToEnrich.size
+            if (totalSeries > 0) {
+                val seriesCount = AtomicInteger(0)
+                seriesToEnrich.chunked(10).forEach { chunk ->
+                    coroutineScope {
+                        chunk.forEach { channel ->
+                            launch {
+                                enrichChannelWithTmdb(channel)
+                                val current = seriesCount.incrementAndGet()
+                                if (current % 10 == 0 || current == totalSeries) {
+                                    val pct = ((current.toDouble() / totalSeries.toDouble()) * 100.0).toInt()
+                                    onProgress(100, 100, pct, "Segundo plano: Séries $pct%")
+                                }
+                            }
+                        }
+                    }
+                    delay(50)
+                }
+            }
         }
     }
 
@@ -559,8 +648,8 @@ class ChannelRepository @Inject constructor(
             
             onProgress(10, 10, 10, "Conectando ao servidor...")
             
-            // Preservar apenas dados do usuário (favoritos, progresso)
-            // Dados TMDB são re-enriquecidos do zero para evitar metadados incorretos
+            // Preservar dados do usuário E dados TMDB existentes
+            // TMDB será re-enriquecido em background, mas preservar garante banners imediatos
             val existingTmdbData = withContext(Dispatchers.IO) {
                 channelDao.getTmdbAndUserDataByPlaylist(playlistUrl).associateBy { it.remoteId }
             }
@@ -781,7 +870,14 @@ class ChannelRepository @Inject constructor(
                     remoteId = "vod_${m.stream_id}",
                     resumePosition = old?.resumePosition ?: 0L,
                     totalDuration = old?.totalDuration ?: 0L,
-                    isFavorite = old?.isFavorite ?: false
+                    isFavorite = old?.isFavorite ?: false,
+                    tmdbRating = old?.tmdbRating,
+                    tmdbSynopsis = old?.tmdbSynopsis,
+                    posterUrl = old?.posterUrl ?: m.stream_icon,
+                    bannerUrl = old?.bannerUrl,
+                    tmdbYear = old?.tmdbYear,
+                    castMembers = old?.castMembers,
+                    trailerUrl = old?.trailerUrl
                 )
             }
             if (movieStreams.isNotEmpty()) {
@@ -823,7 +919,14 @@ class ChannelRepository @Inject constructor(
                     remoteId = "series_${s.series_id}",
                     resumePosition = old?.resumePosition ?: 0L,
                     totalDuration = old?.totalDuration ?: 0L,
-                    isFavorite = old?.isFavorite ?: false
+                    isFavorite = old?.isFavorite ?: false,
+                    tmdbRating = old?.tmdbRating ?: s.rating?.toDoubleOrNull(),
+                    tmdbSynopsis = old?.tmdbSynopsis ?: s.plot,
+                    posterUrl = old?.posterUrl ?: s.cover,
+                    bannerUrl = old?.bannerUrl,
+                    tmdbYear = old?.tmdbYear,
+                    castMembers = old?.castMembers ?: s.cast,
+                    trailerUrl = old?.trailerUrl
                 )
             }
             if (seriesStreams.isNotEmpty()) {
@@ -831,6 +934,26 @@ class ChannelRepository @Inject constructor(
             }
 
             playlistDao.updateLastSyncTime(playlistUrl, System.currentTimeMillis())
+
+            // Enriquecer 20 conteúdos aleatórios (filmes+séries) para a Home ter banners
+            val featured = channelDao.getFeaturedContent(playlistUrl).first()
+            if (featured.isEmpty()) {
+                onProgress(100, 100, 100, "Buscando capas oficiais...")
+                val seedMovies = withContext(Dispatchers.IO) {
+                    channelDao.getMoviesToEnrich(playlistUrl).shuffled().take(10)
+                }
+                val seedSeries = withContext(Dispatchers.IO) {
+                    channelDao.getSeriesToEnrich(playlistUrl).shuffled().take(10)
+                }
+                (seedMovies + seedSeries).shuffled().chunked(10).forEach { chunk ->
+                    coroutineScope {
+                        chunk.forEach { channel ->
+                            launch { enrichChannelWithTmdb(channel) }
+                        }
+                    }
+                }
+            }
+
             onProgress(100, 100, 100, "Concluído!")
             Result.success(Unit)
         } catch (e: Exception) {
@@ -930,17 +1053,26 @@ class ChannelRepository @Inject constructor(
                 .replace(Regex("\\s+"), " ")
                 .trim()
 
-            // Verifica se o resultado do TMDb é compatível com a query buscada
+            // Verifica se o resultado do TMDB realmente corresponde ao título buscado
             fun isNameMatch(result: com.cinex.player.data.network.TmdbMovieResult, queryStr: String): Boolean {
                 val nq = normalize(queryStr)
-                val resultNames = listOfNotNull(result.title, result.name)
+                if (nq.isBlank()) return false
+                val resultNames = listOfNotNull(result.title, result.name, result.original_title, result.original_name)
                 return resultNames.any { name ->
                     val nr = normalize(name)
-                    nr.contains(nq) || nq.contains(nr) ||
-                    // Aceita se pelo menos 70% das palavras da query aparecem no resultado
-                    nq.split(" ").filter { it.length > 2 }.let { words ->
-                        words.isEmpty() || words.count { nr.contains(it) } >= (words.size * 0.7).toInt().coerceAtLeast(1)
-                    }
+                    if (nr.isBlank()) return@any false
+                    // Match exato
+                    if (nr == nq) return@any true
+                    // Um contém o outro (mas só se o menor tiver pelo menos 4 chars)
+                    if (nq.length >= 4 && nr.contains(nq)) return@any true
+                    if (nr.length >= 4 && nq.contains(nr)) return@any true
+                    // Comparação por palavras: TODAS as palavras significativas devem bater
+                    val queryWords = nq.split(" ").filter { it.length > 2 }
+                    val resultWords = nr.split(" ").filter { it.length > 2 }
+                    if (queryWords.isEmpty() || resultWords.isEmpty()) return@any false
+                    val matchCount = queryWords.count { qw -> resultWords.any { rw -> rw == qw } }
+                    // Exige 100% das palavras da query no resultado
+                    matchCount == queryWords.size
                 }
             }
 
@@ -971,6 +1103,8 @@ class ChannelRepository @Inject constructor(
                 searchResponse.results.firstOrNull { isNameMatch(it, effectiveQuery) }
             }
 
+            android.util.Log.d("CineX-TMDB", "Search '${channel.name}' → ${searchResponse.results.size} results, matched=${tmdbResult != null}")
+
             tmdbResult?.let { bestMatch ->
                 val details = if (channel.category == "MOVIE") {
                     tmdbApi.getMovieDetails(bestMatch.id, tmdbApiKey)
@@ -980,6 +1114,7 @@ class ChannelRepository @Inject constructor(
 
                 val posterUrl = details.poster_path?.let { "https://image.tmdb.org/t/p/w500$it" }
                 val backdropUrl = details.backdrop_path?.let { "https://image.tmdb.org/t/p/original$it" }
+                android.util.Log.d("CineX-TMDB", "  → backdrop=$backdropUrl, synopsis=${details.overview?.take(30)}")
                 val cast = details.credits?.cast?.take(10)?.joinToString(", ") { it.name }
                 val year = tmdbResult.release_date?.take(4) ?: tmdbResult.first_air_date?.take(4)
                 
@@ -1049,7 +1184,9 @@ class ChannelRepository @Inject constructor(
                     )
                 }
             }
-        } catch (ignored: Exception) {}
+        } catch (e: Exception) {
+            android.util.Log.e("CineX-TMDB", "Enrich FAILED for '${channel.name}': ${e.message}")
+        }
     }
 
     suspend fun syncEpg(url: String) = withContext(Dispatchers.IO) {
