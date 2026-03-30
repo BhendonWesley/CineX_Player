@@ -58,6 +58,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.SubcomposeAsyncImage
 import coil.compose.SubcomposeAsyncImageContent
+import android.content.res.Configuration as AndroidConfig
 import com.cinex.player.data.model.Channel
 import com.cinex.player.ui.theme.CineX_SecondaryBackground
 import com.cinex.player.ui.theme.DeepRed
@@ -82,6 +83,10 @@ fun VodPosterItem(
         Brush.verticalGradient(listOf(Color.Transparent, Color.Black.copy(alpha = 0.92f)))
     }
     val context = androidx.compose.ui.platform.LocalContext.current
+    val isTv = remember {
+        val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
+        uiModeManager.currentModeType == AndroidConfig.UI_MODE_TYPE_TELEVISION
+    }
 
     val showOverlay = isPressed || isFocused
 
@@ -120,17 +125,10 @@ fun VodPosterItem(
             return value
         }
 
-        val imageCandidates = if (channel.category == "SERIES") {
-            listOfNotNull(
-                channel.posterUrl.asValidImageUrl(),
-                channel.logoUrl.asValidImageUrl()
-            ).distinct()
-        } else {
-            listOfNotNull(
-                channel.logoUrl.asValidImageUrl(),
-                channel.posterUrl.asValidImageUrl()
-            ).distinct()
-        }
+        val imageCandidates = listOfNotNull(
+            channel.logoUrl.asValidImageUrl(),
+            channel.posterUrl.asValidImageUrl()
+        ).distinct()
 
         var imageIndex by remember(channel.id, imageCandidates) { mutableIntStateOf(0) }
         val imageUrl = imageCandidates.getOrNull(imageIndex)
@@ -156,31 +154,40 @@ fun VodPosterItem(
                     SubcomposeAsyncImageContent()
                 },
                 loading = {
-                    val transition = rememberInfiniteTransition(label = "shimmer")
-                    val translateAnim by transition.animateFloat(
-                        initialValue = 0f,
-                        targetValue = 1000f,
-                        animationSpec = infiniteRepeatable(
-                            animation = tween(1200, easing = LinearEasing),
-                            repeatMode = RepeatMode.Restart
-                        ),
-                        label = "shimmer_translate"
-                    )
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(
-                                Brush.linearGradient(
-                                    colors = listOf(
-                                        Color.White.copy(alpha = 0.05f),
-                                        Color.White.copy(alpha = 0.15f),
-                                        Color.White.copy(alpha = 0.05f)
-                                    ),
-                                    start = Offset(translateAnim - 200f, 0f),
-                                    end = Offset(translateAnim, 0f)
+                    if (isTv) {
+                        // Na TV, placeholder estático para evitar sobrecarga de GPU
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color.White.copy(alpha = 0.08f))
+                        )
+                    } else {
+                        val transition = rememberInfiniteTransition(label = "shimmer")
+                        val translateAnim by transition.animateFloat(
+                            initialValue = 0f,
+                            targetValue = 1000f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(1200, easing = LinearEasing),
+                                repeatMode = RepeatMode.Restart
+                            ),
+                            label = "shimmer_translate"
+                        )
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(
+                                    Brush.linearGradient(
+                                        colors = listOf(
+                                            Color.White.copy(alpha = 0.05f),
+                                            Color.White.copy(alpha = 0.15f),
+                                            Color.White.copy(alpha = 0.05f)
+                                        ),
+                                        start = Offset(translateAnim - 200f, 0f),
+                                        end = Offset(translateAnim, 0f)
+                                    )
                                 )
-                            )
-                    )
+                        )
+                    }
                 },
                 error = {
                     if (imageIndex < imageCandidates.lastIndex) {

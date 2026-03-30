@@ -49,69 +49,19 @@ jobs:
       - name: Rename APK
         run: mv app/build/outputs/apk/release/app-release.apk app/build/outputs/apk/release/CineX-Player.apk
 
-      - name: Generate changelog in Portuguese
+      - name: Read release notes
         id: changelog
         working-directory: .
         run: |
-          # Pega a tag anterior
-          PREV_TAG=$(git tag --sort=-creatordate | head -2 | tail -1)
-          CURRENT_TAG=${GITHUB_REF#refs/tags/}
-
-          if [ -z "$PREV_TAG" ] || [ "$PREV_TAG" = "$CURRENT_TAG" ]; then
-            COMMITS=$(git log --oneline -20 --pretty=format:"%s")
+          if [ -f "RELEASE_NOTES.txt" ]; then
+            # Le as notas de release do arquivo
+            BODY=$(cat RELEASE_NOTES.txt)
           else
-            COMMITS=$(git log --oneline "$PREV_TAG..$CURRENT_TAG" --pretty=format:"%s")
+            BODY="Melhorias de desempenho e correções de bugs."
           fi
 
-          # Mapeia prefixos de commit para categorias em português
-          FEATURES=""
-          FIXES=""
-          OTHERS=""
-
-          while IFS= read -r line; do
-            # Remove prefixos convencionais (feat:, fix:, etc)
-            clean=$(echo "$line" | sed -E 's/^(feat|fix|chore|refactor|style|docs|perf|test|build|ci|release)(\(.+\))?[!]?:\s*//')
-
-            # Traduz palavras comuns EN→PT
-            clean=$(echo "$clean" | sed -E '
-              s/\bfix\b/Correção/gi
-              s/\bimplement\b/Implementação de/gi
-              s/\badd\b/Adicionado/gi
-              s/\bupdate\b/Atualização de/gi
-              s/\bremove\b/Remoção de/gi
-              s/\bimprove\b/Melhoria em/gi
-              s/\brefactor\b/Refatoração de/gi
-            ')
-
-            if echo "$line" | grep -qiE "^feat"; then
-              FEATURES="$FEATURES• $clean\n"
-            elif echo "$line" | grep -qiE "^fix"; then
-              FIXES="$FIXES• $clean\n"
-            else
-              OTHERS="$OTHERS• $clean\n"
-            fi
-          done <<< "$COMMITS"
-
-          # Monta o body da release
-          BODY=""
-          if [ -n "$FEATURES" ]; then
-            BODY="${BODY}🆕 Novidades\n${FEATURES}\n"
-          fi
-          if [ -n "$FIXES" ]; then
-            BODY="${BODY}🐛 Correções\n${FIXES}\n"
-          fi
-          if [ -n "$OTHERS" ]; then
-            BODY="${BODY}🔧 Outros\n${OTHERS}\n"
-          fi
-
-          # Fallback
-          if [ -z "$BODY" ]; then
-            BODY="• Melhorias de desempenho e correções de bugs."
-          fi
-
-          # Salva no output (multi-line)
           echo "BODY<<EOF" >> $GITHUB_OUTPUT
-          echo -e "$BODY" >> $GITHUB_OUTPUT
+          echo "$BODY" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release

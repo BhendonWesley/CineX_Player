@@ -77,8 +77,8 @@ class EpgParser {
     private fun parseDate(dateStr: String?): Long {
         if (dateStr == null) return 0L
         return try {
-            // XMLTV dates are often "20231027120000 +0000"
-            dateFormat.parse(dateStr)?.time ?: 0L
+            val time = dateFormat.parse(dateStr)?.time ?: 0L
+            if (time > 0L) time + (com.cinex.player.utils.EpgTimeHelper.stringShiftHours * 3600 * 1000L) else 0L
         } catch (e: Exception) {
             0L
         }

@@ -19,6 +19,7 @@ import com.cinex.player.data.network.LiveStreamItem
 import com.cinex.player.data.network.VodStreamItem
 import com.cinex.player.data.network.SeriesItem
 import com.cinex.player.data.network.XtreamCodesApi
+import com.cinex.player.data.network.EpisodeExtraInfo
 import androidx.paging.Pager
 import androidx.paging.PagingConfig
 import androidx.paging.PagingData
@@ -140,6 +141,26 @@ class ChannelRepository @Inject constructor(
     suspend fun hasEpisodesForSeries(seriesName: String): Boolean {
         val url = _activePlaylistUrl.value ?: return false
         return channelDao.countEpisodesForSeries(seriesName, url) > 0
+    }
+
+    suspend fun hasEpisodesWithoutStill(seriesName: String): Boolean {
+        val url = _activePlaylistUrl.value ?: return false
+        return channelDao.countEpisodesWithoutStill(seriesName, url) > 0
+    }
+
+    suspend fun hasEpisodesWithoutStill(seriesName: String, season: Int): Boolean {
+        val url = _activePlaylistUrl.value ?: return false
+        return channelDao.countEpisodesWithoutStillForSeason(seriesName, season, url) > 0
+    }
+
+    fun observeChannelByRemoteId(remoteId: String): Flow<Channel?> {
+        val url = _activePlaylistUrl.value ?: return flowOf(null)
+        return channelDao.observeChannelByRemoteId(remoteId, url)
+    }
+
+    fun observeEpisodesWithoutStillForSeason(seriesName: String, season: Int): Flow<Int> {
+        val url = _activePlaylistUrl.value ?: return flowOf(0)
+        return channelDao.observeEpisodesWithoutStillForSeason(seriesName, season, url)
     }
 
     fun getEpisodesBySeasonPaged(seriesName: String, season: Int): Flow<PagingData<Channel>> {
@@ -1064,15 +1085,15 @@ class ChannelRepository @Inject constructor(
                     // Match exato
                     if (nr == nq) return@any true
                     // Um contém o outro (mas só se o menor tiver pelo menos 4 chars)
-                    if (nq.length >= 4 && nr.contains(nq)) return@any true
-                    if (nr.length >= 4 && nq.contains(nr)) return@any true
+                    if (nq.length >= 4 && Regex("\\b" + nq.split(" ").filter { it.isNotBlank() }.joinToString("\\s+") { Regex.escape(it) } + "\\b").containsMatchIn(nr)) return@any true
+                    if (nr.length >= 4 && Regex("\\b" + nr.split(" ").filter { it.isNotBlank() }.joinToString("\\s+") { Regex.escape(it) } + "\\b").containsMatchIn(nq)) return@any true
                     // Comparação por palavras: TODAS as palavras significativas devem bater
                     val queryWords = nq.split(" ").filter { it.length > 2 }
                     val resultWords = nr.split(" ").filter { it.length > 2 }
                     if (queryWords.isEmpty() || resultWords.isEmpty()) return@any false
                     val matchCount = queryWords.count { qw -> resultWords.any { rw -> rw == qw } }
                     // Exige 100% das palavras da query no resultado
-                    matchCount == queryWords.size
+                    matchCount == queryWords.size && queryWords.size >= 2
                 }
             }
 
@@ -1189,6 +1210,190 @@ class ChannelRepository @Inject constructor(
         }
     }
 
+    suspend fun enrichSeriesMetadataWithTmdb(channel: Channel) = withContext(Dispatchers.IO) {
+        if (channel.category != "SERIES" || channel.seriesName.isNullOrBlank()) return@withContext
+
+        try {
+            val rawName = channel.name
+            val yearMatch = Regex("(?i)\\(?(\\d{4})\\)?").find(rawName)
+            val extractedYear = yearMatch?.groupValues?.get(1)
+
+            val query = rawName
+                .replace(Regex("(?i)\\(?\\d{4}\\)?"), "")
+                .replace(Regex("(?i)\\b(fhd|hd|sd|4k|dual|legendado|dublado|multi|brrip|hdtv|web-dl|bluray|h264|h265|x264|x265|1080p|720p|480p)\\b"), "")
+                .replace(Regex("[|\\-\\[\\]]"), " ")
+                .trim()
+                .replace(Regex("\\s+"), " ")
+
+            val seriesQuery = (channel.seriesName ?: query)
+                .replace(Regex("(?i)s\\d+e\\d+.*"), "")
+                .replace(Regex("(?i)\\(?\\d{4}\\)?"), "")
+                .trim()
+
+            fun normalize(s: String): String = java.text.Normalizer
+                .normalize(s, java.text.Normalizer.Form.NFD)
+                .replace(Regex("[\\p{InCombiningDiacriticalMarks}]"), "")
+                .lowercase()
+                .replace(Regex("[^a-z0-9 ]"), "")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+
+            fun isNameMatch(result: com.cinex.player.data.network.TmdbMovieResult, queryStr: String): Boolean {
+                val nq = normalize(queryStr)
+                if (nq.isBlank()) return false
+                val resultNames = listOfNotNull(result.title, result.name, result.original_title, result.original_name)
+                return resultNames.any { name ->
+                    val nr = normalize(name)
+                    if (nr.isBlank()) return@any false
+                    if (nr == nq) return@any true
+                    if (nq.length >= 4 && Regex("\\b" + nq.split(" ").filter { it.isNotBlank() }.joinToString("\\s+") { Regex.escape(it) } + "\\b").containsMatchIn(nr)) return@any true
+                    if (nr.length >= 4 && Regex("\\b" + nr.split(" ").filter { it.isNotBlank() }.joinToString("\\s+") { Regex.escape(it) } + "\\b").containsMatchIn(nq)) return@any true
+                    val queryWords = nq.split(" ").filter { it.length > 2 }
+                    val resultWords = nr.split(" ").filter { it.length > 2 }
+                    if (queryWords.isEmpty() || resultWords.isEmpty()) return@any false
+                    queryWords.count { qw -> resultWords.any { rw -> rw == qw } } == queryWords.size && queryWords.size >= 2
+                }
+            }
+
+            fun findExactYear(results: List<com.cinex.player.data.network.TmdbMovieResult>): com.cinex.player.data.network.TmdbMovieResult? =
+                results.find { res ->
+                    val resYear = (res.release_date ?: res.first_air_date)?.take(4)
+                    resYear == extractedYear && isNameMatch(res, seriesQuery)
+                }
+
+            val searchResponse = tmdbApi.searchSeries(tmdbApiKey, seriesQuery, year = extractedYear)
+            val tmdbResult = if (extractedYear != null) {
+                findExactYear(searchResponse.results)
+                    ?: findExactYear(tmdbApi.searchSeries(tmdbApiKey, seriesQuery).results)
+            } else {
+                searchResponse.results.firstOrNull { isNameMatch(it, seriesQuery) }
+            }
+
+            if (tmdbResult == null) {
+                channelDao.clearSeriesTmdbMetadata(channel.seriesName!!, channel.playlistUrl)
+                channelDao.clearEpisodeTmdbStillImages(channel.seriesName!!, channel.playlistUrl)
+                return@withContext
+            }
+
+            val details = tmdbApi.getTvDetails(tmdbResult.id, tmdbApiKey)
+            val posterUrl = details.poster_path?.let { "https://image.tmdb.org/t/p/w500$it" }
+            val backdropUrl = details.backdrop_path?.let { "https://image.tmdb.org/t/p/original$it" }
+            val cast = details.credits?.cast?.take(10)?.joinToString(", ") { it.name }
+            val year = tmdbResult.release_date?.take(4) ?: tmdbResult.first_air_date?.take(4)
+
+            val allVideos = try {
+                tmdbApi.getTvVideos(tmdbResult.id, tmdbApiKey).results
+            } catch (_: Exception) {
+                details.videos?.results ?: emptyList()
+            }
+            val trailerUrl = pickBestTrailer(allVideos)
+
+            channelDao.updateTmdbInfo(
+                channel.id,
+                tmdbResult.vote_average,
+                details.overview,
+                posterUrl,
+                backdropUrl,
+                year,
+                cast,
+                trailerUrl
+            )
+
+            channelDao.propagateSeriesBackdrop(
+                channel.seriesName!!,
+                channel.playlistUrl,
+                tmdbResult.vote_average,
+                posterUrl,
+                backdropUrl,
+                year,
+                cast
+            )
+        } catch (e: Exception) {
+            android.util.Log.e("CineX-TMDB", "Series metadata enrich FAILED for '${channel.name}': ${e.message}")
+        }
+    }
+
+    suspend fun enrichSeriesSeasonWithTmdb(channel: Channel, seasonNumber: Int) = withContext(Dispatchers.IO) {
+        if (channel.category != "SERIES" || channel.seriesName.isNullOrBlank() || seasonNumber <= 0) return@withContext
+
+        try {
+            val rawName = channel.name
+            val yearMatch = Regex("(?i)\\(?(\\d{4})\\)?").find(rawName)
+            val extractedYear = yearMatch?.groupValues?.get(1)
+
+            val query = rawName
+                .replace(Regex("(?i)\\(?\\d{4}\\)?"), "")
+                .replace(Regex("(?i)\\b(fhd|hd|sd|4k|dual|legendado|dublado|multi|brrip|hdtv|web-dl|bluray|h264|h265|x264|x265|1080p|720p|480p)\\b"), "")
+                .replace(Regex("[|\\-\\[\\]]"), " ")
+                .trim()
+                .replace(Regex("\\s+"), " ")
+
+            val seriesQuery = (channel.seriesName ?: query)
+                .replace(Regex("(?i)s\\d+e\\d+.*"), "")
+                .replace(Regex("(?i)\\(?\\d{4}\\)?"), "")
+                .trim()
+
+            fun normalize(s: String): String = java.text.Normalizer
+                .normalize(s, java.text.Normalizer.Form.NFD)
+                .replace(Regex("[\\p{InCombiningDiacriticalMarks}]"), "")
+                .lowercase()
+                .replace(Regex("[^a-z0-9 ]"), "")
+                .replace(Regex("\\s+"), " ")
+                .trim()
+
+            fun isNameMatch(result: com.cinex.player.data.network.TmdbMovieResult, queryStr: String): Boolean {
+                val nq = normalize(queryStr)
+                if (nq.isBlank()) return false
+                val resultNames = listOfNotNull(result.title, result.name, result.original_title, result.original_name)
+                return resultNames.any { name ->
+                    val nr = normalize(name)
+                    if (nr.isBlank()) return@any false
+                    if (nr == nq) return@any true
+                    if (nq.length >= 4 && Regex("\\b" + nq.split(" ").filter { it.isNotBlank() }.joinToString("\\s+") { Regex.escape(it) } + "\\b").containsMatchIn(nr)) return@any true
+                    if (nr.length >= 4 && Regex("\\b" + nr.split(" ").filter { it.isNotBlank() }.joinToString("\\s+") { Regex.escape(it) } + "\\b").containsMatchIn(nq)) return@any true
+                    val queryWords = nq.split(" ").filter { it.length > 2 }
+                    val resultWords = nr.split(" ").filter { it.length > 2 }
+                    if (queryWords.isEmpty() || resultWords.isEmpty()) return@any false
+                    queryWords.count { qw -> resultWords.any { rw -> rw == qw } } == queryWords.size && queryWords.size >= 2
+                }
+            }
+
+            fun findExactYear(results: List<com.cinex.player.data.network.TmdbMovieResult>): com.cinex.player.data.network.TmdbMovieResult? =
+                results.find { res ->
+                    val resYear = (res.release_date ?: res.first_air_date)?.take(4)
+                    resYear == extractedYear && isNameMatch(res, seriesQuery)
+                }
+
+            val searchResponse = tmdbApi.searchSeries(tmdbApiKey, seriesQuery, year = extractedYear)
+            val tmdbResult = if (extractedYear != null) {
+                findExactYear(searchResponse.results)
+                    ?: findExactYear(tmdbApi.searchSeries(tmdbApiKey, seriesQuery).results)
+            } else {
+                searchResponse.results.firstOrNull { isNameMatch(it, seriesQuery) }
+            }
+
+            if (tmdbResult == null) {
+                channelDao.clearEpisodeTmdbStillImagesForSeason(channel.seriesName!!, seasonNumber, channel.playlistUrl)
+                return@withContext
+            }
+
+            val seasonDetails = tmdbApi.getSeasonDetails(tmdbResult.id, seasonNumber, tmdbApiKey)
+            seasonDetails.episodes.forEach { tmdbEp ->
+                val stillUrl = tmdbEp.still_path?.let { "https://image.tmdb.org/t/p/w500$it" }
+                channelDao.updateEpisodeStillAndSynopsis(
+                    channel.seriesName!!,
+                    seasonNumber,
+                    tmdbEp.episode_number,
+                    stillUrl,
+                    tmdbEp.overview,
+                    channel.playlistUrl
+                )
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("CineX-TMDB", "Season enrich FAILED for '${channel.name}' S$seasonNumber: ${e.message}")
+        }
+    }
+
     suspend fun syncEpg(url: String) = withContext(Dispatchers.IO) {
         try {
             val request = Request.Builder().url(url).build()
@@ -1208,7 +1413,7 @@ class ChannelRepository @Inject constructor(
                 epgDao.insertPrograms(epgPrograms)
                 epgDao.clearOldPrograms(System.currentTimeMillis() - 86400000)
             }
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             e.printStackTrace()
         }
     }
@@ -1284,6 +1489,10 @@ class ChannelRepository @Inject constructor(
 
     suspend fun fetchAndStoreEpisodes(seriesId: Int, seriesName: String) = withContext(Dispatchers.IO) {
         val url = _activePlaylistUrl.value ?: return@withContext
+
+        // Se já tem episódios no banco, não re-busca (evita sobrescrever dados)
+        if (channelDao.countEpisodesForSeries(seriesName, url) > 1) return@withContext
+
         try {
             val uri = android.net.Uri.parse(url)
             val username = uri.getQueryParameter("username")
@@ -1291,19 +1500,47 @@ class ChannelRepository @Inject constructor(
             val host = uri.host
             val scheme = uri.scheme
             val port = uri.port
-            
+
             if (username != null && password != null && host != null) {
                 val baseUrl = "$scheme://$host${if (port != -1) ":$port" else ""}/"
+                val gson = com.google.gson.GsonBuilder()
+                    .setLenient()
+                    .registerTypeAdapter(
+                        EpisodeExtraInfo::class.java,
+                        com.google.gson.JsonDeserializer<EpisodeExtraInfo?> { json, _, _ ->
+                            // Xtream APIs frequentemente retornam info como "" ao invés de objeto
+                            if (json == null || json.isJsonNull || !json.isJsonObject) {
+                                null
+                            } else {
+                                val obj = json.asJsonObject
+                                fun readString(key: String): String? {
+                                    val value = obj.get(key) ?: return null
+                                    if (value.isJsonNull || !value.isJsonPrimitive) return null
+                                    val text = value.asString ?: return null
+                                    return text.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+                                }
+
+                                EpisodeExtraInfo(
+                                    movie_image = readString("movie_image"),
+                                    plot = readString("plot"),
+                                    duration = readString("duration"),
+                                    release_date = readString("release_date"),
+                                    rating = readString("rating")
+                                )
+                            }
+                        }
+                    )
+                    .create()
                 val api = Retrofit.Builder()
                     .baseUrl(baseUrl)
                     .client(okHttpClient)
-                    .addConverterFactory(GsonConverterFactory.create())
+                    .addConverterFactory(GsonConverterFactory.create(gson))
                     .build()
                     .create(XtreamCodesApi::class.java)
-                
+
                 val response = api.getSeriesInfo(username, password, seriesId)
 
-                // Preservar apenas dados do usuário (progresso)
+                // Preservar dados do usuário (progresso) e imagens existentes
                 val existingEpisodes = channelDao.getEpisodesForSeriesList(seriesName, url)
                     .associateBy { it.remoteId }
 
@@ -1312,9 +1549,10 @@ class ChannelRepository @Inject constructor(
                     val channels = episodeList.map { ep ->
                         val remoteId = "series_ep_${ep.id}"
                         val old = existingEpisodes[remoteId]
+                        val apiImage = ep.info?.movie_image?.takeIf { it.isNotBlank() }
                         Channel(
                             name = ep.title,
-                            logoUrl = ep.info?.movie_image,
+                            logoUrl = apiImage ?: old?.logoUrl,
                             groupTitle = "Episódios",
                             categoryId = "series_$seriesId",
                             streamUrl = "${baseUrl}series/$username/$password/${ep.id}.${ep.container_extension ?: "mp4"}",
@@ -1324,9 +1562,11 @@ class ChannelRepository @Inject constructor(
                             episodeNumber = ep.episode_num,
                             playlistUrl = url,
                             remoteId = remoteId,
-                            tmdbSynopsis = ep.info?.plot,
-                            tmdbRating = ep.info?.rating?.toDoubleOrNull(),
-                            tmdbYear = ep.info?.release_date?.take(4),
+                            tmdbSynopsis = ep.info?.plot ?: old?.tmdbSynopsis,
+                            tmdbRating = ep.info?.rating?.toDoubleOrNull() ?: old?.tmdbRating,
+                            tmdbYear = ep.info?.release_date?.take(4) ?: old?.tmdbYear,
+                            posterUrl = old?.posterUrl,
+                            bannerUrl = old?.bannerUrl,
                             resumePosition = old?.resumePosition ?: 0L,
                             totalDuration = old?.totalDuration ?: 0L,
                             isFavorite = old?.isFavorite ?: false

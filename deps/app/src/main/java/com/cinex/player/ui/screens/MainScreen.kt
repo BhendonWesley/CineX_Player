@@ -85,6 +85,7 @@ fun MainScreen(
     val updateAvailable by viewModel.updateAvailable.collectAsState()
     val showChangelog by viewModel.showChangelog.collectAsState()
     val changelogText by viewModel.changelogText.collectAsState()
+    val updateCheckStatus by viewModel.updateCheckStatus.collectAsState()
 
     // Simplificamos a lógica de seleção de playlist: se não houver playlist ativa
     val showPlaylistSelectionDashboard = currentPlaylist == null || isServerSwapOpen
@@ -431,6 +432,7 @@ fun MainScreen(
         UpdatePromptDialog(
             newVersion = updateAvailable!!.newVersion,
             apkSizeMb = sizeMb,
+            status = updateCheckStatus,
             onUpdate = { viewModel.acceptUpdate() },
             onDismiss = { viewModel.dismissUpdate() }
         )

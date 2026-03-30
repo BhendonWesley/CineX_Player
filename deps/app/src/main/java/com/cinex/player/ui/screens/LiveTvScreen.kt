@@ -608,7 +608,9 @@ fun LiveTvScreen(
                         )
                     }
                 } else if (hasEpg) {
+                    val epgListState = rememberLazyListState()
                     LazyColumn(
+                        state = epgListState,
                         modifier = Modifier
                             .fillMaxWidth()
                             .weight(1f),
@@ -619,6 +621,12 @@ fun LiveTvScreen(
                         if (currentProgram != null) {
                             item {
                                 var isFocusedEpg by remember { mutableStateOf(false) }
+                                // Quando o primeiro item recebe foco, scrolla para o topo
+                                LaunchedEffect(isFocusedEpg) {
+                                    if (isFocusedEpg) {
+                                        epgListState.animateScrollToItem(0)
+                                    }
+                                }
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -626,6 +634,10 @@ fun LiveTvScreen(
                                             if (isTv) Modifier
                                                 .onFocusChanged { isFocusedEpg = it.isFocused }
                                                 .focusable(interactionSource = remember { MutableInteractionSource() })
+                                                .onKeyEvent { event ->
+                                                    // Bloqueia UP no primeiro item para não escapar pro player
+                                                    event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp
+                                                }
                                                 .background(
                                                     if (isFocusedEpg) Color.White.copy(alpha = 0.08f)
                                                     else Color.Transparent,
@@ -772,10 +784,8 @@ fun LiveTvScreen(
 
 @Composable
 fun EpgItem(program: com.cinex.player.data.model.EpgProgram, isCurrent: Boolean, is24Hour: Boolean = true) {
-    val pattern = if (is24Hour) "HH:mm" else "hh:mm a"
-    val timeFormat = SimpleDateFormat(pattern, Locale.getDefault())
-    val start = timeFormat.format(Date(program.startTime))
-    val end = timeFormat.format(Date(program.endTime))
+    val start = com.cinex.player.utils.EpgTimeHelper.formatTime(program.startTime, is24Hour)
+    val end = com.cinex.player.utils.EpgTimeHelper.formatTime(program.endTime, is24Hour)
     
     Column(
         modifier = Modifier.padding(vertical = 4.dp)
@@ -845,33 +855,7 @@ fun String.decodeBase64IfNeeded(): String {
     }
 }
 
-// Formata horários do EPG Xtream usando timestamps Unix (fonte confiável)
+// Formata horários do EPG Xtream
 fun formatEpgTime(epg: com.cinex.player.data.network.EpgListing, is24Hour: Boolean): String {
-    val pattern = if (is24Hour) "HH:mm" else "hh:mm a"
-    val outputFormat = SimpleDateFormat(pattern, Locale.getDefault())
-    
-    // Prioridade 1: Usar start_timestamp / stop_timestamp (Unix epoch em segundos)
-    val startTs = epg.start_timestamp?.toLongOrNull()
-    val stopTs = epg.stop_timestamp?.toLongOrNull()
-    
-    if (startTs != null && stopTs != null) {
-        val startStr = outputFormat.format(Date(startTs * 1000))
-        val endStr = outputFormat.format(Date(stopTs * 1000))
-        return "$startStr - $endStr"
-    }
-    
-    // Prioridade 2: Tentar parsing do campo start/end como data formatada (Xtream envia em UTC)
-    return try {
-        val inputFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
-        inputFormat.timeZone = TimeZone.getTimeZone("UTC")
-        val startStr = outputFormat.format(inputFormat.parse(epg.start)!!)
-        val endStr = outputFormat.format(inputFormat.parse(epg.end)!!)
-        "$startStr - $endStr"
-    } catch (e: Exception) {
-        // Fallback: extrair hora do campo start
-        try {
-            val startOnly = epg.start.takeLast(8).take(5)
-            startOnly
-        } catch (e2: Exception) { "" }
-    }
+    return com.cinex.player.utils.EpgTimeHelper.formatEpgRange(epg, is24Hour)
 }

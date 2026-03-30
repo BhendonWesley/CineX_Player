@@ -286,8 +286,17 @@ class MainViewModel @Inject constructor(
 
     fun acceptUpdate() {
         val update = _updateAvailable.value ?: return
-        _showUpdateDialog.value = false
-        updateManager.downloadAndInstall(update)
+        // Em vez de piscar a tela fechando a dialog diretamente, vamos mudar o status para dar feedback do download
+        _updateCheckStatus.value = "downloading"
+        
+        viewModelScope.launch {
+            val success = updateManager.downloadAndInstall(update)
+            if (success) {
+                _showUpdateDialog.value = false
+            } else {
+                _updateCheckStatus.value = "error"
+            }
+        }
     }
 
     fun dismissUpdate() {
@@ -417,11 +426,19 @@ class MainViewModel @Inject constructor(
         movieFlowCache.clear()
         seriesFlowCache.clear()
         enrichingIds.clear()
+        enrichingSeriesSeasons.clear()
     }
 
     private val enrichingIds = java.util.Collections.newSetFromMap(
         java.util.concurrent.ConcurrentHashMap<Int, Boolean>()
     )
+
+    private val enrichingSeriesSeasons = java.util.Collections.newSetFromMap(
+        java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    )
+
+    // Semáforo para limitar enriquecimentos TMDB simultâneos (evita travamento na TV)
+    private val enrichSemaphore = kotlinx.coroutines.sync.Semaphore(3)
 
     private fun shouldEnrichChannelMetadata(channel: Channel): Boolean {
         if (channel.category == "LIVE_TV") return false
@@ -437,16 +454,26 @@ class MainViewModel @Inject constructor(
     private fun shouldEnrichChannelVisualFallback(channel: Channel): Boolean {
         if (channel.category == "LIVE_TV") return false
 
-        val hasDefaultImage = !channel.logoUrl.isNullOrEmpty()
         val hasTmdbPoster = !channel.posterUrl.isNullOrEmpty()
 
+        // Séries: sempre enriquecer se não tem poster TMDB, pois o logoUrl do M3U
+        // pode ser inválido/quebrado e o poster TMDB é a imagem principal no grid
+        if (channel.category == "SERIES") return !hasTmdbPoster
+
+        val hasDefaultImage = !channel.logoUrl.isNullOrEmpty()
         return !hasDefaultImage && !hasTmdbPoster
     }
 
     fun onChannelVisible(channel: Channel) {
         if (shouldEnrichChannelVisualFallback(channel) && enrichingIds.add(channel.id)) {
             viewModelScope.launch {
-                repository.enrichChannelWithTmdb(channel)
+                // Limita a no máximo 3 enriquecimentos simultâneos para não travar a UI
+                enrichSemaphore.acquire()
+                try {
+                    repository.enrichChannelWithTmdb(channel)
+                } finally {
+                    enrichSemaphore.release()
+                }
             }
         }
     }
@@ -549,15 +576,23 @@ class MainViewModel @Inject constructor(
         viewModelScope.launch {
             repository.getShortEpg(streamId).onSuccess { response ->
                 val listings = response.epg_listings ?: emptyList()
-                _epgListings.value = listings
                 epgCache[streamId] = EpgCacheEntry(listings, System.currentTimeMillis())
                 // Limpa entradas antigas para não crescer infinitamente
                 if (epgCache.size > 50) {
                     val oldest = epgCache.entries.minByOrNull { it.value.timestamp }?.key
                     oldest?.let { epgCache.remove(it) }
                 }
+                
+                // Previne condição de corrida: Só atualiza EPG se o usuário não mudou de canal durante o delay da requisição
+                val currentStreamId = _selectedLiveChannel.value?.remoteId?.replace("live_", "")?.toIntOrNull() ?: -1
+                if (currentStreamId == streamId) {
+                    _epgListings.value = listings
+                }
             }.onFailure {
-                _epgListings.value = emptyList()
+                val currentStreamId = _selectedLiveChannel.value?.remoteId?.replace("live_", "")?.toIntOrNull() ?: -1
+                if (currentStreamId == streamId) {
+                    _epgListings.value = emptyList()
+                }
             }
         }
     }
@@ -937,8 +972,13 @@ class MainViewModel @Inject constructor(
 
     fun selectChannelForDetails(channel: Channel?) {
         _selectedChannelForDetails.value = channel
-        if (channel != null && shouldEnrichChannelMetadata(channel)) {
-            enrichChannelMetadata(channel)
+        if (channel != null) {
+            // Séries sempre precisam buscar episódios, independente do estado TMDB
+            if (channel.category == "SERIES") {
+                enrichChannelMetadata(channel)
+            } else if (shouldEnrichChannelMetadata(channel)) {
+                enrichChannelMetadata(channel)
+            }
         }
     }
 
@@ -955,11 +995,15 @@ class MainViewModel @Inject constructor(
                 if (seriesId != -1) {
                     repository.fetchAndStoreEpisodes(seriesId, seriesName)
                 }
-                // Enriquece TMDB em background (stills, sinopses) sem bloquear
-                repository.enrichChannelWithTmdb(channel)
+                // Enriquece TMDB se a série precisa de dados OU se episódios precisam de stills
+                if (shouldEnrichChannelMetadata(channel)) {
+                    repository.enrichSeriesMetadataWithTmdb(channel)
+                }
                 _isLoadingEpisodes.value = false
             } else {
-                repository.enrichChannelWithTmdb(channel)
+                if (shouldEnrichChannelMetadata(channel)) {
+                    repository.enrichChannelWithTmdb(channel)
+                }
             }
         }
     }
@@ -970,6 +1014,42 @@ class MainViewModel @Inject constructor(
 
     fun getEpisodesBySeasonPaged(seriesName: String, season: Int): Flow<PagingData<Channel>> {
         return repository.getEpisodesBySeasonPaged(seriesName, season)
+    }
+
+    fun ensureSeriesDetailsReady(series: Channel) {
+        if (series.category == "SERIES") {
+            enrichChannelMetadata(series)
+        }
+    }
+
+    fun observeChannelByRemoteId(remoteId: String): Flow<Channel?> {
+        return repository.observeChannelByRemoteId(remoteId)
+    }
+
+    fun observeEpisodesWithoutStillForSeason(seriesName: String, season: Int): Flow<Int> {
+        return repository.observeEpisodesWithoutStillForSeason(seriesName, season)
+    }
+
+    fun enrichSeriesSeasonIfNeeded(series: Channel, season: Int) {
+        if (series.category != "SERIES" || season <= 0) return
+        val seriesName = series.seriesName ?: series.name
+        val key = "${series.remoteId}:$season"
+        if (!enrichingSeriesSeasons.add(key)) return
+
+        viewModelScope.launch {
+            try {
+                if (repository.hasEpisodesWithoutStill(seriesName, season)) {
+                    enrichSemaphore.acquire()
+                    try {
+                        repository.enrichSeriesSeasonWithTmdb(series, season)
+                    } finally {
+                        enrichSemaphore.release()
+                    }
+                }
+            } finally {
+                enrichingSeriesSeasons.remove(key)
+            }
+        }
     }
 
     private fun reconnectLiveChannel() {

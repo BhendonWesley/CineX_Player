@@ -35,12 +35,19 @@ private val SurfaceDark = Color(0xFF111316)
 fun UpdatePromptDialog(
     newVersion: String,
     apkSizeMb: String,
+    status: String,
     onUpdate: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val isDownloading = status == "downloading"
+    
     Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
+        onDismissRequest = { if (!isDownloading) onDismiss() },
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            dismissOnBackPress = !isDownloading,
+            dismissOnClickOutside = !isDownloading
+        )
     ) {
         Box(
             modifier = Modifier
@@ -54,17 +61,25 @@ fun UpdatePromptDialog(
                 modifier = Modifier.padding(28.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Icon(
-                    imageVector = Icons.Default.SystemUpdate,
-                    contentDescription = null,
-                    tint = CineXRed,
-                    modifier = Modifier.size(48.dp)
-                )
+                if (isDownloading) {
+                    CircularProgressIndicator(
+                        color = CineXRed,
+                        modifier = Modifier.size(48.dp),
+                        strokeWidth = 4.dp
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Default.SystemUpdate,
+                        contentDescription = null,
+                        tint = CineXRed,
+                        modifier = Modifier.size(48.dp)
+                    )
+                }
 
                 Spacer(modifier = Modifier.height(16.dp))
 
                 Text(
-                    text = "NOVA VERSÃO DISPONÍVEL",
+                    text = if (isDownloading) "BAIXANDO..." else "NOVA VERSÃO DISPONÍVEL",
                     color = Color.White,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Black,
@@ -97,15 +112,19 @@ fun UpdatePromptDialog(
                         .fillMaxWidth()
                         .height(50.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(
-                            Brush.horizontalGradient(listOf(CineXRed, CineXDarkRed))
+                        .then(
+                            if (isDownloading) Modifier.background(Color.Gray.copy(alpha = 0.3f))
+                            else Modifier.background(Brush.horizontalGradient(listOf(CineXRed, CineXDarkRed)))
                         )
-                        .clickable { onUpdate() },
+                        .then(
+                            if (!isDownloading) Modifier.clickable { onUpdate() }
+                            else Modifier
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
-                        text = "ATUALIZAR AGORA",
-                        color = Color.White,
+                        text = if (isDownloading) "AGUARDE..." else "ATUALIZAR AGORA",
+                        color = if (isDownloading) Color.White.copy(alpha = 0.5f) else Color.White,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
                         letterSpacing = 1.sp
@@ -120,17 +139,26 @@ fun UpdatePromptDialog(
                         .fillMaxWidth()
                         .height(44.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .border(1.dp, Color.White.copy(alpha = 0.15f), RoundedCornerShape(12.dp))
-                        .clickable { onDismiss() },
+                        .border(
+                            1.dp, 
+                            if (isDownloading) Color.Transparent else Color.White.copy(alpha = 0.15f), 
+                            RoundedCornerShape(12.dp)
+                        )
+                        .then(
+                            if (!isDownloading) Modifier.clickable { onDismiss() }
+                            else Modifier
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
-                    Text(
-                        text = "DEPOIS",
-                        color = Color.White.copy(alpha = 0.6f),
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Medium,
-                        letterSpacing = 1.sp
-                    )
+                    if (!isDownloading) {
+                        Text(
+                            text = "DEPOIS",
+                            color = Color.White.copy(alpha = 0.6f),
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            letterSpacing = 1.sp
+                        )
+                    }
                 }
             }
         }

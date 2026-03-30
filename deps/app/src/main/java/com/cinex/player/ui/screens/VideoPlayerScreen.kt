@@ -584,12 +584,74 @@ fun VideoPlayerScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White, modifier = Modifier.size(28.dp))
                     }
 
-                    Text(
-                        text = channel.name.uppercase(),
-                        color = Color.White,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.ExtraBold
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = channel.name.uppercase(),
+                            color = Color.White,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+
+                        // Badge de qualidade do stream
+                        val streamQuality = when {
+                            channel.name.contains("4K", ignoreCase = true) || channel.name.contains("UHD", ignoreCase = true) -> "4K"
+                            channel.name.contains("FHD", ignoreCase = true) || channel.name.contains("1080", ignoreCase = true) -> "FHD"
+                            channel.name.contains("HD", ignoreCase = true) || channel.name.contains("720", ignoreCase = true) -> "HD"
+                            channel.name.contains("SD", ignoreCase = true) -> "SD"
+                            else -> null
+                        }
+                        if (isLiveTv && streamQuality != null) {
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(
+                                        when (streamQuality) {
+                                            "4K" -> Color(0xFFF59E0B)
+                                            "FHD" -> Color(0xFF10B981)
+                                            "HD" -> Color(0xFF3B82F6)
+                                            else -> Color.Gray
+                                        }
+                                    )
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = streamQuality,
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                        }
+
+                        // Indicador AO VIVO
+                        if (isLiveTv) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(4.dp))
+                                    .background(Color(0xFFDC2626))
+                                    .padding(horizontal = 8.dp, vertical = 3.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(RoundedCornerShape(50))
+                                        .background(Color.White)
+                                )
+                                Text(
+                                    text = "AO VIVO",
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    letterSpacing = 0.5.sp
+                                )
+                            }
+                        }
+                    }
 
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(16.dp),
@@ -756,39 +818,13 @@ fun VideoPlayerScreen(
                     }
                 }
 
-                Row(
-                    modifier = Modifier.align(Alignment.Center),
-                    horizontalArrangement = Arrangement.spacedBy(40.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (isLiveTv) {
-                        // Live TV: canal anterior
-                        if (onPreviousChannel != null) {
-                            IconButton(onClick = onPreviousChannel, modifier = Modifier.size(56.dp)) {
-                                Icon(Icons.Default.SkipPrevious, contentDescription = "Canal anterior", tint = Color.White, modifier = Modifier.fillMaxSize())
-                            }
-                        }
-
-                        IconButton(
-                            onClick = { if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play() },
-                            modifier = Modifier.size(72.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (exoPlayer.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                                contentDescription = "Play/Pause",
-                                tint = Color.White,
-                                modifier = Modifier.fillMaxSize()
-                            )
-                        }
-
-                        // Live TV: próximo canal
-                        if (onNextChannel != null) {
-                            IconButton(onClick = onNextChannel, modifier = Modifier.size(56.dp)) {
-                                Icon(Icons.Default.SkipNext, contentDescription = "Próximo canal", tint = Color.White, modifier = Modifier.fillMaxSize())
-                            }
-                        }
-                    } else {
-                        // VOD: seek -10s / play / seek +10s
+                // Controles centrais — apenas para VOD (Live TV fica limpo)
+                if (!isLiveTv) {
+                    Row(
+                        modifier = Modifier.align(Alignment.Center),
+                        horizontalArrangement = Arrangement.spacedBy(40.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         SeekButton(icon = Icons.Default.Replay10, description = "-10s", size = 56.dp) {
                             exoPlayer.seekBack()
                         }
@@ -895,8 +931,8 @@ fun VideoPlayerScreen(
                     }
                 }
 
-                // Barra de progresso (só para VOD)
                 if (!isLiveTv) {
+                    // Barra de progresso (só para VOD)
                     Row(
                         modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).padding(horizontal = 48.dp, vertical = 32.dp),
                         verticalAlignment = Alignment.CenterVertically,
@@ -911,6 +947,138 @@ fun VideoPlayerScreen(
                             colors = SliderDefaults.colors(thumbColor = DeepRed, activeTrackColor = DeepRed)
                         )
                         Text(formatTime(duration), color = Color.White, fontSize = 14.sp)
+                    }
+                } else {
+                    // Mini EPG — programa atual (só para Live TV)
+                    val currentProgram by viewModel.currentProgram.collectAsState()
+                    val upcomingPrograms by viewModel.upcomingPrograms.collectAsState()
+                    val epgListings by viewModel.epgListings.collectAsState()
+                    val nextProgram = upcomingPrograms.firstOrNull()
+
+                    val timeFormat = remember { java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()) }
+
+                    // Dados do programa atual (via EPG local ou fallback Xtream)
+                    val programTitle: String?
+                    val programStart: Long?
+                    val programEnd: Long?
+                    val nextTitle: String?
+                    val nextStart: Long?
+
+                    if (currentProgram != null) {
+                        programTitle = currentProgram!!.title
+                        programStart = currentProgram!!.startTime
+                        programEnd = currentProgram!!.endTime
+                        nextTitle = nextProgram?.title
+                        nextStart = nextProgram?.startTime
+                    } else if (epgListings.isNotEmpty()) {
+                        // Fallback: EPG do Xtream
+                        val first = epgListings[0]
+                        val startTs = com.cinex.player.utils.EpgTimeHelper.parseXtreamEpgTime(first.start, first.start_timestamp)
+                        val stopTs = com.cinex.player.utils.EpgTimeHelper.parseXtreamEpgTime(first.end, first.stop_timestamp)
+                        
+                        programTitle = first.title.let {
+                            try {
+                                val decoded = String(android.util.Base64.decode(it.trim(), android.util.Base64.DEFAULT), Charsets.UTF_8)
+                                if (decoded.all { c -> c.code >= 32 || c == '\n' }) decoded.trim() else it
+                            } catch (_: Exception) { it }
+                        }
+                        programStart = startTs
+                        programEnd = stopTs
+                        val second = epgListings.getOrNull(1)
+                        nextTitle = second?.title?.let {
+                            try {
+                                val decoded = String(android.util.Base64.decode(it.trim(), android.util.Base64.DEFAULT), Charsets.UTF_8)
+                                if (decoded.all { c -> c.code >= 32 || c == '\n' }) decoded.trim() else it
+                            } catch (_: Exception) { it }
+                        }
+                        nextStart = second?.let {
+                            com.cinex.player.utils.EpgTimeHelper.parseXtreamEpgTime(it.start, it.start_timestamp)
+                        }
+                    } else {
+                        programTitle = null
+                        programStart = null
+                        programEnd = null
+                        nextTitle = null
+                        nextStart = null
+                    }
+
+                    if (programTitle != null && programStart != null && programEnd != null) {
+                        val now = System.currentTimeMillis()
+                        val totalDuration = (programEnd - programStart).coerceAtLeast(1L)
+                        val elapsed = (now - programStart).coerceIn(0L, totalDuration)
+                        val progress = elapsed.toFloat() / totalDuration.toFloat()
+
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .align(Alignment.BottomCenter)
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.9f))
+                                    )
+                                )
+                                .padding(horizontal = 32.dp, vertical = 16.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = timeFormat.format(java.util.Date(programStart)),
+                                    color = Color.White.copy(alpha = 0.6f),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    text = programTitle,
+                                    color = Color.White,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 1,
+                                    modifier = Modifier.weight(1f),
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    text = timeFormat.format(java.util.Date(programEnd)),
+                                    color = Color.White.copy(alpha = 0.6f),
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+
+                            Spacer(Modifier.height(6.dp))
+
+                            LinearProgressIndicator(
+                                progress = { progress },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(3.dp)
+                                    .clip(RoundedCornerShape(2.dp)),
+                                color = DeepRed,
+                                trackColor = Color.White.copy(alpha = 0.2f)
+                            )
+
+                            if (nextTitle != null) {
+                                Spacer(Modifier.height(6.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "A seguir:",
+                                        color = Color.White.copy(alpha = 0.4f),
+                                        fontSize = 12.sp
+                                    )
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(
+                                        text = if (nextStart != null) "${timeFormat.format(java.util.Date(nextStart))}  $nextTitle" else nextTitle,
+                                        color = Color.White.copy(alpha = 0.5f),
+                                        fontSize = 12.sp,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }

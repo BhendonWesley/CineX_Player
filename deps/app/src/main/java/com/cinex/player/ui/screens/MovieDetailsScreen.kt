@@ -168,7 +168,7 @@ fun MovieDetailsScreen(
                     // Sinopse em bloco visual com scroll e fade
                     Box(
                         modifier = Modifier
-                            .heightIn(max = 140.dp)
+                            .height(180.dp)
                             .padding(vertical = 8.dp)
                             .clip(RoundedCornerShape(8.dp))
                             .background(Color.White.copy(alpha = 0.06f))

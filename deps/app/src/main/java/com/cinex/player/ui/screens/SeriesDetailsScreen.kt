@@ -10,7 +10,6 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -88,11 +87,17 @@ fun SeriesDetailsScreen(
     onBack: () -> Unit,
     onPlayEpisode: (Channel) -> Unit
 ) {
+    val hydratedSeries by viewModel.observeChannelByRemoteId(series.remoteId).collectAsState(initial = null)
+    val currentSeries = hydratedSeries ?: series
+    val seriesName = currentSeries.seriesName ?: currentSeries.name
     val isLoadingEpisodes by viewModel.isLoadingEpisodes.collectAsState()
-    val seasons by viewModel.getSeasonsForSeries(series.seriesName ?: "").collectAsState(initial = emptyList())
-    val sortedSeasons = seasons.filter { it > 0 }.sorted()
-    var selectedSeason by remember { mutableStateOf(1) }
-    var viewMode by remember { mutableStateOf(SeriesViewMode.LANDING) }
+    val seasons by viewModel.getSeasonsForSeries(seriesName).collectAsState(initial = emptyList())
+    val sortedSeasons = seasons.mapNotNull { it }.filter { it > 0 }.sorted()
+    var selectedSeason by remember(series.remoteId) { mutableStateOf(1) }
+    var viewMode by remember(series.remoteId) { mutableStateOf(SeriesViewMode.LANDING) }
+    var pendingOpenEpisodes by remember(series.remoteId) { mutableStateOf(false) }
+    val hasEpisodesReady = sortedSeasons.isNotEmpty()
+    val canOpenEpisodes = hasEpisodesReady && !isLoadingEpisodes
 
     LaunchedEffect(sortedSeasons) {
         if (sortedSeasons.isNotEmpty()) {
@@ -102,14 +107,36 @@ fun SeriesDetailsScreen(
         }
     }
 
-    val episodesFlow = remember(series.seriesName, selectedSeason) {
-        viewModel.getEpisodesBySeasonPaged(series.seriesName ?: "", selectedSeason)
+    LaunchedEffect(pendingOpenEpisodes, isLoadingEpisodes, canOpenEpisodes) {
+        if (pendingOpenEpisodes && !isLoadingEpisodes && canOpenEpisodes) {
+            pendingOpenEpisodes = false
+            viewMode = SeriesViewMode.EPISODES
+        }
+    }
+
+    LaunchedEffect(series.remoteId, selectedSeason, viewMode, isLoadingEpisodes, sortedSeasons) {
+        if (
+            viewMode == SeriesViewMode.EPISODES &&
+            !isLoadingEpisodes &&
+            selectedSeason > 0 &&
+            sortedSeasons.contains(selectedSeason)
+        ) {
+            viewModel.enrichSeriesSeasonIfNeeded(currentSeries, selectedSeason)
+        }
+    }
+
+    val episodesFlow = remember(seriesName, selectedSeason) {
+        if (seriesName.isBlank() || selectedSeason <= 0) {
+            kotlinx.coroutines.flow.flowOf(androidx.paging.PagingData.empty())
+        } else {
+            viewModel.getEpisodesBySeasonPaged(seriesName, selectedSeason)
+        }
     }
     val pagingItems = episodesFlow.collectAsLazyPagingItems()
     val context = LocalContext.current
     val isTv = remember {
-        val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
-        uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+        val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as? android.app.UiModeManager
+        uiModeManager?.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     }
     val playButtonRequester = remember { FocusRequester() }
     val selectedSeasonFocusRequester = remember { FocusRequester() }
@@ -121,6 +148,7 @@ fun SeriesDetailsScreen(
     var focusEpisodesRequest by remember { mutableIntStateOf(0) }
     var focusSeasonRequest by remember { mutableIntStateOf(0) }
     var focusBackArrowRequest by remember { mutableIntStateOf(0) }
+    var suppressLandingAutoFocus by remember(series.remoteId) { mutableStateOf(false) }
 
     LaunchedEffect(focusEpisodesRequest) {
         if (focusEpisodesRequest > 0) {
@@ -147,9 +175,14 @@ fun SeriesDetailsScreen(
         when (viewMode) {
             SeriesViewMode.LANDING -> if (isTv) {
                 kotlinx.coroutines.delay(200)
-                try { playButtonRequester.requestFocus() } catch (_: Exception) {}
+                if (suppressLandingAutoFocus) {
+                    suppressLandingAutoFocus = false
+                    try { backArrowFocusRequester.requestFocus() } catch (_: Exception) {}
+                } else {
+                    try { playButtonRequester.requestFocus() } catch (_: Exception) {}
+                }
             }
-            SeriesViewMode.EPISODES -> if (isTv) {
+            SeriesViewMode.EPISODES -> if (isTv && sortedSeasons.isNotEmpty()) {
                 kotlinx.coroutines.delay(150)
                 try { selectedSeasonFocusRequester.requestFocus() } catch (_: Exception) {}
             }
@@ -158,6 +191,7 @@ fun SeriesDetailsScreen(
 
     BackHandler {
         if (viewMode == SeriesViewMode.EPISODES) {
+            suppressLandingAutoFocus = true
             viewMode = SeriesViewMode.LANDING
         } else {
             onBack()
@@ -166,7 +200,7 @@ fun SeriesDetailsScreen(
 
     Box(modifier = Modifier.fillMaxSize().background(DarkBackground)) {
         AsyncImage(
-            model = series.bannerUrl ?: series.logoUrl,
+            model = currentSeries.bannerUrl ?: currentSeries.logoUrl,
             contentDescription = null,
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop,
@@ -203,6 +237,7 @@ fun SeriesDetailsScreen(
                 IconButton(
                     onClick = {
                         if (viewMode == SeriesViewMode.EPISODES) {
+                            suppressLandingAutoFocus = true
                             viewMode = SeriesViewMode.LANDING
                         } else {
                             onBack()
@@ -235,7 +270,7 @@ fun SeriesDetailsScreen(
                     verticalAlignment = Alignment.Top
                 ) {
                     AsyncImage(
-                        model = series.posterUrl?.takeIf { it.isNotEmpty() } ?: series.logoUrl,
+                        model = currentSeries.posterUrl?.takeIf { it.isNotEmpty() } ?: currentSeries.logoUrl,
                         contentDescription = null,
                         modifier = Modifier
                             .width(160.dp)
@@ -251,7 +286,7 @@ fun SeriesDetailsScreen(
                         modifier = Modifier.weight(1f).fillMaxHeight()
                     ) {
                         Text(
-                            text = cleanSeriesTitle(series.seriesName ?: series.name).uppercase(),
+                            text = cleanSeriesTitle(seriesName).uppercase(),
                             color = Color.White,
                             fontSize = 28.sp,
                             fontWeight = FontWeight.Black,
@@ -264,7 +299,7 @@ fun SeriesDetailsScreen(
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 repeat(5) { index ->
-                                    val rating = (series.tmdbRating ?: 0.0) / 2
+                                    val rating = (currentSeries.tmdbRating ?: 0.0) / 2
                                     Icon(
                                         Icons.Default.Star,
                                         contentDescription = null,
@@ -274,7 +309,7 @@ fun SeriesDetailsScreen(
                                 }
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = String.format("%.1f", series.tmdbRating ?: 0.0),
+                                    text = String.format("%.1f", currentSeries.tmdbRating ?: 0.0),
                                     color = Color.White,
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.Bold
@@ -283,7 +318,7 @@ fun SeriesDetailsScreen(
                             Spacer(modifier = Modifier.width(16.dp))
                             Text(text = "•", color = Color.Gray)
                             Spacer(modifier = Modifier.width(16.dp))
-                            Text(text = series.tmdbYear ?: "N/A", color = Color.Gray, fontSize = 16.sp)
+                            Text(text = currentSeries.tmdbYear ?: "N/A", color = Color.Gray, fontSize = 16.sp)
                             Spacer(modifier = Modifier.width(16.dp))
                             Text(text = "•", color = Color.Gray)
                             Spacer(modifier = Modifier.width(16.dp))
@@ -293,14 +328,14 @@ fun SeriesDetailsScreen(
                         // Sinopse em bloco visual com scroll e fade
                         Box(
                             modifier = Modifier
-                                .weight(1f)
                                 .padding(vertical = 8.dp)
+                                .height(180.dp)
                                 .clip(RoundedCornerShape(8.dp))
                                 .background(Color.White.copy(alpha = 0.06f))
                         ) {
                             val scrollState = rememberScrollState()
                             Text(
-                                text = series.tmdbSynopsis ?: "Sem sinopse disponível.",
+                                text = currentSeries.tmdbSynopsis ?: "Preparando detalhes da serie...",
                                 color = Color.LightGray,
                                 fontSize = 14.sp,
                                 lineHeight = 21.sp,
@@ -333,9 +368,19 @@ fun SeriesDetailsScreen(
 
                             var isPlayFocused by remember { mutableStateOf(false) }
                             Button(
-                                onClick = { viewMode = SeriesViewMode.EPISODES },
+                                onClick = {
+                                    when {
+                                        canOpenEpisodes -> viewMode = SeriesViewMode.EPISODES
+                                        else -> {
+                                            pendingOpenEpisodes = true
+                                            viewModel.ensureSeriesDetailsReady(currentSeries)
+                                        }
+                                    }
+                                },
+                                enabled = true,
                                 colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color.White
+                                    containerColor = Color.White,
+                                    disabledContainerColor = Color.White.copy(alpha = 0.75f)
                                 ),
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier
@@ -356,9 +401,26 @@ fun SeriesDetailsScreen(
                                     ),
                                 contentPadding = PaddingValues(horizontal = 24.dp)
                             ) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black)
+                                if (isLoadingEpisodes && !canOpenEpisodes) {
+                                    CircularProgressIndicator(
+                                        color = Color.Black,
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp
+                                    )
+                                } else {
+                                    Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black)
+                                }
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("ASSISTIR EPISÓDIOS", color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text(
+                                    when {
+                                        canOpenEpisodes -> "ASSISTIR EPISODIOS"
+                                        isLoadingEpisodes || pendingOpenEpisodes -> "PREPARANDO EPISODIOS..."
+                                        else -> "ASSISTIR EPISODIOS"
+                                    },
+                                    color = Color.Black,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
                             }
 
                             Spacer(modifier = Modifier.width(16.dp))
@@ -427,11 +489,13 @@ fun SeriesDetailsScreen(
                             modifier = Modifier.padding(bottom = 16.dp, start = 8.dp)
                         )
 
-                        LazyColumn(
+                        Column(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .verticalScroll(rememberScrollState())
                         ) {
-                            itemsIndexed(sortedSeasons) { seasonIndex, seasonNum ->
+                            sortedSeasons.forEachIndexed { seasonIndex, seasonNum ->
                                 val isFirst = seasonIndex == 0
                                 val isSelected = selectedSeason == seasonNum
                                 var isFocused by remember { mutableStateOf(false) }
@@ -477,6 +541,9 @@ fun SeriesDetailsScreen(
                                         fontWeight = if (isFocused || isSelected) FontWeight.Bold else FontWeight.Normal
                                     )
                                 }
+                                if (seasonIndex < sortedSeasons.lastIndex) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                }
                             }
                         }
                     }
@@ -493,8 +560,9 @@ fun SeriesDetailsScreen(
                             modifier = Modifier.padding(bottom = 12.dp, top = 16.dp)
                         )
 
-                        if (isLoadingEpisodes && pagingItems.itemCount == 0) {
-                            // Shimmer loading placeholders
+                        val isPagingLoading = pagingItems.loadState.refresh is androidx.paging.LoadState.Loading
+                        if (pagingItems.itemCount == 0 && (isLoadingEpisodes || isPagingLoading)) {
+                            // Shimmer apenas enquanto está realmente carregando
                             LazyColumn(
                                 verticalArrangement = Arrangement.spacedBy(16.dp),
                                 contentPadding = PaddingValues(bottom = 32.dp),
@@ -504,8 +572,8 @@ fun SeriesDetailsScreen(
                                     ShimmerEpisodeItem()
                                 }
                             }
-                        } else if (!isLoadingEpisodes && pagingItems.itemCount == 0) {
-                            // Empty state — nenhum episódio
+                        } else if (pagingItems.itemCount == 0) {
+                            // Carregamento terminou e realmente não tem episódios
                             Box(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -513,7 +581,7 @@ fun SeriesDetailsScreen(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
-                                    text = "Nenhum episódio disponível",
+                                    text = "Temporada indisponível",
                                     color = Color.White.copy(alpha = 0.4f),
                                     fontSize = 15.sp,
                                     fontWeight = FontWeight.Medium
@@ -532,8 +600,8 @@ fun SeriesDetailsScreen(
                                     pagingItems[index]?.let { episode ->
                                         EpisodeItem(
                                             episode = episode,
-                                            seriesPoster = series.bannerUrl ?: series.logoUrl,
-                                            seriesName = series.seriesName ?: series.name,
+                                            seriesPoster = currentSeries.bannerUrl ?: currentSeries.logoUrl,
+                                            seriesName = seriesName,
                                             modifier = if (isTv && index == 0) Modifier.focusRequester(firstEpisodeFocusRequester) else Modifier,
                                             onKeyLeft = if (isTv) { { focusSeasonRequest++ } } else null,
                                             blockUp = isTv && index == 0,
@@ -626,11 +694,11 @@ fun ShimmerEpisodeItem() {
 
 @Composable
 fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: String?, seriesName: String? = null, modifier: Modifier = Modifier, onKeyLeft: (() -> Unit)? = null, blockUp: Boolean = false, onClick: () -> Unit) {
+    val genericSeriesBackdrop = episode.bannerUrl?.contains("/original/") == true
     val imageModel = when {
-        !episode.bannerUrl.isNullOrBlank() -> episode.bannerUrl
-        !episode.logoUrl.isNullOrBlank() -> episode.logoUrl
-        !episode.posterUrl.isNullOrBlank() -> episode.posterUrl
-        else -> seriesPoster
+        !episode.bannerUrl.isNullOrBlank() && !genericSeriesBackdrop -> episode.bannerUrl
+        !seriesPoster.isNullOrBlank() -> seriesPoster
+        else -> null
     }
 
     var isFocused by remember { mutableStateOf(false) }
@@ -682,21 +750,47 @@ fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: Stri
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
                     )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color(0xFF23262B)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                tint = Color.White.copy(alpha = 0.4f),
+                                modifier = Modifier.size(30.dp)
+                            )
+                            Text(
+                                text = "EP ${episode.episodeNumber ?: "?"}",
+                                color = Color.White.copy(alpha = 0.4f),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
                 }
 
-                Box(
-                    modifier = Modifier
-                        .size(36.dp)
-                        .clip(androidx.compose.foundation.shape.CircleShape)
-                        .background(Color.Black.copy(alpha = 0.5f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.PlayArrow,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(24.dp)
-                    )
+                if (imageModel != null) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(androidx.compose.foundation.shape.CircleShape)
+                            .background(Color.Black.copy(alpha = 0.5f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.PlayArrow,
+                            contentDescription = null,
+                            tint = Color.White,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
                 }
             }
 
@@ -704,7 +798,7 @@ fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: Stri
 
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "E${episode.episodeNumber}: ${cleanEpisodeName(episode.name, seriesName ?: episode.seriesName)}",
+                    text = "E${episode.episodeNumber ?: "?"}: ${cleanEpisodeName(episode.name, seriesName ?: episode.seriesName)}",
                     color = Color.White,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,

@@ -1,17 +1,12 @@
 package com.cinex.player.util
 
-import android.app.DownloadManager
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.net.Uri
-import android.os.Build
 import android.os.Environment
 import androidx.core.content.FileProvider
 import com.cinex.player.BuildConfig
 import com.cinex.player.data.network.GitHubApi
-import com.cinex.player.data.network.dto.GitHubReleaseResponse
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -64,70 +59,76 @@ class UpdateManager @Inject constructor(
         }
     }
 
-    fun downloadAndInstall(updateInfo: UpdateInfo) {
-        cleanOldApk()
+    // Usando OkHttpClient para evitar dependência do DownloadManager (que é quebrado no Fire OS)
+    private val okHttpClient = okhttp3.OkHttpClient()
 
-        val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+    suspend fun downloadAndInstall(updateInfo: UpdateInfo): Boolean = withContext(Dispatchers.IO) {
+        val file = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), APK_FILE_NAME)
+        cleanOldApk(file)
 
-        val request = DownloadManager.Request(Uri.parse(updateInfo.apkUrl))
-            .setTitle("CineX Player v${updateInfo.newVersion}")
-            .setDescription("Baixando atualização...")
-            .setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-            .setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, APK_FILE_NAME)
-            .setMimeType("application/vnd.android.package-archive")
+        try {
+            val request = okhttp3.Request.Builder()
+                .url(updateInfo.apkUrl)
+                .build()
+                
+            val response = okHttpClient.newCall(request).execute()
+            if (!response.isSuccessful) return@withContext false
 
-        currentDownloadId = downloadManager.enqueue(request)
-
-        val receiver = object : BroadcastReceiver() {
-            override fun onReceive(ctx: Context, intent: Intent) {
-                val id = intent.getLongExtra(DownloadManager.EXTRA_DOWNLOAD_ID, -1)
-                if (id == currentDownloadId) {
-                    ctx.unregisterReceiver(this)
-                    installApk()
+            response.body?.byteStream()?.use { input ->
+                java.io.FileOutputStream(file).use { output ->
+                    input.copyTo(output)
                 }
             }
-        }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            context.registerReceiver(
-                receiver,
-                IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE),
-                Context.RECEIVER_EXPORTED
-            )
-        } else {
-            context.registerReceiver(
-                receiver,
-                IntentFilter(DownloadManager.ACTION_DOWNLOAD_COMPLETE)
-            )
+            return@withContext withContext(Dispatchers.Main) {
+                installApk(file)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return@withContext false
         }
     }
 
-    private fun installApk() {
-        val file = File(
-            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-            APK_FILE_NAME
-        )
-        if (!file.exists()) return
+    private fun installApk(file: File): Boolean {
+        if (!file.exists()) return false
 
-        val uri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            file
-        )
-
-        val intent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(uri, "application/vnd.android.package-archive")
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
-        }
-        context.startActivity(intent)
-    }
-
-    private fun cleanOldApk() {
         try {
-            val file = File(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                APK_FILE_NAME
+            val uri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                file
             )
+
+            val installIntent = Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
+                data = uri
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+                putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
+                putExtra(Intent.EXTRA_RETURN_RESULT, false)
+            }
+            val fallbackIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, "application/vnd.android.package-archive")
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
+            }
+            val packageManager = context.packageManager
+            val launchIntent = when {
+                installIntent.resolveActivity(packageManager) != null -> installIntent
+                fallbackIntent.resolveActivity(packageManager) != null -> fallbackIntent
+                else -> null
+            } ?: return false
+            context.startActivity(launchIntent)
+            return true
+            
+            // Hack sugerido para Fire OS: Forçar o fechamento do aplicativo logo após disparar 
+            // a intenção de instalação. Isso previne que o gerenciador de pacotes do FireOS mate o app 
+            // de forma bruta e cancele a janela de instalação no processo.
+        } catch (e: Exception) {
+            e.printStackTrace()
+            return false
+        }
+    }
+
+    private fun cleanOldApk(file: File) {
+        try {
             if (file.exists()) file.delete()
         } catch (_: Exception) {}
     }

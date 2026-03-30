@@ -67,7 +67,13 @@ interface ChannelDao {
     @Query("SELECT COUNT(*) FROM channels WHERE category = 'SERIES' AND seriesName = :seriesName AND playlistUrl = :url LIMIT 1")
     suspend fun countEpisodesForSeries(seriesName: String, url: String): Int
 
-    @Query("SELECT DISTINCT seasonNumber FROM channels WHERE category = 'SERIES' AND seriesName = :seriesName AND playlistUrl = :url ORDER BY seasonNumber ASC")
+    @Query("SELECT COUNT(*) FROM channels WHERE category = 'SERIES' AND seriesName = :seriesName AND playlistUrl = :url AND seasonNumber IS NOT NULL AND (bannerUrl IS NULL OR bannerUrl = '' OR bannerUrl LIKE '%/original/%')")
+    suspend fun countEpisodesWithoutStill(seriesName: String, url: String): Int
+
+    @Query("SELECT COUNT(*) FROM channels WHERE category = 'SERIES' AND seriesName = :seriesName AND seasonNumber = :season AND playlistUrl = :url AND (bannerUrl IS NULL OR bannerUrl = '' OR bannerUrl LIKE '%/original/%')")
+    suspend fun countEpisodesWithoutStillForSeason(seriesName: String, season: Int, url: String): Int
+
+    @Query("SELECT DISTINCT seasonNumber FROM channels WHERE category = 'SERIES' AND seriesName = :seriesName AND playlistUrl = :url AND seasonNumber IS NOT NULL ORDER BY seasonNumber ASC")
     fun getSeasonsForSeries(seriesName: String, url: String): Flow<List<Int>>
 
     @Query("SELECT * FROM channels WHERE category = 'SERIES' AND seriesName = :seriesName AND seasonNumber = :season AND playlistUrl = :url GROUP BY episodeNumber ORDER BY episodeNumber ASC")
@@ -75,9 +81,27 @@ interface ChannelDao {
 
     @Query("""
         SELECT * FROM channels
-        WHERE playlistUrl = :url
-        AND REPLACE(REPLACE(REPLACE(REPLACE(LOWER(name), '-', ' '), '.', ' '), '_', ' '), ':', ' ')
-            LIKE '%' || REPLACE(REPLACE(REPLACE(REPLACE(LOWER(:query), '-', ' '), '.', ' '), '_', ' '), ':', ' ') || '%'
+        WHERE id IN (
+            SELECT MIN(id) FROM channels
+            WHERE playlistUrl = :url
+            AND REPLACE(
+                    REPLACE(
+                        REPLACE(
+                            REPLACE(
+                                LOWER(CASE WHEN category = 'SERIES' THEN COALESCE(seriesName, name) ELSE name END),
+                                '-', ' '
+                            ),
+                            '.', ' '
+                        ),
+                        '_', ' '
+                    ),
+                    ':', ' '
+                ) LIKE '%' || REPLACE(REPLACE(REPLACE(REPLACE(LOWER(:query), '-', ' '), '.', ' '), '_', ' '), ':', ' ') || '%'
+            GROUP BY CASE
+                WHEN category = 'SERIES' THEN COALESCE(seriesName, name)
+                ELSE remoteId
+            END
+        )
         ORDER BY orderIndex ASC
     """)
     fun searchChannels(query: String, url: String): PagingSource<Int, Channel>
@@ -88,6 +112,12 @@ interface ChannelDao {
 
     @Query("SELECT * FROM channels WHERE id = :channelId LIMIT 1")
     suspend fun getChannelById(channelId: Int): Channel?
+
+    @Query("SELECT * FROM channels WHERE remoteId = :remoteId AND playlistUrl = :url LIMIT 1")
+    fun observeChannelByRemoteId(remoteId: String, url: String): Flow<Channel?>
+
+    @Query("SELECT COUNT(*) FROM channels WHERE category = 'SERIES' AND seriesName = :seriesName AND seasonNumber = :season AND playlistUrl = :url AND (bannerUrl IS NULL OR bannerUrl = '' OR bannerUrl LIKE '%/original/%')")
+    fun observeEpisodesWithoutStillForSeason(seriesName: String, season: Int, url: String): Flow<Int>
 
     @Query("UPDATE channels SET resumePosition = :position, totalDuration = :duration WHERE id = :channelId")
     suspend fun updateResumePosition(channelId: Int, position: Long, duration: Long)
@@ -113,6 +143,35 @@ interface ChannelDao {
     // Atualiza metadados do TMDB em uma linha específica
     @Query("UPDATE channels SET tmdbRating = :rating, tmdbSynopsis = :synopsis, posterUrl = :posterUrl, bannerUrl = :bannerUrl, tmdbYear = :year, castMembers = :cast, trailerUrl = :trailer WHERE id = :channelId")
     suspend fun updateTmdbInfo(channelId: Int, rating: Double?, synopsis: String?, posterUrl: String?, bannerUrl: String?, year: String?, cast: String?, trailer: String?)
+
+    @Query("""UPDATE channels SET
+        tmdbRating = NULL,
+        tmdbSynopsis = NULL,
+        bannerUrl = NULL,
+        tmdbYear = NULL,
+        castMembers = NULL,
+        trailerUrl = NULL,
+        posterUrl = CASE WHEN logoUrl IS NOT NULL AND logoUrl != '' THEN logoUrl ELSE NULL END
+        WHERE category = 'SERIES' AND seriesName = :seriesName AND playlistUrl = :url AND seasonNumber IS NULL""")
+    suspend fun clearSeriesTmdbMetadata(seriesName: String, url: String)
+
+    @Query("""UPDATE channels SET
+        bannerUrl = NULL
+        WHERE category = 'SERIES'
+        AND seriesName = :seriesName
+        AND playlistUrl = :url
+        AND seasonNumber IS NOT NULL
+        AND bannerUrl LIKE '%image.tmdb.org/t/p/%'""")
+    suspend fun clearEpisodeTmdbStillImages(seriesName: String, url: String)
+
+    @Query("""UPDATE channels SET
+        bannerUrl = NULL
+        WHERE category = 'SERIES'
+        AND seriesName = :seriesName
+        AND seasonNumber = :season
+        AND playlistUrl = :url
+        AND bannerUrl LIKE '%image.tmdb.org/t/p/%'""")
+    suspend fun clearEpisodeTmdbStillImagesForSeason(seriesName: String, season: Int, url: String)
 
     // Propaga o backdrop da série para TODOS os episódios que ainda não têm bannerUrl (/original/)
     // Garante que getFeaturedContent sempre encontre uma linha com backdrop válido para a série
@@ -164,7 +223,7 @@ interface ChannelDao {
     @Query("""UPDATE channels SET
         bannerUrl = CASE
             WHEN :stillUrl IS NOT NULL AND :stillUrl != ''
-             AND (bannerUrl IS NULL OR bannerUrl = '' OR bannerUrl NOT LIKE '%/original/%')
+             AND (bannerUrl IS NULL OR bannerUrl = '' OR bannerUrl LIKE '%/original/%')
             THEN :stillUrl ELSE bannerUrl END,
         tmdbSynopsis = CASE WHEN :synopsis IS NOT NULL AND :synopsis != '' THEN :synopsis ELSE tmdbSynopsis END
         WHERE seriesName = :seriesName AND seasonNumber = :season AND episodeNumber = :episode AND playlistUrl = :url""")
