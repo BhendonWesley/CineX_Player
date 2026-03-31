@@ -199,6 +199,9 @@ fun VideoPlayerScreen(
     var isVideoEnded by remember(channel.id) { mutableStateOf(false) }
     var showNextEpisodeOverlay by remember(channel.id) { mutableStateOf(false) }
     var nextEpisode by remember(channel.id) { mutableStateOf<Channel?>(null) }
+    val currentProgram by viewModel.currentProgram.collectAsState()
+    val upcomingPrograms by viewModel.upcomingPrograms.collectAsState()
+    val epgListings by viewModel.epgListings.collectAsState()
 
     // Pré-busca o próximo episódio assim que o vídeo começa (para ter pronto)
     LaunchedEffect(channel.id) {
@@ -326,14 +329,6 @@ fun VideoPlayerScreen(
     var focusedTopControl by remember { mutableStateOf<PlayerTopFocusTarget?>(null) }
     LaunchedEffect(Unit) { playerFocusRequester.requestFocus() }
 
-    // Na TV: quando os controles aparecem em Live TV, foca o botão Voltar automaticamente
-    LaunchedEffect(isControlsVisible) {
-        if (isTv && isLiveTv && isControlsVisible) {
-            delay(80)
-            try { backButtonFocusRequester.requestFocus() } catch (_: Exception) {}
-        }
-    }
-
     LaunchedEffect(isControlsVisible, pendingTopFocus, isTv) {
         if (!isTv) return@LaunchedEffect
         if (!isControlsVisible) {
@@ -396,6 +391,9 @@ fun VideoPlayerScreen(
                         if (!isControlsVisible) {
                             // Primeira pressão: apenas mostra os controles
                             isControlsVisible = true
+                        } else if (isLiveTv) {
+                            // Live TV não deve pausar no OK. Mantém o canal tocando e alterna o painel detalhado.
+                            showInfoPanel = !showInfoPanel
                         } else {
                             // Controles já visíveis: pausar/retomar
                             if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
@@ -950,9 +948,6 @@ fun VideoPlayerScreen(
                     }
                 } else {
                     // Mini EPG — programa atual (só para Live TV)
-                    val currentProgram by viewModel.currentProgram.collectAsState()
-                    val upcomingPrograms by viewModel.upcomingPrograms.collectAsState()
-                    val epgListings by viewModel.epgListings.collectAsState()
                     val nextProgram = upcomingPrograms.firstOrNull()
 
                     val timeFormat = remember { java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()) }
@@ -1160,6 +1155,91 @@ fun VideoPlayerScreen(
                                     maxLines = 2
                                 )
                             }
+                        } else {
+                            val nextProgram = upcomingPrograms.firstOrNull()
+                            val timeFormat = remember { java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()) }
+                            val programTitle: String?
+                            val programStart: Long?
+                            val programEnd: Long?
+                            val nextTitle: String?
+                            val nextStart: Long?
+
+                            if (currentProgram != null) {
+                                programTitle = currentProgram!!.title
+                                programStart = currentProgram!!.startTime
+                                programEnd = currentProgram!!.endTime
+                                nextTitle = nextProgram?.title
+                                nextStart = nextProgram?.startTime
+                            } else if (epgListings.isNotEmpty()) {
+                                val first = epgListings[0]
+                                val startTs = com.cinex.player.utils.EpgTimeHelper.parseXtreamEpgTime(first.start, first.start_timestamp)
+                                val stopTs = com.cinex.player.utils.EpgTimeHelper.parseXtreamEpgTime(first.end, first.stop_timestamp)
+                                programTitle = first.title.let {
+                                    try {
+                                        val decoded = String(android.util.Base64.decode(it.trim(), android.util.Base64.DEFAULT), Charsets.UTF_8)
+                                        if (decoded.all { c -> c.code >= 32 || c == '\n' }) decoded.trim() else it
+                                    } catch (_: Exception) { it }
+                                }
+                                programStart = startTs
+                                programEnd = stopTs
+                                val second = epgListings.getOrNull(1)
+                                nextTitle = second?.title?.let {
+                                    try {
+                                        val decoded = String(android.util.Base64.decode(it.trim(), android.util.Base64.DEFAULT), Charsets.UTF_8)
+                                        if (decoded.all { c -> c.code >= 32 || c == '\n' }) decoded.trim() else it
+                                    } catch (_: Exception) { it }
+                                }
+                                nextStart = second?.let {
+                                    com.cinex.player.utils.EpgTimeHelper.parseXtreamEpgTime(it.start, it.start_timestamp)
+                                }
+                            } else {
+                                programTitle = null
+                                programStart = null
+                                programEnd = null
+                                nextTitle = null
+                                nextStart = null
+                            }
+
+                            Spacer(modifier = Modifier.height(6.dp))
+                            if (programTitle != null && programStart != null && programEnd != null) {
+                                Text(
+                                    text = "${timeFormat.format(java.util.Date(programStart))} - ${timeFormat.format(java.util.Date(programEnd))}",
+                                    color = com.cinex.player.ui.theme.CineX_PremiumGold,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = programTitle,
+                                    color = Color.White,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    maxLines = 2
+                                )
+                                if (!nextTitle.isNullOrBlank()) {
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Text(
+                                        text = if (nextStart != null) "A seguir ${timeFormat.format(java.util.Date(nextStart))}: $nextTitle" else "A seguir: $nextTitle",
+                                        color = Color.White.copy(alpha = 0.65f),
+                                        fontSize = 12.sp,
+                                        maxLines = 2
+                                    )
+                                }
+                            } else {
+                                Text(
+                                    text = "MODO 24H",
+                                    color = com.cinex.player.ui.theme.CineX_PremiumGold,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = "Este canal nÃ£o fornece guia de programaÃ§Ã£o ou transmite conteÃºdo contÃ­nuo 24 horas por dia.",
+                                    color = Color.White.copy(alpha = 0.6f),
+                                    fontSize = 12.sp,
+                                    maxLines = 3
+                                )
+                            }
                         }
                     }
 
@@ -1293,7 +1373,7 @@ fun PlayerDialog(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = title,
+                text = title.uppercase(),
                 color = Color.White,
                 fontSize = 20.sp,
                 fontWeight = FontWeight.Bold,

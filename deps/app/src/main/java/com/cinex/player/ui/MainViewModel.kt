@@ -318,7 +318,6 @@ class MainViewModel @Inject constructor(
         "Quase lá! Finalizando..."
     )
 
-    val liveTvChannels: Flow<PagingData<Channel>> = repository.liveTvChannels
     val movies: Flow<PagingData<Channel>> = repository.movieChannels
     val series: Flow<PagingData<Channel>> = repository.seriesChannels
 
@@ -385,6 +384,20 @@ class MainViewModel @Inject constructor(
         _liveCategoryId.value = categoryId
     }
 
+    // Cache em memória de todos os canais ao vivo — filtragem por categoria é instantânea
+    private val _allLiveChannels = repository.observeAllLiveChannels()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val liveTvChannels: StateFlow<List<Channel>> = combine(_liveCategoryId, _allLiveChannels) { categoryId, allChannels ->
+        when (categoryId) {
+            "Tudo" -> allChannels
+            "Favorito", "Favoritos" -> allChannels.filter { it.isFavorite }
+            else -> allChannels.filter { it.categoryId == categoryId }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Compatibilidade: mantém o Paging como fallback para quem ainda usa
     @OptIn(ExperimentalCoroutinesApi::class)
     val liveTvPagingData: Flow<PagingData<Channel>> = _liveCategoryId.flatMapLatest { group ->
         repository.getPagedChannelsByCategory(group)
@@ -405,6 +418,32 @@ class MainViewModel @Inject constructor(
 
     fun setMovieCategory(id: String) { _selectedMovieCategory.value = id }
     fun setSeriesCategory(id: String) { _selectedSeriesCategory.value = id }
+
+    // Cache em memória de todos os filmes — filtragem por categoria é instantânea (TV)
+    private val _allMovies = repository.observeAllMovies()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val moviesByCategory: StateFlow<List<Channel>> = combine(_selectedMovieCategory, _allMovies) { categoryId, allMovies ->
+        when (categoryId) {
+            "Tudo" -> allMovies
+            "Favorito", "Favoritos" -> allMovies.filter { it.isFavorite }
+            "Continuar Assistindo" -> allMovies.filter { it.resumePosition > 0 }
+            else -> allMovies.filter { it.categoryId == categoryId }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    // Cache em memória de todas as séries — filtragem por categoria é instantânea (TV)
+    private val _allSeries = repository.observeAllSeries()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    val seriesByCategory: StateFlow<List<Channel>> = combine(_selectedSeriesCategory, _allSeries) { categoryId, allSeries ->
+        when (categoryId) {
+            "Tudo" -> allSeries
+            "Favorito", "Favoritos" -> allSeries.filter { it.isFavorite }
+            "Continuar Assistindo" -> allSeries.filter { it.resumePosition > 0 }
+            else -> allSeries.filter { it.categoryId == categoryId }
+        }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     fun getPagedMoviesByCategory(group: String): Flow<PagingData<Channel>> =
         movieFlowCache.getOrPut(group) {
@@ -555,13 +594,23 @@ class MainViewModel @Inject constructor(
     fun updateSelectedChannel(channel: Channel?) {
         _selectedLiveChannel.value = channel
         _selectedChannelTvgId.value = channel?.tvgId
-        _epgListings.value = emptyList()
-        // Busca EPG com cache
         if (channel != null) {
             val streamId = try {
                 channel.remoteId.replace("live_", "").toInt()
             } catch (e: Exception) { -1 }
-            if (streamId != -1) fetchEpg(streamId)
+            if (streamId != -1) {
+                val cached = epgCache[streamId]
+                _epgListings.value = if (cached != null && (System.currentTimeMillis() - cached.timestamp) < EPG_CACHE_TTL) {
+                    cached.listings
+                } else {
+                    emptyList()
+                }
+                fetchEpg(streamId)
+            } else {
+                _epgListings.value = emptyList()
+            }
+        } else {
+            _epgListings.value = emptyList()
         }
     }
 
@@ -1012,6 +1061,10 @@ class MainViewModel @Inject constructor(
         return repository.getSeasonsForSeries(seriesName)
     }
 
+    fun observeEpisodesBySeason(seriesName: String, season: Int): Flow<List<Channel>> {
+        return repository.observeEpisodesBySeason(seriesName, season)
+    }
+
     fun getEpisodesBySeasonPaged(seriesName: String, season: Int): Flow<PagingData<Channel>> {
         return repository.getEpisodesBySeasonPaged(seriesName, season)
     }
@@ -1095,14 +1148,27 @@ class MainViewModel @Inject constructor(
         liveTvPlayer.clearMediaItems()
     }
 
+    fun stopVodPlayback() {
+        vodPlayer.playWhenReady = false
+        vodPlayer.pause()
+        vodPlayer.stop()
+        vodPlayer.clearMediaItems()
+    }
+
+    fun stopAllPlayback() {
+        stopLiveTv()
+        stopVodPlayback()
+    }
+
     fun resumeLiveTv() {
         _selectedLiveChannel.value?.let { playLiveChannel(it) }
     }
 
     override fun onCleared() {
         super.onCleared()
-        liveTvPlayer.release()
-        vodPlayer.release()
+        // Os players são singletons do app. Se a Activity/ViewModel morrer sem o processo morrer,
+        // dar release aqui deixa a próxima abertura com instâncias inválidas e tela preta.
+        stopAllPlayback()
     }
 
     fun updateLiveTvVisibility(hidden: Boolean) { _isLiveTvHidden.value = hidden }

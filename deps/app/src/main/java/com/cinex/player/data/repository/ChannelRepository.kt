@@ -126,6 +126,27 @@ class ChannelRepository @Inject constructor(
         // O enriquecimento em massa acontece apenas durante syncPlaylist (primeiro uso)
     }
 
+    fun observeAllLiveChannels(): Flow<List<Channel>> {
+        return _activePlaylistUrl.flatMapLatest { url ->
+            if (url == null) flowOf(emptyList())
+            else channelDao.observeAllLiveChannels(url)
+        }
+    }
+
+    fun observeAllMovies(): Flow<List<Channel>> {
+        return _activePlaylistUrl.flatMapLatest { url ->
+            if (url == null) flowOf(emptyList())
+            else channelDao.observeAllMovies(url)
+        }
+    }
+
+    fun observeAllSeries(): Flow<List<Channel>> {
+        return _activePlaylistUrl.flatMapLatest { url ->
+            if (url == null) flowOf(emptyList())
+            else channelDao.observeAllSeries(url)
+        }
+    }
+
     fun getEpisodesForSeries(seriesName: String): Flow<PagingData<Channel>> {
         val url = _activePlaylistUrl.value ?: return flowOf(PagingData.empty())
         return Pager(PagingConfig(pageSize = 50)) {
@@ -168,6 +189,11 @@ class ChannelRepository @Inject constructor(
         return Pager(PagingConfig(pageSize = 50)) {
             channelDao.getEpisodesBySeasonPaged(seriesName, season, url)
         }.flow.cachedIn(repositoryScope)
+    }
+
+    fun observeEpisodesBySeason(seriesName: String, season: Int): Flow<List<Channel>> {
+        val url = _activePlaylistUrl.value ?: return flowOf(emptyList())
+        return channelDao.observeEpisodesBySeason(seriesName, season, url)
     }
 
     fun searchChannels(query: String): Flow<PagingData<Channel>> {

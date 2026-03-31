@@ -142,20 +142,30 @@ fun VodScreen(
         else     -> "Tudo"
     }
 
-    val pagingItems = if (channels != null) {
-        channels.collectAsLazyPagingItems()
-    } else {
-        remember(selectedCategory, type) {
-            if (type == "MOVIE") viewModel.getPagedMoviesByCategory(selectedCategory)
-            else viewModel.getPagedSeriesByCategory(selectedCategory)
-        }.collectAsLazyPagingItems()
-    }
-
     val context = LocalContext.current
     val isTv = remember {
         val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
         uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     }
+
+    // TV: usa cache em memória para troca instantânea de categoria
+    val tvChannels by (when {
+        isTv && channels == null && type == "MOVIE" -> viewModel.moviesByCategory
+        isTv && channels == null && type == "SERIES" -> viewModel.seriesByCategory
+        else -> kotlinx.coroutines.flow.MutableStateFlow(emptyList())
+    }).collectAsState()
+
+    val useTvMemory = isTv && channels == null
+
+    // Paging: sempre coletado (regra do Compose), mas só usado no mobile
+    val pagingFlow = remember(selectedCategory, type) {
+        channels ?: if (type == "MOVIE") viewModel.getPagedMoviesByCategory(selectedCategory)
+        else viewModel.getPagedSeriesByCategory(selectedCategory)
+    }
+    val pagingItems = pagingFlow.collectAsLazyPagingItems()
+
+    val itemCount = if (useTvMemory) tvChannels.size else pagingItems.itemCount
+
     val firstCategoryFocusRequester = remember { FocusRequester() }
 
     // Request focus on the first category when screen becomes visible on TV
@@ -166,7 +176,7 @@ fun VodScreen(
         }
     }
 
-    val isSearchWithNoResults = type == "SEARCH" && pagingItems.itemCount == 0
+    val isSearchWithNoResults = type == "SEARCH" && itemCount == 0
 
     Box(
         modifier = modifier
@@ -192,7 +202,7 @@ fun VodScreen(
 
         // Gate de carregamento inicial — só aparece uma vez até os dados carregarem pela primeira vez
         var initialLoadComplete by remember { mutableStateOf(type == "SEARCH") }
-        if (!initialLoadComplete && categories.isNotEmpty() && pagingItems.itemCount > 0) {
+        if (!initialLoadComplete && categories.isNotEmpty() && itemCount > 0) {
             initialLoadComplete = true
         }
         val isDataReady = initialLoadComplete
@@ -340,7 +350,7 @@ fun VodScreen(
 
         // ── GRID DE CONTEÚDO ──────────────────────────────────────
         Box(modifier = Modifier.weight(1f)) {
-            if (pagingItems.itemCount == 0 && type != "SEARCH") {
+            if (itemCount == 0 && type != "SEARCH") {
                 // Empty state (não para busca — deixa transparente para o grid aparecer por baixo)
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -378,11 +388,13 @@ fun VodScreen(
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                items(
-                    count = pagingItems.itemCount,
-                    key = pagingItems.itemKey { it.id }
-                ) { index ->
-                    pagingItems[index]?.let { channel ->
+                if (useTvMemory) {
+                    // TV: usa lista em memória para troca instantânea
+                    items(
+                        count = tvChannels.size,
+                        key = { tvChannels[it].id }
+                    ) { index ->
+                        val channel = tvChannels[index]
                         LaunchedEffect(channel.id) {
                             viewModel.onChannelVisible(channel)
                         }
@@ -397,6 +409,29 @@ fun VodScreen(
                                 }
                             }
                         )
+                    }
+                } else {
+                    // Mobile: usa Paging
+                    items(
+                        count = pagingItems.itemCount,
+                        key = pagingItems.itemKey { it.id }
+                    ) { index ->
+                        pagingItems[index]?.let { channel ->
+                            LaunchedEffect(channel.id) {
+                                viewModel.onChannelVisible(channel)
+                            }
+                            VodPosterItem(
+                                channel = channel,
+                                showProgress = selectedCategory == "Continuar Assistindo",
+                                onClick = {
+                                    if (selectedCategory == "Continuar Assistindo") {
+                                        onPlayDirect(channel)
+                                    } else {
+                                        onVideoClick(channel)
+                                    }
+                                }
+                            )
+                        }
                     }
                 }
             }

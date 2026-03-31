@@ -74,11 +74,20 @@ class UpdateManager @Inject constructor(
             val response = okHttpClient.newCall(request).execute()
             if (!response.isSuccessful) return@withContext false
 
-            response.body?.byteStream()?.use { input ->
-                java.io.FileOutputStream(file).use { output ->
-                    input.copyTo(output)
+            response.body?.let { body ->
+                val expectedSize = body.contentLength()
+                body.byteStream().use { input ->
+                    java.io.FileOutputStream(file).use { output ->
+                        input.copyTo(output)
+                    }
                 }
-            }
+                
+                // Verifica se o arquivo baixado está completo
+                if (expectedSize > 0 && file.length() != expectedSize) {
+                    file.delete()
+                    return@withContext false
+                }
+            } ?: return@withContext false
 
             return@withContext withContext(Dispatchers.Main) {
                 installApk(file)
@@ -100,7 +109,7 @@ class UpdateManager @Inject constructor(
             )
 
             val installIntent = Intent(Intent.ACTION_INSTALL_PACKAGE).apply {
-                data = uri
+                setDataAndType(uri, "application/vnd.android.package-archive")
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
                 putExtra(Intent.EXTRA_NOT_UNKNOWN_SOURCE, true)
                 putExtra(Intent.EXTRA_RETURN_RESULT, false)

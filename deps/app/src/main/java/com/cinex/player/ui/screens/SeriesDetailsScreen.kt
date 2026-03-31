@@ -10,6 +10,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -44,7 +45,7 @@ import com.cinex.player.data.model.Channel
 import com.cinex.player.ui.MainViewModel
 import com.cinex.player.ui.theme.DarkBackground
 
-enum class SeriesViewMode { LANDING, EPISODES }
+enum class SeriesViewMode { LANDING, LOADING, EPISODES }
 
 // Remove anos duplicados tipo "(2021) (2021)" → "(2021)"
 private fun cleanSeriesTitle(title: String): String {
@@ -94,10 +95,15 @@ fun SeriesDetailsScreen(
     val seasons by viewModel.getSeasonsForSeries(seriesName).collectAsState(initial = emptyList())
     val sortedSeasons = seasons.mapNotNull { it }.filter { it > 0 }.sorted()
     var selectedSeason by remember(series.remoteId) { mutableStateOf(1) }
-    var viewMode by remember(series.remoteId) { mutableStateOf(SeriesViewMode.LANDING) }
+    var viewMode by remember(series.remoteId) { mutableStateOf(SeriesViewMode.LOADING) }
     var pendingOpenEpisodes by remember(series.remoteId) { mutableStateOf(false) }
     val hasEpisodesReady = sortedSeasons.isNotEmpty()
     val canOpenEpisodes = hasEpisodesReady && !isLoadingEpisodes
+
+    LaunchedEffect(series.remoteId) {
+        // Quando a tela abre, força o carregamento total da série imediatamente
+        viewModel.ensureSeriesDetailsReady(currentSeries)
+    }
 
     LaunchedEffect(sortedSeasons) {
         if (sortedSeasons.isNotEmpty()) {
@@ -107,16 +113,17 @@ fun SeriesDetailsScreen(
         }
     }
 
-    LaunchedEffect(pendingOpenEpisodes, isLoadingEpisodes, canOpenEpisodes) {
-        if (pendingOpenEpisodes && !isLoadingEpisodes && canOpenEpisodes) {
-            pendingOpenEpisodes = false
-            viewMode = SeriesViewMode.EPISODES
+    // Gerencia as transições a partir da tela de LOADING garantida no início
+    LaunchedEffect(viewMode, canOpenEpisodes, pendingOpenEpisodes) {
+        if (viewMode == SeriesViewMode.LOADING && canOpenEpisodes && !pendingOpenEpisodes) {
+            viewMode = SeriesViewMode.LANDING
         }
     }
 
-    LaunchedEffect(series.remoteId, selectedSeason, viewMode, isLoadingEpisodes, sortedSeasons) {
+
+    LaunchedEffect(series.remoteId, selectedSeason, viewMode, isLoadingEpisodes, sortedSeasons, pendingOpenEpisodes) {
         if (
-            viewMode == SeriesViewMode.EPISODES &&
+            (viewMode == SeriesViewMode.EPISODES || (viewMode == SeriesViewMode.LOADING && pendingOpenEpisodes)) &&
             !isLoadingEpisodes &&
             selectedSeason > 0 &&
             sortedSeasons.contains(selectedSeason)
@@ -125,19 +132,42 @@ fun SeriesDetailsScreen(
         }
     }
 
-    val episodesFlow = remember(seriesName, selectedSeason) {
-        if (seriesName.isBlank() || selectedSeason <= 0) {
-            kotlinx.coroutines.flow.flowOf(androidx.paging.PagingData.empty())
-        } else {
-            viewModel.getEpisodesBySeasonPaged(seriesName, selectedSeason)
-        }
-    }
-    val pagingItems = episodesFlow.collectAsLazyPagingItems()
     val context = LocalContext.current
     val isTv = remember {
         val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as? android.app.UiModeManager
         uiModeManager?.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     }
+
+    // TV: lista em memória (instantâneo ao trocar temporada)
+    // Mobile: Paging (economia de memória)
+    var episodesList by remember { mutableStateOf<List<Channel>>(emptyList()) }
+    LaunchedEffect(seriesName, selectedSeason) {
+        if (seriesName.isBlank() || selectedSeason <= 0) {
+            episodesList = emptyList()
+        } else {
+            viewModel.observeEpisodesBySeason(seriesName, selectedSeason).collect {
+                // Ao trocar de temporada local, se vier vazio rápido (antes do Room responder),
+                // só limpa se a ViewModel realmente for recarregar da API.
+                // Isso evita o 'piscar' vazio entre as transições de temporada via banco de dados.
+                if (it.isNotEmpty() || !viewModel.isLoadingEpisodes.value) {
+                    episodesList = it
+                }
+            }
+        }
+    }
+
+    val episodesFlow = remember(seriesName, selectedSeason) {
+        if (!isTv && seriesName.isNotBlank() && selectedSeason > 0) {
+            viewModel.getEpisodesBySeasonPaged(seriesName, selectedSeason)
+        } else {
+            kotlinx.coroutines.flow.flowOf(androidx.paging.PagingData.empty())
+        }
+    }
+    val pagingItems = episodesFlow.collectAsLazyPagingItems()
+
+    val episodeCount = if (isTv) episodesList.size else pagingItems.itemCount
+    val hasSelectedSeason = selectedSeason > 0 && sortedSeasons.contains(selectedSeason)
+    val canShowSelectedSeasonEpisodes = canOpenEpisodes && hasSelectedSeason && episodeCount > 0
     val playButtonRequester = remember { FocusRequester() }
     val selectedSeasonFocusRequester = remember { FocusRequester() }
     val firstEpisodeFocusRequester = remember { FocusRequester() }
@@ -149,11 +179,27 @@ fun SeriesDetailsScreen(
     var focusSeasonRequest by remember { mutableIntStateOf(0) }
     var focusBackArrowRequest by remember { mutableIntStateOf(0) }
     var suppressLandingAutoFocus by remember(series.remoteId) { mutableStateOf(false) }
+    var pendingEpisodeFocus by remember(series.remoteId) { mutableStateOf(false) }
 
-    LaunchedEffect(focusEpisodesRequest) {
-        if (focusEpisodesRequest > 0) {
+    LaunchedEffect(focusEpisodesRequest, episodeCount, viewMode) {
+        if (focusEpisodesRequest > 0 && viewMode == SeriesViewMode.EPISODES && episodeCount > 0) {
             kotlinx.coroutines.delay(80)
             try { firstEpisodeFocusRequester.requestFocus() } catch (_: Exception) {}
+        }
+    }
+
+    LaunchedEffect(pendingEpisodeFocus, episodeCount, viewMode, selectedSeason) {
+        if (pendingEpisodeFocus && viewMode == SeriesViewMode.EPISODES && episodeCount > 0) {
+            kotlinx.coroutines.delay(120)
+            try { firstEpisodeFocusRequester.requestFocus() } catch (_: Exception) {}
+            pendingEpisodeFocus = false
+        }
+    }
+
+    LaunchedEffect(viewMode, pendingOpenEpisodes, canShowSelectedSeasonEpisodes) {
+        if (viewMode == SeriesViewMode.LOADING && pendingOpenEpisodes && canShowSelectedSeasonEpisodes) {
+            viewMode = SeriesViewMode.EPISODES
+            pendingOpenEpisodes = false
         }
     }
 
@@ -182,6 +228,7 @@ fun SeriesDetailsScreen(
                     try { playButtonRequester.requestFocus() } catch (_: Exception) {}
                 }
             }
+            SeriesViewMode.LOADING -> {} // Sem foco especial na tela de loading
             SeriesViewMode.EPISODES -> if (isTv && sortedSeasons.isNotEmpty()) {
                 kotlinx.coroutines.delay(150)
                 try { selectedSeasonFocusRequester.requestFocus() } catch (_: Exception) {}
@@ -190,11 +237,12 @@ fun SeriesDetailsScreen(
     }
 
     BackHandler {
-        if (viewMode == SeriesViewMode.EPISODES) {
-            suppressLandingAutoFocus = true
-            viewMode = SeriesViewMode.LANDING
-        } else {
-            onBack()
+        when (viewMode) {
+            SeriesViewMode.EPISODES, SeriesViewMode.LOADING -> {
+                suppressLandingAutoFocus = true
+                viewMode = SeriesViewMode.LANDING
+            }
+            else -> onBack()
         }
     }
 
@@ -236,11 +284,12 @@ fun SeriesDetailsScreen(
             ) {
                 IconButton(
                     onClick = {
-                        if (viewMode == SeriesViewMode.EPISODES) {
-                            suppressLandingAutoFocus = true
-                            viewMode = SeriesViewMode.LANDING
-                        } else {
-                            onBack()
+                        when (viewMode) {
+                            SeriesViewMode.EPISODES, SeriesViewMode.LOADING -> {
+                                suppressLandingAutoFocus = true
+                                viewMode = SeriesViewMode.LANDING
+                            }
+                            else -> onBack()
                         }
                     },
                     modifier = Modifier
@@ -263,212 +312,288 @@ fun SeriesDetailsScreen(
             }
 
             if (viewMode == SeriesViewMode.LANDING) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 60.dp, vertical = 16.dp),
-                    verticalAlignment = Alignment.Top
-                ) {
-                    AsyncImage(
-                        model = currentSeries.posterUrl?.takeIf { it.isNotEmpty() } ?: currentSeries.logoUrl,
-                        contentDescription = null,
+                if (isTv) {
+                    // === LAYOUT TV (horizontal) ===
+                    Row(
                         modifier = Modifier
-                            .width(160.dp)
-                            .aspectRatio(2f / 3f)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color.DarkGray),
-                        contentScale = ContentScale.Crop
-                    )
-
-                    Spacer(modifier = Modifier.width(32.dp))
-
-                    Column(
-                        modifier = Modifier.weight(1f).fillMaxHeight()
+                            .fillMaxSize()
+                            .padding(horizontal = 60.dp, vertical = 16.dp),
+                        verticalAlignment = Alignment.Top
                     ) {
-                        Text(
-                            text = cleanSeriesTitle(seriesName).uppercase(),
-                            color = Color.White,
-                            fontSize = 28.sp,
-                            fontWeight = FontWeight.Black,
-                            lineHeight = 34.sp
+                        AsyncImage(
+                            model = currentSeries.posterUrl?.takeIf { it.isNotEmpty() } ?: currentSeries.logoUrl,
+                            contentDescription = null,
+                            modifier = Modifier
+                                .width(160.dp)
+                                .aspectRatio(2f / 3f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.DarkGray),
+                            contentScale = ContentScale.Crop
                         )
 
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(vertical = 8.dp)
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                repeat(5) { index ->
-                                    val rating = (currentSeries.tmdbRating ?: 0.0) / 2
-                                    Icon(
-                                        Icons.Default.Star,
-                                        contentDescription = null,
-                                        tint = if (index < rating.toInt()) Color.Yellow else Color.DarkGray,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                }
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = String.format("%.1f", currentSeries.tmdbRating ?: 0.0),
-                                    color = Color.White,
-                                    fontSize = 16.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text(text = "•", color = Color.Gray)
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text(text = currentSeries.tmdbYear ?: "N/A", color = Color.Gray, fontSize = 16.sp)
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text(text = "•", color = Color.Gray)
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Text(text = "${sortedSeasons.size} Temporadas", color = Color.Gray, fontSize = 16.sp)
-                        }
+                        Spacer(modifier = Modifier.width(32.dp))
 
-                        // Sinopse em bloco visual com scroll e fade
-                        Box(
-                            modifier = Modifier
-                                .padding(vertical = 8.dp)
-                                .height(180.dp)
-                                .clip(RoundedCornerShape(8.dp))
-                                .background(Color.White.copy(alpha = 0.06f))
-                        ) {
-                            val scrollState = rememberScrollState()
+                        Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
                             Text(
-                                text = currentSeries.tmdbSynopsis ?: "Preparando detalhes da serie...",
-                                color = Color.LightGray,
-                                fontSize = 14.sp,
-                                lineHeight = 21.sp,
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .verticalScroll(scrollState)
-                                    .padding(12.dp)
+                                text = cleanSeriesTitle(seriesName).uppercase(),
+                                color = Color.White, fontSize = 28.sp, fontWeight = FontWeight.Black, lineHeight = 34.sp
                             )
-                            // Fade inferior indicando mais conteúdo
-                            if (scrollState.canScrollForward) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .height(32.dp)
-                                        .align(Alignment.BottomCenter)
-                                        .background(
-                                            Brush.verticalGradient(
-                                                listOf(Color.Transparent, DarkBackground.copy(alpha = 0.9f))
-                                            )
-                                        )
-                                )
-                            }
-                        }
 
-                        Row(
-                            modifier = Modifier.padding(bottom = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            val gradientBrush = remember { Brush.linearGradient(listOf(Color(0xFFE11D2E), Color(0xFFF59E0B))) }
-
-                            var isPlayFocused by remember { mutableStateOf(false) }
-                            Button(
-                                onClick = {
-                                    when {
-                                        canOpenEpisodes -> viewMode = SeriesViewMode.EPISODES
-                                        else -> {
-                                            pendingOpenEpisodes = true
-                                            viewModel.ensureSeriesDetailsReady(currentSeries)
-                                        }
-                                    }
-                                },
-                                enabled = true,
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color.White,
-                                    disabledContainerColor = Color.White.copy(alpha = 0.75f)
-                                ),
-                                shape = RoundedCornerShape(8.dp),
-                                modifier = Modifier
-                                    .height(52.dp)
-                                    .focusRequester(playButtonRequester)
-                                    .onFocusChanged { isPlayFocused = it.isFocused }
-                                    .onKeyEvent { event ->
-                                        if (!isTv || event.type != KeyEventType.KeyDown) return@onKeyEvent false
-                                        when (event.key) {
-                                            Key.DirectionUp -> { focusBackArrowRequest++; true }
-                                            Key.DirectionDown, Key.DirectionLeft -> true
-                                            else -> false
-                                        }
-                                    }
-                                    .then(
-                                        if (isPlayFocused) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(8.dp))
-                                        else Modifier
-                                    ),
-                                contentPadding = PaddingValues(horizontal = 24.dp)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(vertical = 8.dp)
                             ) {
-                                if (isLoadingEpisodes && !canOpenEpisodes) {
-                                    CircularProgressIndicator(
-                                        color = Color.Black,
-                                        modifier = Modifier.size(18.dp),
-                                        strokeWidth = 2.dp
-                                    )
-                                } else {
-                                    Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black)
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    repeat(5) { index ->
+                                        val rating = (currentSeries.tmdbRating ?: 0.0) / 2
+                                        Icon(Icons.Default.Star, contentDescription = null, tint = if (index < rating.toInt()) Color.Yellow else Color.DarkGray, modifier = Modifier.size(16.dp))
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(String.format("%.1f", currentSeries.tmdbRating ?: 0.0), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                                 }
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    when {
-                                        canOpenEpisodes -> "ASSISTIR EPISODIOS"
-                                        isLoadingEpisodes || pendingOpenEpisodes -> "PREPARANDO EPISODIOS..."
-                                        else -> "ASSISTIR EPISODIOS"
-                                    },
-                                    color = Color.Black,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp
-                                )
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Text(text = "•", color = Color.Gray)
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Text(text = currentSeries.tmdbYear ?: "N/A", color = Color.Gray, fontSize = 16.sp)
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Text(text = "•", color = Color.Gray)
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Text(text = "${sortedSeasons.size} Temporadas", color = Color.Gray, fontSize = 16.sp)
                             }
 
-                            Spacer(modifier = Modifier.width(16.dp))
-
-                            var isTrailerFocused by remember { mutableStateOf(false) }
-                            OutlinedButton(
-                                onClick = {
-                                    val searchQuery = java.net.URLEncoder.encode("${series.name} trailer oficial", "UTF-8")
-                                    val searchUri = android.net.Uri.parse("https://www.youtube.com/results?search_query=$searchQuery")
-                                    val youtubeIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, searchUri).apply {
-                                        setPackage("com.google.android.youtube")
-                                    }
-                                    try {
-                                        context.startActivity(youtubeIntent)
-                                    } catch (e: android.content.ActivityNotFoundException) {
-                                        context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, searchUri))
-                                    }
-                                },
-                                border = BorderStroke(2.dp, Color.White),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    containerColor = if (isTrailerFocused) Color.White.copy(alpha = 0.1f) else Color.Transparent
-                                ),
-                                shape = RoundedCornerShape(8.dp),
+                            Box(
                                 modifier = Modifier
-                                    .height(52.dp)
-                                    .width(140.dp)
-                                    .onFocusChanged { isTrailerFocused = it.isFocused }
-                                    .onKeyEvent { event ->
-                                        if (!isTv || event.type != KeyEventType.KeyDown) return@onKeyEvent false
-                                        when (event.key) {
-                                            Key.DirectionUp -> { focusBackArrowRequest++; true }
-                                            Key.DirectionDown, Key.DirectionRight -> true
-                                            else -> false
-                                        }
-                                    }
-                                    .then(
-                                        if (isTrailerFocused) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(8.dp))
-                                        else Modifier
-                                    )
+                                    .padding(vertical = 8.dp)
+                                    .height(180.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color.White.copy(alpha = 0.06f))
                             ) {
+                                val scrollState = rememberScrollState()
                                 Text(
-                                    "TRAILER",
-                                    color = Color.White,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp
+                                    text = currentSeries.tmdbSynopsis ?: "Preparando detalhes da serie...",
+                                    color = Color.LightGray, fontSize = 14.sp, lineHeight = 21.sp,
+                                    modifier = Modifier.fillMaxSize().verticalScroll(scrollState).padding(12.dp)
                                 )
+                                if (scrollState.canScrollForward) {
+                                    Box(modifier = Modifier.fillMaxWidth().height(32.dp).align(Alignment.BottomCenter).background(Brush.verticalGradient(listOf(Color.Transparent, DarkBackground.copy(alpha = 0.9f)))))
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.padding(bottom = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                val gradientBrush = remember { Brush.linearGradient(listOf(Color(0xFFE11D2E), Color(0xFFF59E0B))) }
+                                var isPlayFocused by remember { mutableStateOf(false) }
+                                Button(
+                                    onClick = {
+                                        when {
+                                            canShowSelectedSeasonEpisodes -> {
+                                                pendingOpenEpisodes = false
+                                                viewMode = SeriesViewMode.EPISODES
+                                            }
+                                            else -> {
+                                                pendingOpenEpisodes = true
+                                                viewMode = SeriesViewMode.LOADING
+                                                viewModel.ensureSeriesDetailsReady(currentSeries)
+                                            }
+                                        }
+                                    },
+                                    enabled = true,
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color.White, disabledContainerColor = Color.White.copy(alpha = 0.75f)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.height(52.dp)
+                                        .focusRequester(playButtonRequester)
+                                        .onFocusChanged { isPlayFocused = it.isFocused }
+                                        .onKeyEvent { event ->
+                                            if (!isTv || event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                                            when (event.key) {
+                                                Key.DirectionUp -> { focusBackArrowRequest++; true }
+                                                Key.DirectionDown, Key.DirectionLeft -> true
+                                                else -> false
+                                            }
+                                        }
+                                        .then(if (isPlayFocused) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(8.dp)) else Modifier),
+                                    contentPadding = PaddingValues(horizontal = 24.dp)
+                                ) {
+                                    if (isLoadingEpisodes && !canOpenEpisodes) {
+                                        CircularProgressIndicator(color = Color.Black, modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                    } else {
+                                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black)
+                                    }
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text(
+                                        when {
+                                            canOpenEpisodes -> "ASSISTIR EPISODIOS"
+                                            isLoadingEpisodes || pendingOpenEpisodes -> "PREPARANDO EPISODIOS..."
+                                            else -> "ASSISTIR EPISODIOS"
+                                        },
+                                        color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 14.sp
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.width(16.dp))
+
+                                var isTrailerFocused by remember { mutableStateOf(false) }
+                                OutlinedButton(
+                                    onClick = {
+                                        val searchQuery = java.net.URLEncoder.encode("${series.name} trailer oficial", "UTF-8")
+                                        val searchUri = android.net.Uri.parse("https://www.youtube.com/results?search_query=$searchQuery")
+                                        val youtubeIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, searchUri).apply { setPackage("com.google.android.youtube") }
+                                        try { context.startActivity(youtubeIntent) } catch (e: android.content.ActivityNotFoundException) { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, searchUri)) }
+                                    },
+                                    border = BorderStroke(2.dp, Color.White),
+                                    colors = ButtonDefaults.outlinedButtonColors(containerColor = if (isTrailerFocused) Color.White.copy(alpha = 0.1f) else Color.Transparent),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.height(52.dp).width(140.dp)
+                                        .onFocusChanged { isTrailerFocused = it.isFocused }
+                                        .onKeyEvent { event ->
+                                            if (!isTv || event.type != KeyEventType.KeyDown) return@onKeyEvent false
+                                            when (event.key) {
+                                                Key.DirectionUp -> { focusBackArrowRequest++; true }
+                                                Key.DirectionDown, Key.DirectionRight -> true
+                                                else -> false
+                                            }
+                                        }
+                                        .then(if (isTrailerFocused) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(8.dp)) else Modifier)
+                                ) {
+                                    Text("TRAILER", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                }
                             }
                         }
+                    }
+                } else {
+                    // === LAYOUT MOBILE (horizontal como TV, ajustado pra caber) ===
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        AsyncImage(
+                            model = currentSeries.posterUrl?.takeIf { it.isNotEmpty() } ?: currentSeries.logoUrl,
+                            contentDescription = null,
+                            modifier = Modifier
+                                .width(120.dp)
+                                .aspectRatio(2f / 3f)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color.DarkGray),
+                            contentScale = ContentScale.Crop
+                        )
+
+                        Spacer(modifier = Modifier.width(16.dp))
+
+                        Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                            Text(
+                                text = cleanSeriesTitle(seriesName).uppercase(),
+                                color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Black, lineHeight = 22.sp
+                            )
+
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.padding(vertical = 6.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    repeat(5) { index ->
+                                        val rating = (currentSeries.tmdbRating ?: 0.0) / 2
+                                        Icon(Icons.Default.Star, contentDescription = null, tint = if (index < rating.toInt()) Color.Yellow else Color.DarkGray, modifier = Modifier.size(14.dp))
+                                    }
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(String.format("%.1f", currentSeries.tmdbRating ?: 0.0), color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(text = "•", color = Color.Gray)
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(text = currentSeries.tmdbYear ?: "N/A", color = Color.Gray, fontSize = 14.sp)
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(text = "•", color = Color.Gray)
+                                Spacer(modifier = Modifier.width(12.dp))
+                                Text(text = "${sortedSeasons.size} Temp.", color = Color.Gray, fontSize = 14.sp)
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(vertical = 4.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color.White.copy(alpha = 0.06f))
+                            ) {
+                                val scrollState = rememberScrollState()
+                                Text(
+                                    text = currentSeries.tmdbSynopsis ?: "Preparando detalhes da serie...",
+                                    color = Color.LightGray, fontSize = 13.sp, lineHeight = 19.sp,
+                                    modifier = Modifier.fillMaxSize().verticalScroll(scrollState).padding(10.dp)
+                                )
+                                if (scrollState.canScrollForward) {
+                                    Box(modifier = Modifier.fillMaxWidth().height(24.dp).align(Alignment.BottomCenter).background(Brush.verticalGradient(listOf(Color.Transparent, DarkBackground.copy(alpha = 0.9f)))))
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.padding(top = 8.dp, bottom = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Button(
+                                    onClick = {
+                                        when {
+                                            canOpenEpisodes -> viewMode = SeriesViewMode.EPISODES
+                                            else -> { pendingOpenEpisodes = true; viewModel.ensureSeriesDetailsReady(currentSeries) }
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color.White),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.height(44.dp),
+                                    contentPadding = PaddingValues(horizontal = 16.dp)
+                                ) {
+                                    if (isLoadingEpisodes && !canOpenEpisodes) {
+                                        CircularProgressIndicator(color = Color.Black, modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    } else {
+                                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black, modifier = Modifier.size(20.dp))
+                                    }
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        if (canOpenEpisodes) "EPISÓDIOS" else "PREPARANDO...",
+                                        color = Color.Black, fontWeight = FontWeight.Bold, fontSize = 13.sp
+                                    )
+                                }
+                                Spacer(modifier = Modifier.width(12.dp))
+                                OutlinedButton(
+                                    onClick = {
+                                        val searchQuery = java.net.URLEncoder.encode("${series.name} trailer oficial", "UTF-8")
+                                        val searchUri = android.net.Uri.parse("https://www.youtube.com/results?search_query=$searchQuery")
+                                        val youtubeIntent = android.content.Intent(android.content.Intent.ACTION_VIEW, searchUri).apply { setPackage("com.google.android.youtube") }
+                                        try { context.startActivity(youtubeIntent) } catch (e: android.content.ActivityNotFoundException) { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, searchUri)) }
+                                    },
+                                    border = BorderStroke(2.dp, Color.White),
+                                    colors = ButtonDefaults.outlinedButtonColors(containerColor = Color.Transparent),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.height(44.dp).width(110.dp)
+                                ) {
+                                    Text("TRAILER", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            } else if (viewMode == SeriesViewMode.LOADING) {
+                // TELA DE CARREGAMENTO (TV)
+                Box(
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            modifier = Modifier.size(48.dp),
+                            strokeWidth = 4.dp
+                        )
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = "Preparando detalhes da série...",
+                            color = Color.White.copy(alpha = 0.7f),
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Medium
+                        )
                     }
                 }
             } else {
@@ -508,14 +633,32 @@ fun SeriesDetailsScreen(
                                         .onKeyEvent { event ->
                                             when (event.type) {
                                                 KeyEventType.KeyDown -> when (event.key) {
-                                                    Key.DirectionRight -> { if (pagingItems.itemCount > 0) focusEpisodesRequest++; true }
+                                                    Key.DirectionRight -> {
+                                                        if (episodeCount > 0) {
+                                                            focusEpisodesRequest++
+                                                            pendingEpisodeFocus = false
+                                                        } else {
+                                                            pendingEpisodeFocus = true
+                                                            pendingOpenEpisodes = true
+                                                            viewMode = SeriesViewMode.LOADING
+                                                        }
+                                                        true
+                                                    }
                                                     Key.DirectionLeft -> true
                                                     // Primeira temporada: sobe para a seta de voltar
                                                     Key.DirectionUp -> if (isFirst) { focusBackArrowRequest++; true } else false
                                                     else -> false
                                                 }
                                                 KeyEventType.KeyUp -> when (event.key) {
-                                                    Key.DirectionCenter, Key.Enter -> { selectedSeason = seasonNum; true }
+                                                    Key.DirectionCenter, Key.Enter -> {
+                                                        if (selectedSeason != seasonNum) {
+                                                            selectedSeason = seasonNum
+                                                        }
+                                                        pendingEpisodeFocus = false
+                                                        pendingOpenEpisodes = true
+                                                        viewMode = SeriesViewMode.LOADING
+                                                        true
+                                                    }
                                                     else -> false
                                                 }
                                                 else -> false
@@ -531,7 +674,14 @@ fun SeriesDetailsScreen(
                                             else Modifier
                                                 .background(Color.Transparent)
                                         )
-                                        .clickable { selectedSeason = seasonNum }
+                                        .clickable {
+                                            if (selectedSeason != seasonNum) {
+                                                selectedSeason = seasonNum
+                                            }
+                                            pendingEpisodeFocus = false
+                                            pendingOpenEpisodes = true
+                                            viewMode = SeriesViewMode.LOADING
+                                        }
                                         .padding(vertical = 12.dp, horizontal = 16.dp)
                                 ) {
                                     Text(
@@ -560,53 +710,105 @@ fun SeriesDetailsScreen(
                             modifier = Modifier.padding(bottom = 12.dp, top = 16.dp)
                         )
 
-                        val isPagingLoading = pagingItems.loadState.refresh is androidx.paging.LoadState.Loading
-                        if (pagingItems.itemCount == 0 && (isLoadingEpisodes || isPagingLoading)) {
-                            // Shimmer apenas enquanto está realmente carregando
-                            LazyColumn(
-                                verticalArrangement = Arrangement.spacedBy(16.dp),
-                                contentPadding = PaddingValues(bottom = 32.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                items(6) {
-                                    ShimmerEpisodeItem()
+                        if (isTv) {
+                            // TV: lista em memória — instantâneo
+                            if (episodesList.isEmpty() && isLoadingEpisodes) {
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().padding(top = 100.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        CircularProgressIndicator(
+                                            color = Color.White,
+                                            modifier = Modifier.size(48.dp),
+                                            strokeWidth = 4.dp
+                                        )
+                                        Spacer(modifier = Modifier.height(16.dp))
+                                        Text(
+                                            text = "Carregando episódios...",
+                                            color = Color.White.copy(alpha = 0.7f),
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
                                 }
-                            }
-                        } else if (pagingItems.itemCount == 0) {
-                            // Carregamento terminou e realmente não tem episódios
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 48.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "Temporada indisponível",
-                                    color = Color.White.copy(alpha = 0.4f),
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-                        } else {
-                            LazyColumn(
-                                verticalArrangement = Arrangement.spacedBy(16.dp),
-                                contentPadding = PaddingValues(bottom = 32.dp),
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                items(
-                                    count = pagingItems.itemCount,
-                                    key = pagingItems.itemKey { it.id }
-                                ) { index ->
-                                    pagingItems[index]?.let { episode ->
+                            } else if (episodesList.isEmpty()) {
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("Temporada indisponível", color = Color.White.copy(alpha = 0.4f), fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                }
+                            } else {
+                                LazyColumn(
+                                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                                    contentPadding = PaddingValues(bottom = 32.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    itemsIndexed(episodesList, key = { _, ep -> ep.id }) { index, episode ->
                                         EpisodeItem(
                                             episode = episode,
-                                            seriesPoster = currentSeries.bannerUrl ?: currentSeries.logoUrl,
+                                            seriesPoster = currentSeries.posterUrl,
                                             seriesName = seriesName,
-                                            modifier = if (isTv && index == 0) Modifier.focusRequester(firstEpisodeFocusRequester) else Modifier,
-                                            onKeyLeft = if (isTv) { { focusSeasonRequest++ } } else null,
-                                            blockUp = isTv && index == 0,
+                                            modifier = if (index == 0) Modifier.focusRequester(firstEpisodeFocusRequester) else Modifier,
+                                            onKeyLeft = {
+                                                pendingEpisodeFocus = false
+                                                focusSeasonRequest++
+                                            },
+                                            blockUp = index == 0,
                                             onClick = { onPlayEpisode(episode) }
                                         )
+                                    }
+                                }
+                            }
+                        } else {
+                            // Mobile: Paging
+                            val isPagingLoading = pagingItems.loadState.refresh is androidx.paging.LoadState.Loading
+                            if (pagingItems.itemCount == 0 && (isLoadingEpisodes || isPagingLoading)) {
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().padding(top = 100.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        CircularProgressIndicator(
+                                            color = Color.White,
+                                            modifier = Modifier.size(48.dp),
+                                            strokeWidth = 4.dp
+                                        )
+                                        Spacer(modifier = Modifier.height(16.dp))
+                                        Text(
+                                            text = "Carregando episódios...",
+                                            color = Color.White.copy(alpha = 0.7f),
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
+                                }
+                            } else if (pagingItems.itemCount == 0) {
+                                Box(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text("Temporada indisponível", color = Color.White.copy(alpha = 0.4f), fontSize = 15.sp, fontWeight = FontWeight.Medium)
+                                }
+                            } else {
+                                LazyColumn(
+                                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                                    contentPadding = PaddingValues(bottom = 32.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    items(
+                                        count = pagingItems.itemCount,
+                                        key = pagingItems.itemKey { it.id }
+                                    ) { index ->
+                                        pagingItems[index]?.let { episode ->
+                                            EpisodeItem(
+                                                episode = episode,
+                                                seriesPoster = currentSeries.posterUrl,
+                                                seriesName = seriesName,
+                                                onClick = { onPlayEpisode(episode) }
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -618,79 +820,6 @@ fun SeriesDetailsScreen(
     }
 }
 
-@Composable
-fun ShimmerEpisodeItem() {
-    val shimmerColors = listOf(
-        Color.White.copy(alpha = 0.05f),
-        Color.White.copy(alpha = 0.12f),
-        Color.White.copy(alpha = 0.05f)
-    )
-
-    val transition = rememberInfiniteTransition(label = "shimmer")
-    val translateAnim by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1000f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1200, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "shimmer_translate"
-    )
-
-    val brush = Brush.linearGradient(
-        colors = shimmerColors,
-        start = Offset(translateAnim - 200f, 0f),
-        end = Offset(translateAnim, 0f)
-    )
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color.White.copy(alpha = 0.05f))
-            .padding(12.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            // Thumbnail placeholder
-            Box(
-                modifier = Modifier
-                    .size(width = 160.dp, height = 90.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(brush)
-            )
-
-            Spacer(modifier = Modifier.width(16.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
-                // Title placeholder
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(0.7f)
-                        .height(16.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(brush)
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                // Synopsis placeholder
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(0.9f)
-                        .height(12.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(brush)
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth(0.5f)
-                        .height(12.dp)
-                        .clip(RoundedCornerShape(4.dp))
-                        .background(brush)
-                )
-            }
-        }
-    }
-}
 
 @Composable
 fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: String?, seriesName: String? = null, modifier: Modifier = Modifier, onKeyLeft: (() -> Unit)? = null, blockUp: Boolean = false, onClick: () -> Unit) {
@@ -712,7 +841,7 @@ fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: Stri
                 when (event.type) {
                     KeyEventType.KeyDown -> when (event.key) {
                         Key.DirectionLeft -> { onKeyLeft?.invoke(); true }
-                        Key.DirectionRight -> true
+                        Key.DirectionRight -> false
                         // Primeiro episódio: bloqueia UP (não pode vazar para fora)
                         Key.DirectionUp -> if (blockUp) true else false
                         else -> false

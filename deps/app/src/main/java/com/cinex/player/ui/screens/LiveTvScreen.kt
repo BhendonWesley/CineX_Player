@@ -143,7 +143,10 @@ fun LiveTvScreen(
     var showParentalDialog by remember { mutableStateOf(false) }
     var pendingAdultCategoryId by remember { mutableStateOf<String?>(null) }
     
-    val pagingItems = viewModel.liveTvPagingData.collectAsLazyPagingItems()
+    // Na TV: usa cache em memória (filtragem instantânea)
+    // No mobile: usa Paging (economia de memória)
+    val liveChannels by viewModel.liveTvChannels.collectAsState()
+    val pagingItems = if (!isTv) viewModel.liveTvPagingData.collectAsLazyPagingItems() else null
 
     // Canal selecionado vive no ViewModel para persistir entre fullscreen ↔ preview
     val selectedChannel by viewModel.selectedLiveChannel.collectAsState()
@@ -157,13 +160,16 @@ fun LiveTvScreen(
     val typeCounts by viewModel.typeCounts.collectAsState()
     val favoriteCounts by viewModel.favoriteCounts.collectAsState()
 
+    val channelCount = if (isTv) liveChannels.size else (pagingItems?.itemCount ?: 0)
+
     // Auto-seleciona o primeiro canal apenas quando a aba Live TV está visível
-    LaunchedEffect(pagingItems.itemCount, isActive) {
-        if (isActive && selectedChannel == null && pagingItems.itemCount > 0) {
-            // Aguarda o Paging estabilizar para pegar o canal correto (primeiro da lista)
-            delay(300)
-            pagingItems[0]?.let { firstChannel ->
-                viewModel.updateSelectedChannel(firstChannel)
+    LaunchedEffect(channelCount, isActive) {
+        if (isActive && selectedChannel == null && channelCount > 0) {
+            if (isTv) {
+                liveChannels.firstOrNull()?.let { viewModel.updateSelectedChannel(it) }
+            } else {
+                delay(300)
+                pagingItems?.get(0)?.let { viewModel.updateSelectedChannel(it) }
             }
         }
     }
@@ -189,7 +195,7 @@ fun LiveTvScreen(
 
     // Gate de carregamento inicial — só aparece uma vez até os dados carregarem pela primeira vez
     var initialLoadComplete by remember { mutableStateOf(false) }
-    if (!initialLoadComplete && categories.isNotEmpty() && pagingItems.itemCount > 0) {
+    if (!initialLoadComplete && categories.isNotEmpty() && channelCount > 0) {
         initialLoadComplete = true
     }
     val isDataReady = initialLoadComplete
@@ -241,7 +247,8 @@ fun LiveTvScreen(
         }
 
         // Conteúdo por cima do fundo — só visível quando dados estão prontos
-    if (isDataReady) Row(modifier = Modifier.fillMaxSize()) {
+    if (isDataReady) {
+        Row(modifier = Modifier.fillMaxSize()) {
         // 1. Coluna de Categorias
         val catListState = rememberLazyListState()
 
@@ -295,7 +302,7 @@ fun LiveTvScreen(
                 .fillMaxHeight()
                 .background(Color(0xCC1A1A1A))
         ) {
-            if (pagingItems.itemCount == 0) {
+            if (channelCount == 0) {
                 Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         val transition = rememberInfiniteTransition(label = "channelLoading")
@@ -327,9 +334,12 @@ fun LiveTvScreen(
             val channelListState = rememberLazyListState()
 
             // Auto-scroll para o canal selecionado na lista
-            LaunchedEffect(selectedChannel?.id, pagingItems.itemCount) {
+            LaunchedEffect(selectedChannel?.id, channelCount) {
                 val targetId = selectedChannel?.id ?: return@LaunchedEffect
-                if (pagingItems.itemCount > 0) {
+                if (isTv) {
+                    val index = liveChannels.indexOfFirst { it.id == targetId }
+                    if (index >= 0) channelListState.animateScrollToItem(index)
+                } else if (pagingItems != null && pagingItems.itemCount > 0) {
                     for (i in 0 until pagingItems.itemCount) {
                         val item = try { pagingItems.peek(i) } catch (_: Exception) { null }
                         if (item?.id == targetId) {
@@ -346,12 +356,9 @@ fun LiveTvScreen(
                     .fillMaxSize()
                     .lazyScrollbar(channelListState, thumbColor = Color(0xFFC62828))
             ) {
-                items(
-                    count = pagingItems.itemCount,
-                    key = pagingItems.itemKey { it.id }
-                ) { index ->
-                    val channel = pagingItems[index]
-                    if (channel != null) {
+                if (isTv) {
+                    // TV: lista em memória — troca de categoria instantânea
+                    itemsIndexed(liveChannels, key = { _, ch -> ch.id }) { index, channel ->
                         val isSelected = selectedChannel?.id == channel.id
                         var isFocused by remember { mutableStateOf(false) }
                         Box(
@@ -386,6 +393,51 @@ fun LiveTvScreen(
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
                                 maxLines = 1
                             )
+                        }
+                    }
+                } else {
+                    // Mobile: usa Paging
+                    items(
+                        count = pagingItems?.itemCount ?: 0,
+                        key = pagingItems?.itemKey { it.id } ?: { it }
+                    ) { index ->
+                        val channel = pagingItems?.get(index)
+                        if (channel != null) {
+                            val isSelected = selectedChannel?.id == channel.id
+                            var isFocused by remember { mutableStateOf(false) }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .onFocusChanged { isFocused = it.isFocused }
+                                    .focusable(interactionSource = remember { MutableInteractionSource() })
+                                    .onKeyEvent { event ->
+                                        if (event.type == KeyEventType.KeyUp &&
+                                            (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                                        ) {
+                                            if (isSelected) onChannelExpand(channel)
+                                            else viewModel.updateSelectedChannel(channel)
+                                            true
+                                        } else false
+                                    }
+                                    .background(
+                                        if (isSelected) Color(0xFFC62828).copy(alpha = 0.2f)
+                                        else if (isFocused) Color.White.copy(alpha = 0.08f)
+                                        else Color.Transparent
+                                    )
+                                    .clickable {
+                                        if (isSelected) onChannelExpand(channel)
+                                        else viewModel.updateSelectedChannel(channel)
+                                    }
+                                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                            ) {
+                                Text(
+                                    text = "${index + 1}   ${channel.name}",
+                                    color = if (isSelected) Color(0xFFE50914) else Color.White,
+                                    fontSize = 14.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    maxLines = 1
+                                )
+                            }
                         }
                     }
                 }
@@ -609,93 +661,89 @@ fun LiveTvScreen(
                     }
                 } else if (hasEpg) {
                     val epgListState = rememberLazyListState()
-                    LazyColumn(
-                        state = epgListState,
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .weight(1f),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                        contentPadding = PaddingValues(vertical = 4.dp)
+                            .weight(1f)
                     ) {
-                        // Programa Atual (Destaque Amarelo + Progresso)
+                        // CABEÇALHO TRAVADO (Programa Atual) - Não recua com o scroll
                         if (currentProgram != null) {
-                            item {
-                                var isFocusedEpg by remember { mutableStateOf(false) }
-                                // Quando o primeiro item recebe foco, scrolla para o topo
-                                LaunchedEffect(isFocusedEpg) {
-                                    if (isFocusedEpg) {
-                                        epgListState.animateScrollToItem(0)
-                                    }
-                                }
-                                Column(
+                            var isFocusedEpg by remember { mutableStateOf(false) }
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 12.dp)
+                                    .then(
+                                        if (isTv) Modifier
+                                            .onFocusChanged { isFocusedEpg = it.isFocused }
+                                            .focusable(interactionSource = remember { MutableInteractionSource() })
+                                            .onKeyEvent { event ->
+                                                // Bloqueia UP no item atual para não escapar pro player
+                                                event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp
+                                            }
+                                            .background(
+                                                if (isFocusedEpg) Color.White.copy(alpha = 0.08f)
+                                                else Color.Transparent,
+                                                RoundedCornerShape(8.dp)
+                                            )
+                                            .padding(horizontal = 4.dp, vertical = 2.dp)
+                                        else Modifier
+                                    )
+                            ) {
+                                EpgItem(program = currentProgram!!, isCurrent = true, is24Hour = is24Hour)
+                                val total = (currentProgram!!.endTime - currentProgram!!.startTime).coerceAtLeast(1)
+                                val passed = (System.currentTimeMillis() - currentProgram!!.startTime).coerceIn(0, total)
+                                val progress = passed.toFloat() / total.toFloat()
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Box(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .then(
-                                            if (isTv) Modifier
-                                                .onFocusChanged { isFocusedEpg = it.isFocused }
-                                                .focusable(interactionSource = remember { MutableInteractionSource() })
-                                                .onKeyEvent { event ->
-                                                    // Bloqueia UP no primeiro item para não escapar pro player
-                                                    event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp
-                                                }
-                                                .background(
-                                                    if (isFocusedEpg) Color.White.copy(alpha = 0.08f)
-                                                    else Color.Transparent,
-                                                    RoundedCornerShape(8.dp)
-                                                )
-                                                .padding(horizontal = 4.dp, vertical = 2.dp)
-                                            else Modifier
-                                        )
+                                        .height(4.dp)
+                                        .clip(RoundedCornerShape(2.dp))
+                                        .background(Color.White.copy(alpha = 0.1f))
                                 ) {
-                                    EpgItem(program = currentProgram!!, isCurrent = true, is24Hour = is24Hour)
-                                    val total = (currentProgram!!.endTime - currentProgram!!.startTime).coerceAtLeast(1)
-                                    val passed = (System.currentTimeMillis() - currentProgram!!.startTime).coerceIn(0, total)
-                                    val progress = passed.toFloat() / total.toFloat()
-                                    Spacer(modifier = Modifier.height(6.dp))
                                     Box(
                                         modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(4.dp)
-                                            .clip(RoundedCornerShape(2.dp))
-                                            .background(Color.White.copy(alpha = 0.1f))
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxWidth(progress)
-                                                .fillMaxHeight()
-                                                .background(Color(0xFFFFD700))
-                                        )
-                                    }
+                                            .fillMaxWidth(progress)
+                                            .fillMaxHeight()
+                                            .background(Color(0xFFFFD700))
+                                    )
                                 }
                             }
                         } else if (epgListings.isNotEmpty()) {
-                            item {
-                                val first = epgListings[0]
-                                val title = first.title.decodeBase64IfNeeded()
-                                val timeRange = formatEpgTime(first, is24Hour)
-                                Column(modifier = Modifier.fillMaxWidth()) {
-                                    Text(
-                                        text = timeRange,
-                                        color = Color(0xFFFFD700),
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                    Text(
-                                        text = title,
-                                        color = Color.White,
-                                        fontSize = 15.sp,
-                                        fontWeight = FontWeight.ExtraBold,
-                                        maxLines = 2
-                                    )
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    Box(modifier = Modifier.fillMaxWidth().height(2.dp).background(Color(0xFFFFD700).copy(alpha = 0.4f)))
-                                }
+                            val first = epgListings[0]
+                            val title = first.title.decodeBase64IfNeeded()
+                            val timeRange = formatEpgTime(first, is24Hour)
+                            Column(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
+                                Text(
+                                    text = timeRange,
+                                    color = Color(0xFFFFD700),
+                                    fontSize = 14.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = title,
+                                    color = Color.White,
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    maxLines = 2
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Box(modifier = Modifier.fillMaxWidth().height(2.dp).background(Color(0xFFFFD700).copy(alpha = 0.4f)))
                             }
                         }
 
-                        // Próximos Programas
-                        if (upcomingPrograms.isNotEmpty()) {
-                            items(upcomingPrograms.take(10)) { program ->
+                        // PRÓXIMOS PROGRAMAS (Lista Rolável)
+                        LazyColumn(
+                            state = epgListState,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            contentPadding = PaddingValues(vertical = 4.dp)
+                        ) {
+                            if (upcomingPrograms.isNotEmpty()) {
+                                items(upcomingPrograms.take(10)) { program ->
                                 var isFocusedEpg by remember { mutableStateOf(false) }
                                 Box(
                                     modifier = Modifier
@@ -754,11 +802,13 @@ fun LiveTvScreen(
                                 }
                             }
                         }
-                    }
-                }
-            }
-        }
+                    } // Fecha LazyColumn
+                } // Fecha Column (Wrapper do EPG)
+            } // Fecha box ou row do LiveTvScreen
+        } // ...
+    } // ...
     } // fim Row + isDataReady
+    }
 
     // Fullscreen agora é via VideoPlayerScreen (MainScreen.playingChannel)
 

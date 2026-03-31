@@ -60,6 +60,7 @@ fun MainScreen(
     var isSettingsOpen by remember { mutableStateOf(false) }
     var isAddingPlaylist by remember { mutableStateOf(false) }
     var isServerSwapOpen by remember { mutableStateOf(false) }
+    var showExitDialog by remember { mutableStateOf(false) }
     val currentPlaylist by viewModel.currentPlaylist.collectAsState()
     val syncStatus by viewModel.syncStatus.collectAsState()
     
@@ -231,7 +232,8 @@ fun MainScreen(
                 selectedDetailsChannel != null -> viewModel.selectChannelForDetails(null)
                 isSettingsOpen -> isSettingsOpen = false
                 selectedTab != 0 -> selectedTab = 0
-                // Na Home, ignora o Back para não sair acidentalmente (TV gera Back quando foco escapa)
+                // Na Home, mostra o modal de confirmação para sair
+                else -> showExitDialog = true
             }
         }
 
@@ -425,6 +427,21 @@ fun MainScreen(
         )
         } // fim Box
     } // fim else
+
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    if (showExitDialog) {
+        PlayerDialog(
+            title = "SAIR DO APLICATIVO",
+            description = "Você tem certeza que deseja sair do aplicativo?",
+            onConfirm = {
+                showExitDialog = false
+                viewModel.stopAllPlayback()
+                (context as? android.app.Activity)?.finish()
+            },
+            onCancel = { showExitDialog = false }
+        )
+    }
 
     // Update & Changelog Dialogs (global overlays — acima de tudo)
     if (showUpdateDialog && updateAvailable != null) {

@@ -19,6 +19,15 @@ interface ChannelDao {
     @Query("SELECT * FROM channels WHERE category = :category AND playlistUrl = :url")
     suspend fun getChannelsByCategoryList(category: String, url: String): List<Channel>
 
+    @Query("SELECT * FROM channels WHERE category = 'LIVE_TV' AND playlistUrl = :url ORDER BY orderIndex ASC")
+    fun observeAllLiveChannels(url: String): Flow<List<Channel>>
+
+    @Query("SELECT * FROM channels WHERE category = 'MOVIE' AND playlistUrl = :url ORDER BY orderIndex ASC")
+    fun observeAllMovies(url: String): Flow<List<Channel>>
+
+    @Query("SELECT * FROM channels WHERE category = 'SERIES' AND playlistUrl = :url GROUP BY seriesName ORDER BY orderIndex ASC")
+    fun observeAllSeries(url: String): Flow<List<Channel>>
+
     @Query("SELECT * FROM channels WHERE category = 'MOVIE' AND playlistUrl = :url AND (tmdbSynopsis IS NULL OR tmdbSynopsis = '')")
     suspend fun getMoviesToEnrich(url: String): List<Channel>
 
@@ -78,6 +87,9 @@ interface ChannelDao {
 
     @Query("SELECT * FROM channels WHERE category = 'SERIES' AND seriesName = :seriesName AND seasonNumber = :season AND playlistUrl = :url GROUP BY episodeNumber ORDER BY episodeNumber ASC")
     fun getEpisodesBySeasonPaged(seriesName: String, season: Int, url: String): PagingSource<Int, Channel>
+
+    @Query("SELECT * FROM channels WHERE category = 'SERIES' AND seriesName = :seriesName AND seasonNumber = :season AND playlistUrl = :url GROUP BY episodeNumber ORDER BY episodeNumber ASC")
+    fun observeEpisodesBySeason(seriesName: String, season: Int, url: String): Flow<List<Channel>>
 
     @Query("""
         SELECT * FROM channels
