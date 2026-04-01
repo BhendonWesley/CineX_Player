@@ -1031,7 +1031,7 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    private fun enrichChannelMetadata(channel: Channel) {
+    private fun enrichChannelMetadata(channel: Channel, skipTmdb: Boolean = false) {
         viewModelScope.launch {
             if (channel.category == "SERIES") {
                 val seriesName = channel.seriesName ?: channel.name
@@ -1044,8 +1044,8 @@ class MainViewModel @Inject constructor(
                 if (seriesId != -1) {
                     repository.fetchAndStoreEpisodes(seriesId, seriesName)
                 }
-                // Enriquece TMDB se a série precisa de dados OU se episódios precisam de stills
-                if (shouldEnrichChannelMetadata(channel)) {
+                // Em TV, pula o TMDB para não bloquear carregamento com chamadas de rede desnecessárias
+                if (!skipTmdb && shouldEnrichChannelMetadata(channel)) {
                     repository.enrichSeriesMetadataWithTmdb(channel)
                 }
                 _isLoadingEpisodes.value = false
@@ -1069,9 +1069,9 @@ class MainViewModel @Inject constructor(
         return repository.getEpisodesBySeasonPaged(seriesName, season)
     }
 
-    fun ensureSeriesDetailsReady(series: Channel) {
+    fun ensureSeriesDetailsReady(series: Channel, skipTmdb: Boolean = false) {
         if (series.category == "SERIES") {
-            enrichChannelMetadata(series)
+            enrichChannelMetadata(series, skipTmdb)
         }
     }
 
@@ -1083,7 +1083,8 @@ class MainViewModel @Inject constructor(
         return repository.observeEpisodesWithoutStillForSeason(seriesName, season)
     }
 
-    fun enrichSeriesSeasonIfNeeded(series: Channel, season: Int) {
+    fun enrichSeriesSeasonIfNeeded(series: Channel, season: Int, skipTmdb: Boolean = false) {
+        if (skipTmdb) return
         if (series.category != "SERIES" || season <= 0) return
         val seriesName = series.seriesName ?: series.name
         val key = "${series.remoteId}:$season"

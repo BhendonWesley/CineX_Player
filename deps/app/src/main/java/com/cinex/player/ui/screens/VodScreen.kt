@@ -200,10 +200,18 @@ fun VodScreen(
             )
         }
 
-        // Gate de carregamento inicial — só aparece uma vez até os dados carregarem pela primeira vez
-        var initialLoadComplete by remember { mutableStateOf(type == "SEARCH") }
-        if (!initialLoadComplete && categories.isNotEmpty() && itemCount > 0) {
-            initialLoadComplete = true
+        // Gate de carregamento inicial — aguarda dados antes de exibir o grid
+        var initialLoadComplete by remember { mutableStateOf(false) }
+        if (!initialLoadComplete) {
+            if (type == "SEARCH") {
+                // Para busca: espera o primeiro refresh terminar (dados prontos ou sem resultados)
+                val refreshState = pagingItems.loadState.refresh
+                if (refreshState is androidx.paging.LoadState.NotLoading) {
+                    initialLoadComplete = true
+                }
+            } else if (categories.isNotEmpty() && itemCount > 0) {
+                initialLoadComplete = true
+            }
         }
         val isDataReady = initialLoadComplete
 

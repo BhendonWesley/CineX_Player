@@ -198,7 +198,7 @@ class ChannelRepository @Inject constructor(
 
     fun searchChannels(query: String): Flow<PagingData<Channel>> {
         val url = _activePlaylistUrl.value ?: return flowOf(PagingData.empty())
-        return Pager(PagingConfig(pageSize = 50)) {
+        return Pager(PagingConfig(pageSize = 20, initialLoadSize = 20, enablePlaceholders = false)) {
             channelDao.searchChannels(query, url)
         }.flow.cachedIn(repositoryScope)
     }
@@ -1019,6 +1019,12 @@ class ChannelRepository @Inject constructor(
         channelDao.updateResumePosition(channelId, position, duration)
         // Propaga a capa da série para o episódio (para "Continuar Assistindo" mostrar a capa correta)
         propagateSeriesPoster(channelId)
+        // Marca a série pai como assistida para aparecer no "Continuar Assistindo"
+        val url = _activePlaylistUrl.value ?: return
+        val episode = channelDao.getChannelById(channelId) ?: return
+        if (episode.category == "SERIES" && !episode.seriesName.isNullOrEmpty()) {
+            channelDao.markSeriesParentAsWatched(episode.seriesName, url)
+        }
     }
 
     private suspend fun propagateSeriesPoster(channelId: Int) {

@@ -25,7 +25,7 @@ interface ChannelDao {
     @Query("SELECT * FROM channels WHERE category = 'MOVIE' AND playlistUrl = :url ORDER BY orderIndex ASC")
     fun observeAllMovies(url: String): Flow<List<Channel>>
 
-    @Query("SELECT * FROM channels WHERE category = 'SERIES' AND playlistUrl = :url GROUP BY seriesName ORDER BY orderIndex ASC")
+    @Query("SELECT * FROM channels WHERE category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url ORDER BY orderIndex ASC")
     fun observeAllSeries(url: String): Flow<List<Channel>>
 
     @Query("SELECT * FROM channels WHERE category = 'MOVIE' AND playlistUrl = :url AND (tmdbSynopsis IS NULL OR tmdbSynopsis = '')")
@@ -37,17 +37,17 @@ interface ChannelDao {
     @Query("SELECT * FROM channels WHERE categoryId = :categoryId AND playlistUrl = :url ORDER BY orderIndex ASC")
     fun getChannelsByCategoryIdPaged(categoryId: String, url: String): PagingSource<Int, Channel>
 
-    // Para UI de Grid de Séries: Agrupa as séries pelo nome da série, retornando o primeiro episódio para usar como capa da série.
-    @Query("SELECT * FROM channels WHERE category = 'SERIES' AND playlistUrl = :url GROUP BY seriesName ORDER BY orderIndex ASC")
+    // Para UI de Grid de Séries: usa seasonNumber IS NULL para garantir que só a linha-pai da série aparece (nunca episódios)
+    @Query("SELECT * FROM channels WHERE category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url ORDER BY orderIndex ASC")
     fun getUniqueSeries(url: String): PagingSource<Int, Channel>
 
-    @Query("SELECT * FROM channels WHERE category = 'SERIES' AND playlistUrl = :url GROUP BY seriesName")
+    @Query("SELECT * FROM channels WHERE category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url")
     suspend fun getUniqueSeriesList(url: String): List<Channel>
 
-    @Query("SELECT * FROM channels WHERE category = 'SERIES' AND playlistUrl = :url AND (tmdbSynopsis IS NULL OR tmdbSynopsis = '') GROUP BY seriesName")
+    @Query("SELECT * FROM channels WHERE category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url AND (tmdbSynopsis IS NULL OR tmdbSynopsis = '')")
     suspend fun getSeriesToEnrich(url: String): List<Channel>
 
-    @Query("SELECT * FROM channels WHERE categoryId = :categoryId AND category = 'SERIES' AND playlistUrl = :url GROUP BY seriesName ORDER BY orderIndex ASC")
+    @Query("SELECT * FROM channels WHERE categoryId = :categoryId AND category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url ORDER BY orderIndex ASC")
     fun getUniqueSeriesByCategoryId(categoryId: String, url: String): PagingSource<Int, Channel>
 
     @Query("""
@@ -93,27 +93,10 @@ interface ChannelDao {
 
     @Query("""
         SELECT * FROM channels
-        WHERE id IN (
-            SELECT MIN(id) FROM channels
-            WHERE playlistUrl = :url
-            AND REPLACE(
-                    REPLACE(
-                        REPLACE(
-                            REPLACE(
-                                LOWER(CASE WHEN category = 'SERIES' THEN COALESCE(seriesName, name) ELSE name END),
-                                '-', ' '
-                            ),
-                            '.', ' '
-                        ),
-                        '_', ' '
-                    ),
-                    ':', ' '
-                ) LIKE '%' || REPLACE(REPLACE(REPLACE(REPLACE(LOWER(:query), '-', ' '), '.', ' '), '_', ' '), ':', ' ') || '%'
-            GROUP BY CASE
-                WHEN category = 'SERIES' THEN COALESCE(seriesName, name)
-                ELSE remoteId
-            END
-        )
+        WHERE playlistUrl = :url
+        AND seasonNumber IS NULL
+        AND REPLACE(REPLACE(REPLACE(REPLACE(LOWER(COALESCE(seriesName, name)), '-', ' '), '.', ' '), '_', ' '), ':', ' ')
+            LIKE '%' || REPLACE(REPLACE(REPLACE(REPLACE(LOWER(:query), '-', ' '), '.', ' '), '_', ' '), ':', ' ') || '%'
         ORDER BY orderIndex ASC
     """)
     fun searchChannels(query: String, url: String): PagingSource<Int, Channel>
@@ -134,10 +117,13 @@ interface ChannelDao {
     @Query("UPDATE channels SET resumePosition = :position, totalDuration = :duration WHERE id = :channelId")
     suspend fun updateResumePosition(channelId: Int, position: Long, duration: Long)
 
-    @Query("SELECT * FROM channels WHERE resumePosition > 0 AND category IN ('MOVIE', 'SERIES') AND playlistUrl = :url ORDER BY id DESC LIMIT 20")
+    @Query("UPDATE channels SET resumePosition = 1 WHERE category = 'SERIES' AND seasonNumber IS NULL AND seriesName = :seriesName AND playlistUrl = :url")
+    suspend fun markSeriesParentAsWatched(seriesName: String, url: String)
+
+    @Query("SELECT * FROM channels WHERE resumePosition > 0 AND category IN ('MOVIE', 'SERIES') AND (category = 'MOVIE' OR seasonNumber IS NOT NULL) AND playlistUrl = :url ORDER BY id DESC LIMIT 20")
     fun getContinueWatching(url: String): Flow<List<Channel>>
 
-    @Query("SELECT * FROM channels WHERE resumePosition > 0 AND category = :category AND playlistUrl = :url ORDER BY id DESC")
+    @Query("SELECT * FROM channels WHERE resumePosition > 0 AND category = :category AND (:category != 'SERIES' OR seasonNumber IS NOT NULL) AND playlistUrl = :url ORDER BY id DESC")
     fun getContinueWatchingPaged(category: String, url: String): PagingSource<Int, Channel>
 
     @Query("UPDATE channels SET isFavorite = :isFav WHERE id = :channelId")
@@ -149,7 +135,7 @@ interface ChannelDao {
     @Query("SELECT * FROM channels WHERE isFavorite = 1 AND category = :category AND playlistUrl = :url ORDER BY orderIndex ASC")
     fun getFavoritesPaged(category: String, url: String): PagingSource<Int, Channel>
 
-    @Query("SELECT * FROM channels WHERE isFavorite = 1 AND category = 'SERIES' AND playlistUrl = :url GROUP BY seriesName ORDER BY orderIndex ASC")
+    @Query("SELECT * FROM channels WHERE isFavorite = 1 AND category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url ORDER BY orderIndex ASC")
     fun getFavoriteSeriesPaged(url: String): PagingSource<Int, Channel>
 
     // Atualiza metadados do TMDB em uma linha específica

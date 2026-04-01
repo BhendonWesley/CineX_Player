@@ -334,7 +334,11 @@ fun LiveTvScreen(
             val channelListState = rememberLazyListState()
 
             // Auto-scroll para o canal selecionado na lista
-            LaunchedEffect(selectedChannel?.id, channelCount) {
+            // Nota: channelCount removido das keys — Room re-emite channels ao qualquer escrita
+            // na tabela (episódio, favorito, EPG), o que fazia o scroll voltar ao canal selecionado
+            // enquanto o usuário estava rolando. selectedChannel?.id já cobre o caso de carga inicial
+            // pois a auto-seleção do 1º canal (LaunchedEffect acima) muda o ID e dispara o scroll.
+            LaunchedEffect(selectedChannel?.id) {
                 val targetId = selectedChannel?.id ?: return@LaunchedEffect
                 if (isTv) {
                     val index = liveChannels.indexOfFirst { it.id == targetId }

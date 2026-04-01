@@ -100,9 +100,27 @@ fun SeriesDetailsScreen(
     val hasEpisodesReady = sortedSeasons.isNotEmpty()
     val canOpenEpisodes = hasEpisodesReady && !isLoadingEpisodes
 
+    val context = LocalContext.current
+    val isTv = remember {
+        val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as? android.app.UiModeManager
+        uiModeManager?.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    }
+
+    // Só permite requisições de foco quando esta tela está visível (RESUMED).
+    // Quando está no back stack atrás de VideoPlayerScreen, fica em STARTED e
+    // não deve roubar o foco de dialogs do player.
+    val lifecycle = androidx.compose.ui.platform.LocalLifecycleOwner.current.lifecycle
+    var isScreenResumed by remember { mutableStateOf(lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) }
+    DisposableEffect(lifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, _ ->
+            isScreenResumed = lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+
     LaunchedEffect(series.remoteId) {
-        // Quando a tela abre, força o carregamento total da série imediatamente
-        viewModel.ensureSeriesDetailsReady(currentSeries)
+        viewModel.ensureSeriesDetailsReady(currentSeries, skipTmdb = isTv)
     }
 
     LaunchedEffect(sortedSeasons) {
@@ -128,14 +146,8 @@ fun SeriesDetailsScreen(
             selectedSeason > 0 &&
             sortedSeasons.contains(selectedSeason)
         ) {
-            viewModel.enrichSeriesSeasonIfNeeded(currentSeries, selectedSeason)
+            viewModel.enrichSeriesSeasonIfNeeded(currentSeries, selectedSeason, skipTmdb = isTv)
         }
-    }
-
-    val context = LocalContext.current
-    val isTv = remember {
-        val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as? android.app.UiModeManager
-        uiModeManager?.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     }
 
     // TV: lista em memória (instantâneo ao trocar temporada)
@@ -182,14 +194,14 @@ fun SeriesDetailsScreen(
     var pendingEpisodeFocus by remember(series.remoteId) { mutableStateOf(false) }
 
     LaunchedEffect(focusEpisodesRequest, episodeCount, viewMode) {
-        if (focusEpisodesRequest > 0 && viewMode == SeriesViewMode.EPISODES && episodeCount > 0) {
+        if (focusEpisodesRequest > 0 && viewMode == SeriesViewMode.EPISODES && episodeCount > 0 && isScreenResumed) {
             kotlinx.coroutines.delay(80)
             try { firstEpisodeFocusRequester.requestFocus() } catch (_: Exception) {}
         }
     }
 
     LaunchedEffect(pendingEpisodeFocus, episodeCount, viewMode, selectedSeason) {
-        if (pendingEpisodeFocus && viewMode == SeriesViewMode.EPISODES && episodeCount > 0) {
+        if (pendingEpisodeFocus && viewMode == SeriesViewMode.EPISODES && episodeCount > 0 && isScreenResumed) {
             kotlinx.coroutines.delay(120)
             try { firstEpisodeFocusRequester.requestFocus() } catch (_: Exception) {}
             pendingEpisodeFocus = false
@@ -204,14 +216,14 @@ fun SeriesDetailsScreen(
     }
 
     LaunchedEffect(focusSeasonRequest) {
-        if (focusSeasonRequest > 0) {
+        if (focusSeasonRequest > 0 && isScreenResumed) {
             kotlinx.coroutines.delay(80)
             try { selectedSeasonFocusRequester.requestFocus() } catch (_: Exception) {}
         }
     }
 
     LaunchedEffect(focusBackArrowRequest) {
-        if (focusBackArrowRequest > 0) {
+        if (focusBackArrowRequest > 0 && isScreenResumed) {
             kotlinx.coroutines.delay(80)
             try { backArrowFocusRequester.requestFocus() } catch (_: Exception) {}
         }
@@ -219,7 +231,7 @@ fun SeriesDetailsScreen(
 
     LaunchedEffect(viewMode) {
         when (viewMode) {
-            SeriesViewMode.LANDING -> if (isTv) {
+            SeriesViewMode.LANDING -> if (isTv && isScreenResumed) {
                 kotlinx.coroutines.delay(200)
                 if (suppressLandingAutoFocus) {
                     suppressLandingAutoFocus = false
@@ -229,7 +241,7 @@ fun SeriesDetailsScreen(
                 }
             }
             SeriesViewMode.LOADING -> {} // Sem foco especial na tela de loading
-            SeriesViewMode.EPISODES -> if (isTv && sortedSeasons.isNotEmpty()) {
+            SeriesViewMode.EPISODES -> if (isTv && sortedSeasons.isNotEmpty() && isScreenResumed) {
                 kotlinx.coroutines.delay(150)
                 try { selectedSeasonFocusRequester.requestFocus() } catch (_: Exception) {}
             }
@@ -313,7 +325,7 @@ fun SeriesDetailsScreen(
 
             if (viewMode == SeriesViewMode.LANDING) {
                 if (isTv) {
-                    // === LAYOUT TV (horizontal) ===
+                    // === LAYOUT TV — usa logoUrl (M3U) como capa, sem chamadas TMDB ===
                     Row(
                         modifier = Modifier
                             .fillMaxSize()
@@ -321,7 +333,7 @@ fun SeriesDetailsScreen(
                         verticalAlignment = Alignment.Top
                     ) {
                         AsyncImage(
-                            model = currentSeries.posterUrl?.takeIf { it.isNotEmpty() } ?: currentSeries.logoUrl,
+                            model = currentSeries.logoUrl,
                             contentDescription = null,
                             modifier = Modifier
                                 .width(160.dp)
@@ -341,41 +353,28 @@ fun SeriesDetailsScreen(
 
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(vertical = 8.dp)
+                                modifier = Modifier.padding(vertical = 12.dp)
                             ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    repeat(5) { index ->
-                                        val rating = (currentSeries.tmdbRating ?: 0.0) / 2
-                                        Icon(Icons.Default.Star, contentDescription = null, tint = if (index < rating.toInt()) Color.Yellow else Color.DarkGray, modifier = Modifier.size(16.dp))
-                                    }
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(String.format("%.1f", currentSeries.tmdbRating ?: 0.0), color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                                }
-                                Spacer(modifier = Modifier.width(16.dp))
-                                Text(text = "•", color = Color.Gray)
-                                Spacer(modifier = Modifier.width(16.dp))
-                                Text(text = currentSeries.tmdbYear ?: "N/A", color = Color.Gray, fontSize = 16.sp)
-                                Spacer(modifier = Modifier.width(16.dp))
-                                Text(text = "•", color = Color.Gray)
-                                Spacer(modifier = Modifier.width(16.dp))
-                                Text(text = "${sortedSeasons.size} Temporadas", color = Color.Gray, fontSize = 16.sp)
+                                Text(text = "${sortedSeasons.size} Temporadas", color = Color.Gray, fontSize = 18.sp)
                             }
 
-                            Box(
-                                modifier = Modifier
-                                    .padding(vertical = 8.dp)
-                                    .height(180.dp)
-                                    .clip(RoundedCornerShape(8.dp))
-                                    .background(Color.White.copy(alpha = 0.06f))
-                            ) {
-                                val scrollState = rememberScrollState()
-                                Text(
-                                    text = currentSeries.tmdbSynopsis ?: "Preparando detalhes da serie...",
-                                    color = Color.LightGray, fontSize = 14.sp, lineHeight = 21.sp,
-                                    modifier = Modifier.fillMaxSize().verticalScroll(scrollState).padding(12.dp)
-                                )
-                                if (scrollState.canScrollForward) {
-                                    Box(modifier = Modifier.fillMaxWidth().height(32.dp).align(Alignment.BottomCenter).background(Brush.verticalGradient(listOf(Color.Transparent, DarkBackground.copy(alpha = 0.9f)))))
+                            if (!currentSeries.tmdbSynopsis.isNullOrBlank()) {
+                                Box(
+                                    modifier = Modifier
+                                        .padding(bottom = 12.dp)
+                                        .height(100.dp)
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .background(Color.White.copy(alpha = 0.06f))
+                                ) {
+                                    val scrollState = rememberScrollState()
+                                    Text(
+                                        text = currentSeries.tmdbSynopsis!!,
+                                        color = Color.LightGray, fontSize = 14.sp, lineHeight = 21.sp,
+                                        modifier = Modifier.fillMaxSize().verticalScroll(scrollState).padding(12.dp)
+                                    )
+                                    if (scrollState.canScrollForward) {
+                                        Box(modifier = Modifier.fillMaxWidth().height(32.dp).align(Alignment.BottomCenter).background(Brush.verticalGradient(listOf(Color.Transparent, DarkBackground.copy(alpha = 0.9f)))))
+                                    }
                                 }
                             }
 
@@ -395,7 +394,7 @@ fun SeriesDetailsScreen(
                                             else -> {
                                                 pendingOpenEpisodes = true
                                                 viewMode = SeriesViewMode.LOADING
-                                                viewModel.ensureSeriesDetailsReady(currentSeries)
+                                                viewModel.ensureSeriesDetailsReady(currentSeries, skipTmdb = isTv)
                                             }
                                         }
                                     },
@@ -654,6 +653,7 @@ fun SeriesDetailsScreen(
                                                         if (selectedSeason != seasonNum) {
                                                             selectedSeason = seasonNum
                                                         }
+                                                        focusEpisodesRequest = 0 // evita auto-foco no 1º episódio durante troca de temporada
                                                         pendingEpisodeFocus = false
                                                         pendingOpenEpisodes = true
                                                         viewMode = SeriesViewMode.LOADING
@@ -678,6 +678,7 @@ fun SeriesDetailsScreen(
                                             if (selectedSeason != seasonNum) {
                                                 selectedSeason = seasonNum
                                             }
+                                            focusEpisodesRequest = 0
                                             pendingEpisodeFocus = false
                                             pendingOpenEpisodes = true
                                             viewMode = SeriesViewMode.LOADING
