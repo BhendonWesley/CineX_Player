@@ -417,6 +417,16 @@ class ChannelRepository @Inject constructor(
         onProgress: (livePct: Int, moviePct: Int, seriesPct: Int, status: String) -> Unit
     ) {
         repositoryScope.launch {
+            // === PRE-FETCH SUPABASE CACHE (batch) ===
+            val allToEnrich = channelDao.getMoviesToEnrich(url) + channelDao.getSeriesToEnrich(url)
+            if (allToEnrich.isNotEmpty()) {
+                android.util.Log.d("CineX-Cache", "Pre-fetching TMDB cache for ${allToEnrich.size} items...")
+                allToEnrich.chunked(100).forEach { batch ->
+                    try { prefetchTmdbCache(batch) } catch (_: Exception) {}
+                }
+            }
+            // === END PRE-FETCH ===
+
             // Prioridade 1: enriquecer os featured da Home primeiro
             val initialFeatured = channelDao.getFeaturedContent(url).first().take(5)
             if (initialFeatured.isNotEmpty()) {
@@ -483,6 +493,9 @@ class ChannelRepository @Inject constructor(
                     delay(50)
                 }
             }
+
+            // Flush qualquer entrada pendente na fila do cache Supabase
+            flushTmdbCacheQueue()
         }
     }
 
@@ -1011,6 +1024,164 @@ class ChannelRepository @Inject constructor(
 
     private val tmdbApiKey = "4f4a90cce11b368ad0235f2b82ba672a"
 
+    // === SUPABASE TMDB CACHE ===
+    private val PANEL_BASE_URL = "https://gerencia-cine-x.vercel.app"
+    private val TMDB_CACHE_TTL_DAYS = 30L
+
+    // Cache em memória para evitar chamadas repetidas ao Supabase na mesma sessão
+    private data class TmdbCacheEntry(
+        val posterUrl: String?,
+        val bannerUrl: String?,
+        val synopsis: String?,
+        val rating: Double?,
+        val year: String?,
+        val trailerUrl: String?,
+        val castMembers: String?
+    )
+    private val tmdbMemoryCache = java.util.concurrent.ConcurrentHashMap<String, TmdbCacheEntry?>()
+
+    /**
+     * Normaliza o title para gerar uma cache key universal.
+     * Ex: "FHD | Barbie (2023) DUBLADO" → "movie:barbie 2023"
+     */
+    private fun generateCacheKey(channel: Channel): String {
+        val isMovie = channel.category == "MOVIE"
+        val prefix = if (isMovie) "movie" else "tv"
+
+        val rawName = if (!isMovie && !channel.seriesName.isNullOrBlank()) {
+            channel.seriesName
+        } else {
+            channel.name
+        }
+
+        // Extrair ano se presente
+        val yearMatch = Regex("(?i)\\(?(\\d{4})\\)?").find(rawName)
+        val year = yearMatch?.groupValues?.get(1) ?: ""
+
+        val cleaned = rawName
+            .replace(Regex("(?i)\\(?\\d{4}\\)?"), "")
+            .replace(Regex("(?i)\\b(fhd|hd|sd|4k|dual|legendado|dublado|multi|brrip|hdtv|web-dl|bluray|h264|h265|x264|x265|1080p|720p|480p)\\b"), "")
+            .replace(Regex("(?i)s\\d+e\\d+.*"), "")
+            .replace(Regex("[|\\-\\[\\]()]"), " ")
+            .trim()
+            .replace(Regex("\\s+"), " ")
+
+        val normalized = java.text.Normalizer
+            .normalize(cleaned, java.text.Normalizer.Form.NFD)
+            .replace(Regex("[\\p{InCombiningDiacriticalMarks}]"), "")
+            .lowercase()
+            .replace(Regex("[^a-z0-9 ]"), "")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+
+        return if (year.isNotEmpty()) "$prefix:$normalized $year" else "$prefix:$normalized"
+    }
+
+    /**
+     * Busca dados TMDB do cache Supabase em batch.
+     * Popula o tmdbMemoryCache com os resultados.
+     */
+    private suspend fun prefetchTmdbCache(channels: List<Channel>) {
+        try {
+            val keysToFetch = channels
+                .filter { it.category != "LIVE_TV" }
+                .map { generateCacheKey(it) }
+                .distinct()
+                .filter { it !in tmdbMemoryCache }
+                .take(100)
+
+            if (keysToFetch.isEmpty()) return
+
+            val keysParam = java.net.URLEncoder.encode(keysToFetch.joinToString(","), "UTF-8")
+            val url = "$PANEL_BASE_URL/api/tmdb-cache?keys=$keysParam"
+            val request = Request.Builder().url(url).get().build()
+            val response = okHttpClient.newCall(request).execute()
+
+            if (response.isSuccessful) {
+                val bodyStr = response.body?.string() ?: ""
+                val json = org.json.JSONObject(bodyStr)
+                val data = json.optJSONObject("data")
+
+                if (data != null) {
+                    for (key in keysToFetch) {
+                        val entry = data.optJSONObject(key)
+                        if (entry != null) {
+                            tmdbMemoryCache[key] = TmdbCacheEntry(
+                                posterUrl = entry.optString("poster_url", "").ifEmpty { null },
+                                bannerUrl = entry.optString("banner_url", "").ifEmpty { null },
+                                synopsis = entry.optString("synopsis", "").ifEmpty { null },
+                                rating = entry.optDouble("rating").takeIf { !it.isNaN() },
+                                year = entry.optString("year", "").ifEmpty { null },
+                                trailerUrl = entry.optString("trailer_url", "").ifEmpty { null },
+                                castMembers = entry.optString("cast_members", "").ifEmpty { null }
+                            )
+                        } else {
+                            // Marca como "não existe no cache" para não buscar de novo
+                            tmdbMemoryCache[key] = null
+                        }
+                    }
+                }
+
+                android.util.Log.d("CineX-Cache", "Prefetch: ${keysToFetch.size} keys, ${data?.length() ?: 0} hits")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("CineX-Cache", "Prefetch failed: ${e.message}")
+        }
+    }
+
+    /**
+     * Salva dados TMDB no cache Supabase em batch.
+     */
+    private val tmdbCacheSaveQueue = java.util.concurrent.ConcurrentLinkedQueue<Pair<String, TmdbCacheEntry>>()
+
+    private fun queueTmdbCacheSave(cacheKey: String, entry: TmdbCacheEntry) {
+        tmdbCacheSaveQueue.add(cacheKey to entry)
+        // Flush quando acumular 20 entradas
+        if (tmdbCacheSaveQueue.size >= 20) {
+            repositoryScope.launch { flushTmdbCacheQueue() }
+        }
+    }
+
+    private suspend fun flushTmdbCacheQueue() {
+        val batch = mutableListOf<Pair<String, TmdbCacheEntry>>()
+        while (tmdbCacheSaveQueue.isNotEmpty() && batch.size < 50) {
+            tmdbCacheSaveQueue.poll()?.let { batch.add(it) }
+        }
+        if (batch.isEmpty()) return
+
+        try {
+            val entries = org.json.JSONArray()
+            for ((key, entry) in batch) {
+                entries.put(org.json.JSONObject().apply {
+                    put("cache_key", key)
+                    put("poster_url", entry.posterUrl ?: org.json.JSONObject.NULL)
+                    put("banner_url", entry.bannerUrl ?: org.json.JSONObject.NULL)
+                    put("synopsis", entry.synopsis ?: org.json.JSONObject.NULL)
+                    put("rating", entry.rating ?: org.json.JSONObject.NULL)
+                    put("year", entry.year ?: org.json.JSONObject.NULL)
+                    put("trailer_url", entry.trailerUrl ?: org.json.JSONObject.NULL)
+                    put("cast_members", entry.castMembers ?: org.json.JSONObject.NULL)
+                })
+            }
+
+            val body = org.json.JSONObject().put("entries", entries).toString()
+            val request = Request.Builder()
+                .url("$PANEL_BASE_URL/api/tmdb-cache")
+                .post(okhttp3.RequestBody.create(
+                    okhttp3.MediaType.parse("application/json"),
+                    body
+                ))
+                .build()
+
+            okHttpClient.newCall(request).execute().close()
+            android.util.Log.d("CineX-Cache", "Saved ${batch.size} entries to Supabase cache")
+        } catch (e: Exception) {
+            android.util.Log.e("CineX-Cache", "Save to Supabase failed: ${e.message}")
+            // Re-enfileirar as entradas que falharam
+            batch.forEach { tmdbCacheSaveQueue.add(it) }
+        }
+    }
+
     suspend fun updateFavorite(channelId: Int, isFav: Boolean) = withContext(Dispatchers.IO) {
         channelDao.updateFavorite(channelId, isFav)
     }
@@ -1069,6 +1240,47 @@ class ChannelRepository @Inject constructor(
 
     suspend fun enrichChannelWithTmdb(channel: Channel) = withContext(Dispatchers.IO) {
         try {
+            // === SUPABASE CACHE CHECK ===
+            val cacheKey = generateCacheKey(channel)
+            val cached = tmdbMemoryCache[cacheKey]
+            if (cached != null && (cached.posterUrl != null || cached.synopsis != null)) {
+                android.util.Log.d("CineX-Cache", "[HIT] '$cacheKey' → poster=${cached.posterUrl != null}")
+                if (channel.category == "SERIES" && channel.seriesName != null) {
+                    channelDao.updateTmdbInfo(
+                        channel.id,
+                        cached.rating,
+                        cached.synopsis,
+                        cached.posterUrl,
+                        cached.bannerUrl,
+                        cached.year,
+                        cached.castMembers,
+                        cached.trailerUrl
+                    )
+                    channelDao.propagateSeriesBackdrop(
+                        channel.seriesName!!,
+                        channel.playlistUrl,
+                        cached.rating,
+                        cached.posterUrl,
+                        cached.bannerUrl,
+                        cached.year,
+                        cached.castMembers
+                    )
+                } else {
+                    channelDao.updateTmdbInfo(
+                        channel.id,
+                        cached.rating,
+                        cached.synopsis,
+                        cached.posterUrl,
+                        cached.bannerUrl,
+                        cached.year,
+                        cached.castMembers,
+                        cached.trailerUrl
+                    )
+                }
+                return@withContext
+            }
+            // === END CACHE CHECK ===
+
             val rawName = channel.name
             
             // Extrair ano (ex: 2003) se presente no título
@@ -1236,6 +1448,20 @@ class ChannelRepository @Inject constructor(
                         trailerUrl
                     )
                 }
+
+                // === SALVAR NO CACHE SUPABASE ===
+                val cacheEntry = TmdbCacheEntry(
+                    posterUrl = posterUrl,
+                    bannerUrl = backdropUrl,
+                    synopsis = details.overview,
+                    rating = tmdbResult.vote_average,
+                    year = year,
+                    trailerUrl = trailerUrl,
+                    castMembers = cast
+                )
+                tmdbMemoryCache[cacheKey] = cacheEntry
+                queueTmdbCacheSave(cacheKey, cacheEntry)
+                // === END CACHE SAVE ===
             }
         } catch (e: Exception) {
             android.util.Log.e("CineX-TMDB", "Enrich FAILED for '${channel.name}': ${e.message}")
