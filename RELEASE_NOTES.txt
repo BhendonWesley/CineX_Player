@@ -1,1 +1,3 @@
-Correção de Bugs
+Busca Melhorada
+Filtros Adicionados
+Ícones de canais adicionados

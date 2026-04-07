@@ -120,6 +120,14 @@ fun MainScreen(
         if (selectedTab != 1) {
             viewModel.stopLiveTv()
         }
+        // Reseta categoria e sort ao entrar em Filmes ou Séries
+        if (selectedTab == 2) {
+            viewModel.setMovieCategory("Tudo")
+            viewModel.setMovieSortOrder("RECENT")
+        } else if (selectedTab == 3) {
+            viewModel.setSeriesCategory("Tudo")
+            viewModel.setSeriesSortOrder("RECENT")
+        }
     }
 
     // Para o player ao abrir tela de detalhes (filme/série) — o usuário saiu do Live TV
@@ -175,15 +183,7 @@ fun MainScreen(
         }
     } else if (isInitializing) {
         AnimatedSplashScreen()
-    } else if (playingChannel != null && playingChannel!!.category != "LIVE_TV") {
-        // Para filmes/séries, substitui a tela inteira
-        VideoPlayerScreen(
-            channel = playingChannel!!,
-            onBack = { playingChannel = null },
-            onPlayNext = { nextChannel ->
-                playingChannel = nextChannel
-            }
-        )
+
     } else if (showPlaylistSelectionDashboard) {
         if (isServerSwapOpen && playlists.size > 1) {
             // Tela de perfis estilo Netflix — trocar entre servidores (só com 2+ servidores)
@@ -364,8 +364,8 @@ fun MainScreen(
             }
         }
 
-        // Live TV fullscreen: overlay sobre o conteúdo para não destruir o LiveTvScreen
-        if (playingChannel != null && playingChannel!!.category == "LIVE_TV") {
+        // Player de vídeo: overlay sobre o conteúdo para não destruir as tabs por baixo e evitar recarregamentos pesados
+        if (playingChannel != null) {
             VideoPlayerScreen(
                 channel = playingChannel!!,
                 onBack = { playingChannel = null },

@@ -39,7 +39,7 @@ object AppModule {
             app,
             AppDatabase::class.java,
             "cinex_database"
-        ).addMigrations(MIGRATION_11_12)
+        ).addMigrations(MIGRATION_11_12, AppDatabase.MIGRATION_12_13)
          .fallbackToDestructiveMigration()
          .build()
     }

@@ -250,10 +250,9 @@ fun TopNavigationBar(
                             fontSize = 12.sp
                         )
                     }
-                    // Debounce: propaga a query pro ViewModel após 300ms de inatividade
+                    // Propaga imediatamente — o debounce de 400ms fica só no ViewModel
                     LaunchedEffect(localQuery) {
                         if (localQuery != searchQuery) {
-                            delay(300)
                             onSearchChange(localQuery)
                         }
                     }

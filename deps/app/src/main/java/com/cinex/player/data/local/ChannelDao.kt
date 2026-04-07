@@ -16,6 +16,54 @@ interface ChannelDao {
     @Query("SELECT * FROM channels WHERE category = :category AND playlistUrl = :url ORDER BY orderIndex ASC")
     fun getChannelsByCategory(category: String, url: String): PagingSource<Int, Channel>
 
+    @Query("""
+        SELECT * FROM channels WHERE category = 'MOVIE' AND playlistUrl = :url
+        AND (:categoryId = 'Tudo' OR categoryId = :categoryId)
+        ORDER BY
+            CASE WHEN :sort = 'AZ'     THEN LOWER(COALESCE(name, '')) END ASC,
+            CASE WHEN :sort = 'ZA'     THEN LOWER(COALESCE(name, '')) END DESC,
+            CASE WHEN :sort = 'RATING' THEN CAST(COALESCE(tmdbRating, 0) AS REAL) END DESC,
+            CASE WHEN :sort = 'RECENT' THEN syncedAt END DESC,
+            CASE WHEN :sort = 'RECENT' THEN CAST(SUBSTR(remoteId, INSTR(remoteId, '_') + 1) AS INTEGER) END DESC,
+            CASE WHEN :sort = 'RECENT' THEN orderIndex END DESC,
+            orderIndex ASC
+    """)
+    fun getMoviesPaged(url: String, categoryId: String, sort: String): PagingSource<Int, Channel>
+
+    @Query("""
+        SELECT * FROM channels WHERE isFavorite = 1 AND category = 'MOVIE' AND playlistUrl = :url
+        ORDER BY
+            CASE WHEN :sort = 'AZ'     THEN LOWER(COALESCE(name, '')) END ASC,
+            CASE WHEN :sort = 'ZA'     THEN LOWER(COALESCE(name, '')) END DESC,
+            CASE WHEN :sort = 'RATING' THEN CAST(COALESCE(tmdbRating, 0) AS REAL) END DESC,
+            orderIndex ASC
+    """)
+    fun getMoviesFavoritesPaged(url: String, sort: String): PagingSource<Int, Channel>
+
+    @Query("""
+        SELECT * FROM channels WHERE category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url
+        AND (:categoryId = 'Tudo' OR categoryId = :categoryId)
+        ORDER BY
+            CASE WHEN :sort = 'AZ'     THEN LOWER(COALESCE(seriesName, name, '')) END ASC,
+            CASE WHEN :sort = 'ZA'     THEN LOWER(COALESCE(seriesName, name, '')) END DESC,
+            CASE WHEN :sort = 'RATING' THEN CAST(COALESCE(tmdbRating, 0) AS REAL) END DESC,
+            CASE WHEN :sort = 'RECENT' THEN syncedAt END DESC,
+            CASE WHEN :sort = 'RECENT' THEN CAST(SUBSTR(remoteId, INSTR(remoteId, '_') + 1) AS INTEGER) END DESC,
+            CASE WHEN :sort = 'RECENT' THEN orderIndex END DESC,
+            orderIndex ASC
+    """)
+    fun getSeriesPaged(url: String, categoryId: String, sort: String): PagingSource<Int, Channel>
+
+    @Query("""
+        SELECT * FROM channels WHERE isFavorite = 1 AND category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url
+        ORDER BY
+            CASE WHEN :sort = 'AZ'     THEN LOWER(COALESCE(seriesName, name, '')) END ASC,
+            CASE WHEN :sort = 'ZA'     THEN LOWER(COALESCE(seriesName, name, '')) END DESC,
+            CASE WHEN :sort = 'RATING' THEN CAST(COALESCE(tmdbRating, 0) AS REAL) END DESC,
+            orderIndex ASC
+    """)
+    fun getSeriesFavoritesPaged(url: String, sort: String): PagingSource<Int, Channel>
+
     @Query("SELECT * FROM channels WHERE category = :category AND playlistUrl = :url")
     suspend fun getChannelsByCategoryList(category: String, url: String): List<Channel>
 
@@ -95,8 +143,7 @@ interface ChannelDao {
         SELECT * FROM channels
         WHERE playlistUrl = :url
         AND seasonNumber IS NULL
-        AND REPLACE(REPLACE(REPLACE(REPLACE(LOWER(COALESCE(seriesName, name)), '-', ' '), '.', ' '), '_', ' '), ':', ' ')
-            LIKE '%' || REPLACE(REPLACE(REPLACE(REPLACE(LOWER(:query), '-', ' '), '.', ' '), '_', ' '), ':', ' ') || '%'
+        AND LOWER(COALESCE(seriesName, name)) LIKE '%' || LOWER(:query) || '%'
         ORDER BY orderIndex ASC
     """)
     fun searchChannels(query: String, url: String): PagingSource<Int, Channel>
@@ -199,6 +246,19 @@ interface ChannelDao {
 
     @Query("DELETE FROM channels WHERE playlistUrl = :url AND remoteId IN (:remoteIds)")
     suspend fun deleteMultipleByRemoteId(url: String, remoteIds: List<String>)
+
+    @Query("""
+        UPDATE channels SET
+            name = :name,
+            groupTitle = :groupTitle,
+            streamUrl = :streamUrl,
+            categoryId = :categoryId
+        WHERE playlistUrl = :playlistUrl AND remoteId = :remoteId
+    """)
+    suspend fun updateVolatileFields(
+        playlistUrl: String, remoteId: String,
+        name: String, groupTitle: String, streamUrl: String, categoryId: String
+    )
     
     @Query("SELECT * FROM channels WHERE playlistUrl = :url")
     suspend fun getAllByPlaylist(url: String): List<Channel>

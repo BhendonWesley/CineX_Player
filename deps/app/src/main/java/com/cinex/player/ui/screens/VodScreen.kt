@@ -9,6 +9,7 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Icon
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.rememberScrollState
@@ -142,6 +143,14 @@ fun VodScreen(
         else     -> "Tudo"
     }
 
+    val movieSortOrder  by viewModel.movieSortOrder.collectAsState()
+    val seriesSortOrder by viewModel.seriesSortOrder.collectAsState()
+    val currentSort = when (type) {
+        "MOVIE"  -> movieSortOrder
+        "SERIES" -> seriesSortOrder
+        else     -> "RECENT"
+    }
+
     val context = LocalContext.current
     val isTv = remember {
         val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
@@ -149,16 +158,29 @@ fun VodScreen(
     }
 
     // TV: usa cache em memória para troca instantânea de categoria
-    val tvChannels by (when {
+    val tvChannelsRaw by (when {
         isTv && channels == null && type == "MOVIE" -> viewModel.moviesByCategory
         isTv && channels == null && type == "SERIES" -> viewModel.seriesByCategory
         else -> kotlinx.coroutines.flow.MutableStateFlow(emptyList())
     }).collectAsState()
 
+    // Aplica ordenação na lista em memória (instantâneo, <1ms para 500 itens)
+    val tvChannels = remember(tvChannelsRaw, currentSort) {
+        when (currentSort) {
+            "AZ"     -> tvChannelsRaw.sortedBy { it.name.lowercase() }
+            "ZA"     -> tvChannelsRaw.sortedByDescending { it.name.lowercase() }
+            "RATING" -> tvChannelsRaw.sortedByDescending { it.tmdbRating ?: 0.0 }
+            "RECENT" -> tvChannelsRaw.sortedWith(compareByDescending<Channel> { it.syncedAt }
+                .thenByDescending { it.remoteId.replace(Regex("[^0-9]"), "").toIntOrNull() ?: 0 }
+                .thenByDescending { it.orderIndex })
+            else     -> tvChannelsRaw.sortedBy { it.orderIndex }
+        }
+    }
+
     val useTvMemory = isTv && channels == null
 
     // Paging: sempre coletado (regra do Compose), mas só usado no mobile
-    val pagingFlow = remember(selectedCategory, type) {
+    val pagingFlow = remember(selectedCategory, type, currentSort) {
         channels ?: if (type == "MOVIE") viewModel.getPagedMoviesByCategory(selectedCategory)
         else viewModel.getPagedSeriesByCategory(selectedCategory)
     }
@@ -357,8 +379,54 @@ fun VodScreen(
         }
 
         // ── GRID DE CONTEÚDO ──────────────────────────────────────
+        Column(modifier = Modifier.weight(1f)) {
+            // Chips de ordenação (ocultos em busca e Continuar Assistindo)
+            if (type != "SEARCH" && selectedCategory != "Continuar Assistindo") {
+                val sortOptions = listOf(
+                    "RECENT" to "Recentes",
+                    "AZ"     to "A-Z",
+                    "ZA"     to "Z-A",
+                    "RATING" to "Avaliacao"
+                )
+                androidx.compose.foundation.lazy.LazyRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    items(sortOptions.size) { idx ->
+                        val (key, label) = sortOptions[idx]
+                        val isSelected = currentSort == key
+                        if (idx > 0) Spacer(Modifier.width(6.dp))
+                        androidx.compose.foundation.layout.Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(if (isSelected) AccentGold else Color.White.copy(alpha = 0.08f))
+                                .clickable {
+                                    if (type == "MOVIE") viewModel.setMovieSortOrder(key)
+                                    else viewModel.setSeriesSortOrder(key)
+                                }
+                                .padding(horizontal = 10.dp, vertical = 4.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (isSelected) Color.Black else Color.White.copy(alpha = 0.7f),
+                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
+            }
         Box(modifier = Modifier.weight(1f)) {
-            if (itemCount == 0 && type != "SEARCH") {
+            val isReallyEmpty = if (useTvMemory) {
+                tvChannels.isEmpty()
+            } else {
+                itemCount == 0 && pagingItems.loadState.refresh is androidx.paging.LoadState.NotLoading
+            }
+
+            if (isReallyEmpty && type != "SEARCH") {
                 // Empty state (não para busca — deixa transparente para o grid aparecer por baixo)
                 Box(
                     modifier = Modifier.fillMaxSize(),
@@ -387,7 +455,12 @@ fun VodScreen(
                     }
                 }
             }
+            val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+            LaunchedEffect(currentSort) {
+                gridState.scrollToItem(0)
+            }
             LazyVerticalGrid(
+                state = gridState,
                 columns = GridCells.Fixed(4),
                 modifier = Modifier
                     .fillMaxSize()
@@ -425,8 +498,12 @@ fun VodScreen(
                         key = pagingItems.itemKey { it.id }
                     ) { index ->
                         pagingItems[index]?.let { channel ->
-                            LaunchedEffect(channel.id) {
-                                viewModel.onChannelVisible(channel)
+                            // Não enriquece durante busca para evitar writes no DB
+                            // que invalidariam o PagingSource e quebrariam o scroll
+                            if (type != "SEARCH") {
+                                LaunchedEffect(channel.id) {
+                                    viewModel.onChannelVisible(channel)
+                                }
                             }
                             VodPosterItem(
                                 channel = channel,
@@ -443,7 +520,8 @@ fun VodScreen(
                     }
                 }
             }
-        }
+        } // fecha Box interno do grid
+        } // fecha Column do grid
         } // fecha Row
 
         // Dialog de controle parental

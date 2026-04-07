@@ -43,5 +43,6 @@ data class Channel(
     val remoteId: String = "",             // ID Único do Servidor (stream_id no Xtream, Hash no M3U)
     val trailerUrl: String? = null,        // URL do trailer (ex: YouTube)
     val posterUrl: String? = null,         // Poster de alta qualidade do TMDB
-    val tvgId: String? = null              // ID para mapeamento de EPG (tvg-id no M3U)
+    val tvgId: String? = null,             // ID para mapeamento de EPG (tvg-id no M3U)
+    val syncedAt: Long = 0L               // Timestamp de quando foi adicionado via delta sync (0 = conteúdo original)
 )

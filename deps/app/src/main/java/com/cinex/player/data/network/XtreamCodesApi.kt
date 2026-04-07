@@ -166,7 +166,8 @@ data class VodStreamItem(
     val stream_icon: String? = null,
     val rating: String? = null,
     val category_id: String,
-    val container_extension: String? = "mp4"
+    val container_extension: String? = "mp4",
+    val added: String? = null
 )
 
 data class SeriesItem(
@@ -177,5 +178,6 @@ data class SeriesItem(
     val plot: String? = null,
     val cast: String? = null,
     val rating: String? = null,
-    val category_id: String
+    val category_id: String,
+    val last_modified: String? = null
 )

@@ -445,21 +445,30 @@ class MainViewModel @Inject constructor(
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    fun getPagedMoviesByCategory(group: String): Flow<PagingData<Channel>> =
-        movieFlowCache.getOrPut(group) {
-            if (movieFlowCache.size >= MAX_CACHE_SIZE) {
-                movieFlowCache.remove(movieFlowCache.keys.first())
-            }
-            repository.getPagedMoviesByCategory(group).cachedIn(viewModelScope)
-        }
+    private val _movieSortOrder = MutableStateFlow("RECENT")
+    val movieSortOrder = _movieSortOrder.asStateFlow()
 
-    fun getPagedSeriesByCategory(group: String): Flow<PagingData<Channel>> =
-        seriesFlowCache.getOrPut(group) {
-            if (seriesFlowCache.size >= MAX_CACHE_SIZE) {
-                seriesFlowCache.remove(seriesFlowCache.keys.first())
-            }
-            repository.getPagedSeriesByCategory(group).cachedIn(viewModelScope)
-        }
+    private val _seriesSortOrder = MutableStateFlow("RECENT")
+    val seriesSortOrder = _seriesSortOrder.asStateFlow()
+
+    fun setMovieSortOrder(sort: String) {
+        _movieSortOrder.value = sort
+    }
+
+    fun setSeriesSortOrder(sort: String) {
+        _seriesSortOrder.value = sort
+    }
+
+    fun getPagedMoviesByCategory(group: String): Flow<PagingData<Channel>> {
+        val sort = _movieSortOrder.value
+        // Não usa cache por sort — sempre cria flow fresco para garantir ordem correta
+        return repository.getPagedMoviesByCategory(group, sort).cachedIn(viewModelScope)
+    }
+
+    fun getPagedSeriesByCategory(group: String): Flow<PagingData<Channel>> {
+        val sort = _seriesSortOrder.value
+        return repository.getPagedSeriesByCategory(group, sort).cachedIn(viewModelScope)
+    }
 
     fun clearPagingCaches() {
         movieFlowCache.clear()
@@ -1005,7 +1014,7 @@ class MainViewModel @Inject constructor(
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     val searchResults: Flow<PagingData<Channel>> = _searchQuery
-        .debounce(500)
+        .debounce(400)
         .flatMapLatest { query ->
             if (query.isEmpty()) flowOf(PagingData.empty())
             else repository.searchChannels(query)

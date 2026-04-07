@@ -1346,6 +1346,7 @@ fun PlayerDialog(
     }
 
     LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(100)
         try { confirmRequester.requestFocus() } catch (_: Exception) {}
     }
 
@@ -1491,6 +1492,7 @@ fun PlaybackErrorOverlay(
     val gradientBrush = remember { Brush.linearGradient(listOf(Color(0xFFE11D2E), Color(0xFFF59E0B))) }
 
     LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(100)
         try { retryRequester.requestFocus() } catch (_: Exception) {}
     }
 

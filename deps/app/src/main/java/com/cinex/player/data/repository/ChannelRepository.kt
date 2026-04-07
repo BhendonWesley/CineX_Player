@@ -26,6 +26,8 @@ import androidx.paging.PagingData
 import androidx.paging.cachedIn
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.atomic.AtomicInteger
@@ -198,9 +200,9 @@ class ChannelRepository @Inject constructor(
 
     fun searchChannels(query: String): Flow<PagingData<Channel>> {
         val url = _activePlaylistUrl.value ?: return flowOf(PagingData.empty())
-        return Pager(PagingConfig(pageSize = 20, initialLoadSize = 20, enablePlaceholders = false)) {
+        return Pager(PagingConfig(pageSize = 30, initialLoadSize = 30, enablePlaceholders = false)) {
             channelDao.searchChannels(query, url)
-        }.flow.cachedIn(repositoryScope)
+        }.flow
     }
 
     fun getPagedChannelsByCategory(categoryId: String): Flow<PagingData<Channel>> {
@@ -221,29 +223,27 @@ class ChannelRepository @Inject constructor(
         }
     }
 
-    fun getPagedMoviesByCategory(categoryId: String): Flow<PagingData<Channel>> {
+    fun getPagedMoviesByCategory(categoryId: String, sort: String = "RECENT"): Flow<PagingData<Channel>> {
         return _activePlaylistUrl.flatMapLatest { url ->
             if (url == null) flowOf(PagingData.empty())
             else Pager(PagingConfig(pageSize = 50, initialLoadSize = 50, prefetchDistance = 10)) {
                 when (categoryId) {
-                    "Tudo" -> channelDao.getChannelsByCategory("MOVIE", url)
-                    "Favorito", "Favoritos" -> channelDao.getFavoritesPaged("MOVIE", url)
+                    "Favorito", "Favoritos" -> channelDao.getMoviesFavoritesPaged(url, sort)
                     "Continuar Assistindo" -> channelDao.getContinueWatchingPaged("MOVIE", url)
-                    else -> channelDao.getChannelsByCategoryIdPaged(categoryId, url)
+                    else -> channelDao.getMoviesPaged(url, categoryId, sort)
                 }
             }.flow
         }
     }
 
-    fun getPagedSeriesByCategory(categoryId: String): Flow<PagingData<Channel>> {
+    fun getPagedSeriesByCategory(categoryId: String, sort: String = "RECENT"): Flow<PagingData<Channel>> {
         return _activePlaylistUrl.flatMapLatest { url ->
             if (url == null) flowOf(PagingData.empty())
             else Pager(PagingConfig(pageSize = 50, initialLoadSize = 50, prefetchDistance = 10)) {
                 when (categoryId) {
-                    "Tudo" -> channelDao.getUniqueSeries(url)
-                    "Favorito", "Favoritos" -> channelDao.getFavoriteSeriesPaged(url)
+                    "Favorito", "Favoritos" -> channelDao.getSeriesFavoritesPaged(url, sort)
                     "Continuar Assistindo" -> channelDao.getContinueWatchingPaged("SERIES", url)
-                    else -> channelDao.getUniqueSeriesByCategoryId(categoryId, url)
+                    else -> channelDao.getSeriesPaged(url, categoryId, sort)
                 }
             }.flow
         }
@@ -525,6 +525,7 @@ class ChannelRepository @Inject constructor(
             // Comparar com o banco local
             val existingIds = channelDao.getAllRemoteIds(url).toSet()
             val newIds = newChannels.map { it.remoteId }.toSet()
+            val newChannelsByRemoteId = newChannels.associateBy { it.remoteId }
 
             // Proteção: se o servidor retornou menos de 50% dos canais existentes,
             // provavelmente foi uma resposta parcial/erro — NÃO deletar nada
@@ -545,26 +546,6 @@ class ChannelRepository @Inject constructor(
                     channelDao.insertAll(chunk)
                 }
 
-                // Atualizar categorias (pode ter novas categorias)
-                val newCategoriesByGroup = channelsToInsert.groupBy { it.groupTitle }
-                val existingCategories = categoryDao.getAllByPlaylist(url).map { it.id }.toSet()
-                val newCategories = newCategoriesByGroup.entries
-                    .filter { it.key !in existingCategories }
-                    .mapIndexed { index, (catName, channels) ->
-                        val type = channels.groupBy { it.category }
-                            .maxByOrNull { it.value.size }?.key ?: "LIVE_TV"
-                        com.cinex.player.data.model.Category(
-                            id = catName,
-                            name = catName,
-                            type = type,
-                            playlistUrl = url,
-                            orderIndex = 1000 + index
-                        )
-                    }
-                if (newCategories.isNotEmpty()) {
-                    categoryDao.insertAll(newCategories)
-                }
-
                 // Enriquecer novos canais com TMDB em background
                 repositoryScope.launch {
                     val moviesToEnrich = channelsToInsert.filter { it.category == "MOVIE" }
@@ -580,6 +561,49 @@ class ChannelRepository @Inject constructor(
                         delay(200)
                     }
                 }
+            }
+
+            // Atualizar canais existentes que mudaram (nome, grupo, URL — ex: "Jogos do Dia" muda todo dia)
+            val existingChannels = channelDao.getAllByPlaylist(url)
+                .filter { it.remoteId in existingIds && it.remoteId in newIds }
+            existingChannels.chunked(200).forEach { chunk ->
+                chunk.forEach { existing ->
+                    val fresh = newChannelsByRemoteId[existing.remoteId] ?: return@forEach
+                    if (existing.name != fresh.name ||
+                        existing.groupTitle != fresh.groupTitle ||
+                        existing.streamUrl != fresh.streamUrl ||
+                        existing.categoryId != fresh.categoryId
+                    ) {
+                        channelDao.updateVolatileFields(
+                            playlistUrl = url,
+                            remoteId = existing.remoteId,
+                            name = fresh.name,
+                            groupTitle = fresh.groupTitle,
+                            streamUrl = fresh.streamUrl,
+                            categoryId = fresh.categoryId
+                        )
+                    }
+                }
+            }
+
+            // Sincronizar categorias com a lista atual do servidor
+            val allCurrentGroups = newChannels.groupBy { it.groupTitle }
+            val existingCategories = categoryDao.getAllByPlaylist(url).map { it.id }.toSet()
+            val newCategories = allCurrentGroups.entries
+                .filter { it.key !in existingCategories }
+                .mapIndexed { index, (catName, channels) ->
+                    val type = channels.groupBy { it.category }
+                        .maxByOrNull { it.value.size }?.key ?: "LIVE_TV"
+                    com.cinex.player.data.model.Category(
+                        id = catName,
+                        name = catName,
+                        type = type,
+                        playlistUrl = url,
+                        orderIndex = 1000 + index
+                    )
+                }
+            if (newCategories.isNotEmpty()) {
+                categoryDao.insertAll(newCategories)
             }
 
             // Atualizar timestamp do último sync
@@ -647,7 +671,8 @@ class ChannelRepository @Inject constructor(
                     category = "MOVIE",
                     playlistUrl = playlistUrl,
                     orderIndex = index,
-                    remoteId = "vod_${m.stream_id}"
+                    remoteId = "vod_${m.stream_id}",
+                    syncedAt = m.added?.toLongOrNull() ?: 0L
                 ))
             }
 
@@ -662,7 +687,8 @@ class ChannelRepository @Inject constructor(
                     seriesName = s.name,
                     playlistUrl = playlistUrl,
                     orderIndex = index,
-                    remoteId = "series_${s.series_id}"
+                    remoteId = "series_${s.series_id}",
+                    syncedAt = s.last_modified?.toLongOrNull() ?: 0L
                 ))
             }
 
@@ -937,7 +963,17 @@ class ChannelRepository @Inject constructor(
                     bannerUrl = old?.bannerUrl,
                     tmdbYear = old?.tmdbYear,
                     castMembers = old?.castMembers,
-                    trailerUrl = old?.trailerUrl
+                    trailerUrl = old?.trailerUrl,
+                    syncedAt = kotlin.run {
+                        val addedStr = m.added
+                        if (addedStr.isNullOrEmpty()) return@run 0L
+                        val asLong = addedStr.toLongOrNull()
+                        if (asLong != null) return@run asLong
+                        try {
+                            val format = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+                            format.parse(addedStr)?.time?.div(1000) ?: 0L
+                        } catch (e: Exception) { 0L }
+                    }
                 )
             }
             if (movieStreams.isNotEmpty()) {
@@ -986,7 +1022,17 @@ class ChannelRepository @Inject constructor(
                     bannerUrl = old?.bannerUrl,
                     tmdbYear = old?.tmdbYear,
                     castMembers = old?.castMembers ?: s.cast,
-                    trailerUrl = old?.trailerUrl
+                    trailerUrl = old?.trailerUrl,
+                    syncedAt = kotlin.run {
+                        val addedStr = s.last_modified
+                        if (addedStr.isNullOrEmpty()) return@run 0L
+                        val asLong = addedStr.toLongOrNull()
+                        if (asLong != null) return@run asLong
+                        try {
+                            val format = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US)
+                            format.parse(addedStr)?.time?.div(1000) ?: 0L
+                        } catch (e: Exception) { 0L }
+                    }
                 )
             }
             if (seriesStreams.isNotEmpty()) {
@@ -1087,7 +1133,7 @@ class ChannelRepository @Inject constructor(
                 .filter { it.category != "LIVE_TV" }
                 .map { generateCacheKey(it) }
                 .distinct()
-                .filter { it !in tmdbMemoryCache }
+                .filter { !tmdbMemoryCache.containsKey(it) }
                 .take(100)
 
             if (keysToFetch.isEmpty()) return
@@ -1167,10 +1213,7 @@ class ChannelRepository @Inject constructor(
             val body = org.json.JSONObject().put("entries", entries).toString()
             val request = Request.Builder()
                 .url("$PANEL_BASE_URL/api/tmdb-cache")
-                .post(okhttp3.RequestBody.create(
-                    okhttp3.MediaType.parse("application/json"),
-                    body
-                ))
+                .post(body.toRequestBody("application/json".toMediaType()))
                 .build()
 
             okHttpClient.newCall(request).execute().close()

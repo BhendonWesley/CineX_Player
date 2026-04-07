@@ -64,6 +64,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import coil.compose.AsyncImage
 
 private val LiveGold = Color(0xFFD8A63A)
 
@@ -388,15 +389,9 @@ fun LiveTvScreen(
                                     if (isSelected) onChannelExpand(channel)
                                     else viewModel.updateSelectedChannel(channel)
                                 }
-                                .padding(horizontal = 16.dp, vertical = 12.dp)
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
                         ) {
-                            Text(
-                                text = "${index + 1}   ${channel.name}",
-                                color = if (isSelected) Color(0xFFE50914) else Color.White,
-                                fontSize = 14.sp,
-                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                maxLines = 1
-                            )
+                            ChannelListRow(index = index, channel = channel, isSelected = isSelected)
                         }
                     }
                 } else {
@@ -432,15 +427,9 @@ fun LiveTvScreen(
                                         if (isSelected) onChannelExpand(channel)
                                         else viewModel.updateSelectedChannel(channel)
                                     }
-                                    .padding(horizontal = 16.dp, vertical = 12.dp)
+                                    .padding(horizontal = 16.dp, vertical = 8.dp)
                             ) {
-                                Text(
-                                    text = "${index + 1}   ${channel.name}",
-                                    color = if (isSelected) Color(0xFFE50914) else Color.White,
-                                    fontSize = 14.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    maxLines = 1
-                                )
+                                ChannelListRow(index = index, channel = channel, isSelected = isSelected)
                             }
                         }
                     }
@@ -912,4 +901,46 @@ fun String.decodeBase64IfNeeded(): String {
 // Formata horários do EPG Xtream
 fun formatEpgTime(epg: com.cinex.player.data.network.EpgListing, is24Hour: Boolean): String {
     return com.cinex.player.utils.EpgTimeHelper.formatEpgRange(epg, is24Hour)
+}
+
+@Composable
+private fun ChannelListRow(index: Int, channel: Channel, isSelected: Boolean) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        // Número do canal
+        Text(
+            text = "${index + 1}",
+            color = if (isSelected) Color(0xFFE50914) else Color.White.copy(alpha = 0.4f),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Normal,
+            modifier = Modifier.width(28.dp)
+        )
+        // Logo do canal
+        val hasLogo = !channel.logoUrl.isNullOrBlank()
+        AsyncImage(
+            model = coil.request.ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
+                .data(if (hasLogo) channel.logoUrl else com.cinex.player.R.drawable.logo_cinex)
+                .crossfade(true)
+                .build(),
+            contentDescription = null,
+            modifier = Modifier
+                .size(28.dp)
+                .clip(androidx.compose.foundation.shape.RoundedCornerShape(4.dp)),
+            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+            placeholder = androidx.compose.ui.res.painterResource(id = com.cinex.player.R.drawable.logo_cinex),
+            error = androidx.compose.ui.res.painterResource(id = com.cinex.player.R.drawable.logo_cinex)
+        )
+        Spacer(Modifier.width(8.dp))
+        // Nome do canal
+        Text(
+            text = channel.name,
+            color = if (isSelected) Color(0xFFE50914) else Color.White,
+            fontSize = 14.sp,
+            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+        )
+    }
 }
