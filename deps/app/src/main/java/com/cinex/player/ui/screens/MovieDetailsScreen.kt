@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.cinex.player.data.model.Channel
 import com.cinex.player.ui.theme.DarkBackground
 
@@ -63,8 +64,14 @@ fun MovieDetailsScreen(
     ) {
 
         // Backdrop com gradientes cinematográficos
+        // Otimização: .size(1280, 720) evita decodificar imagens 4K em memória
         AsyncImage(
-            model = movie.bannerUrl ?: movie.logoUrl,
+            model = ImageRequest.Builder(LocalContext.current)
+                .data(movie.bannerUrl ?: movie.logoUrl)
+                .size(1280, 720)  // Full HD é suficiente para backdrop
+                .diskCacheKey(movie.bannerUrl ?: movie.logoUrl)
+                .memoryCacheKey(movie.bannerUrl ?: movie.logoUrl)
+                .build(),
             contentDescription = null,
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop,
@@ -109,8 +116,14 @@ fun MovieDetailsScreen(
                         .padding(horizontal = 60.dp, vertical = 16.dp),
                     verticalAlignment = Alignment.Top
                 ) {
+                    // Poster com redimensionamento otimizado
                     AsyncImage(
-                        model = movie.posterUrl?.takeIf { it.isNotEmpty() } ?: movie.logoUrl,
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(movie.posterUrl?.takeIf { it.isNotEmpty() } ?: movie.logoUrl)
+                            .size(320, 480)  // 2/3 aspect ratio, suficiente para 160dp
+                            .diskCacheKey(movie.posterUrl)
+                            .memoryCacheKey(movie.posterUrl)
+                            .build(),
                         contentDescription = null,
                         modifier = Modifier
                             .width(160.dp)

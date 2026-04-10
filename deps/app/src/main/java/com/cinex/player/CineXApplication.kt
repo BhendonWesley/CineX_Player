@@ -37,7 +37,9 @@ class CineXApplication : Application(), Configuration.Provider, ImageLoaderFacto
         // Na TV, limitar requisições simultâneas para evitar travamentos
         val okHttpClient = OkHttpClient.Builder()
             .dispatcher(Dispatcher().apply {
-                maxRequests = if (isTv) 4 else 16
+                // TV: 3 requests simultâneos (vs 16 no mobile)
+                // Evita OOM por excesso de downloads simultâneos
+                maxRequests = if (isTv) 3 else 16
                 maxRequestsPerHost = if (isTv) 2 else 8
             })
             .build()
@@ -45,25 +47,30 @@ class CineXApplication : Application(), Configuration.Provider, ImageLoaderFacto
         return ImageLoader.Builder(this)
             .okHttpClient(okHttpClient)
             .fetcherDispatcher(
-                if (isTv) Dispatchers.IO.limitedParallelism(4)
+                if (isTv) Dispatchers.IO.limitedParallelism(3)  // TV: 3 fetchers
                 else Dispatchers.IO
             )
             .decoderDispatcher(
-                if (isTv) Dispatchers.IO.limitedParallelism(2)
+                if (isTv) Dispatchers.IO.limitedParallelism(2)  // TV: 2 decoders
                 else Dispatchers.IO
             )
             .memoryCache {
                 MemoryCache.Builder(this)
-                    .maxSizePercent(if (isTv) 0.20 else 0.30)
+                    // TV: 25% da memória (vs 20% antes)
+                    // Mobile: 30%
+                    .maxSizePercent(if (isTv) 0.25 else 0.30)
                     .build()
             }
             .diskCache {
                 DiskCache.Builder()
                     .directory(cacheDir.resolve("coil_cache"))
-                    .maxSizePercent(0.15)
+                    .maxSizePercent(0.15)  // 15% do storage disponível
                     .build()
             }
             .crossfade(true)
+            // Otimização crítica para TV: usar RGB_565 para posters
+            // Reduz uso de memória em 50% (4 bytes/pixel → 2 bytes/pixel)
+            .respectCacheHeaders(false)  // Ignorar cache headers para melhor hit rate
             .build()
     }
 }

@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import com.cinex.player.data.model.Channel
 import androidx.paging.PagingSource
 import kotlinx.coroutines.flow.Flow
@@ -12,6 +13,12 @@ import kotlinx.coroutines.flow.Flow
 interface ChannelDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(channels: List<Channel>)
+
+    /** Insere todos os canais em uma única transação — muito mais rápido que múltiplas transações */
+    @Transaction
+    suspend fun insertAllInTransaction(channels: List<Channel>) {
+        channels.chunked(500).forEach { chunk -> insertAll(chunk) }
+    }
 
     @Query("SELECT * FROM channels WHERE category = :category AND playlistUrl = :url ORDER BY orderIndex ASC")
     fun getChannelsByCategory(category: String, url: String): PagingSource<Int, Channel>
@@ -84,6 +91,9 @@ interface ChannelDao {
 
     @Query("SELECT * FROM channels WHERE categoryId = :categoryId AND playlistUrl = :url ORDER BY orderIndex ASC")
     fun getChannelsByCategoryIdPaged(categoryId: String, url: String): PagingSource<Int, Channel>
+
+    @Query("SELECT * FROM channels WHERE category = 'LIVE_TV' AND categoryId = :categoryId AND playlistUrl = :url ORDER BY orderIndex ASC")
+    fun getLiveChannelsByCategoryIdPaged(categoryId: String, url: String): PagingSource<Int, Channel>
 
     // Para UI de Grid de Séries: usa seasonNumber IS NULL para garantir que só a linha-pai da série aparece (nunca episódios)
     @Query("SELECT * FROM channels WHERE category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url ORDER BY orderIndex ASC")
@@ -232,6 +242,9 @@ interface ChannelDao {
     @Query("DELETE FROM channels WHERE playlistUrl = :url")
     suspend fun clearByPlaylist(url: String)
 
+    @Query("SELECT COUNT(*) FROM channels WHERE category = :type AND playlistUrl = :url")
+    suspend fun countByType(type: String, url: String): Int
+
     @Query("SELECT EXISTS(SELECT 1 FROM channels WHERE playlistUrl = :url LIMIT 1)")
     suspend fun hasChannels(url: String): Boolean
 
@@ -262,6 +275,18 @@ interface ChannelDao {
     
     @Query("SELECT * FROM channels WHERE playlistUrl = :url")
     suspend fun getAllByPlaylist(url: String): List<Channel>
+
+    @Query("""
+        UPDATE channels
+        SET categoryId = CASE
+            WHEN category = 'LIVE_TV' AND categoryId GLOB '[0-9]*' AND categoryId NOT LIKE 'live_%' THEN 'live_' || categoryId
+            WHEN category = 'MOVIE' AND categoryId GLOB '[0-9]*' AND categoryId NOT LIKE 'vod_%' THEN 'vod_' || categoryId
+            WHEN category = 'SERIES' AND categoryId GLOB '[0-9]*' AND categoryId NOT LIKE 'series_%' THEN 'series_' || categoryId
+            ELSE categoryId
+        END
+        WHERE playlistUrl = :url
+    """)
+    suspend fun normalizeLegacyCategoryIds(url: String)
 
     @Query("SELECT remoteId, tmdbRating, tmdbSynopsis, posterUrl, bannerUrl, tmdbYear, castMembers, trailerUrl, resumePosition, totalDuration, isFavorite FROM channels WHERE playlistUrl = :url")
     suspend fun getTmdbAndUserDataByPlaylist(url: String): List<ChannelPreserveData>

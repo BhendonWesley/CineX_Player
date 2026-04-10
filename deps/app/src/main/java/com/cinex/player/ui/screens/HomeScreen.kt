@@ -99,11 +99,12 @@ fun HomeScreen(
         }
     }
 
-    // Timeout de segurança: se os banners não carregarem em 8s, mostra a home mesmo assim
-    LaunchedEffect(Unit) {
-        if (!isHomeReady) {
-            delay(8000)
-            if (showInitialLoading) {
+    // Timeout de segurança: dá mais tempo para os banners prioritários chegarem
+    // antes de liberar o fallback visual da Home.
+    LaunchedEffect(isHomeReady, validMovies.size) {
+        if (!isHomeReady && validMovies.isEmpty()) {
+            delay(12000)
+            if (showInitialLoading && validMovies.isEmpty()) {
                 isFirstBannerReady = true
                 showInitialLoading = false
                 onHomeReady()
@@ -120,7 +121,9 @@ fun HomeScreen(
 
         if (validMovies.isNotEmpty()) {
             // Pré-carrega os primeiros banners em paralelo (não sequencial)
+            // Otimização: .size(1280, 720) + cache keys para hit rate máximo
             val bannersToPreload = validMovies.take(3).mapNotNull { it.bannerUrl }
+            android.util.Log.d("CineX-Home", "Preloading ${bannersToPreload.size} banners...")
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 kotlinx.coroutines.coroutineScope {
                     bannersToPreload.map { url ->
@@ -128,14 +131,19 @@ fun HomeScreen(
                             try {
                                 val request = ImageRequest.Builder(context)
                                     .data(url)
-                                    .size(1280, 720)
+                                    .size(1280, 720)  // Full HD
+                                    .diskCacheKey(url)
+                                    .memoryCacheKey(url)
                                     .build()
                                 context.imageLoader.execute(request)
-                            } catch (_: Exception) {}
+                            } catch (e: Exception) {
+                                android.util.Log.w("CineX-Home", "Banner preload failed: ${e.message}")
+                            }
                         }
                     }.awaitAll()
                 }
             }
+            android.util.Log.d("CineX-Home", "Banners preloaded!")
             isFirstBannerReady = true
             showInitialLoading = false
             onHomeReady()
@@ -257,28 +265,37 @@ private fun HeroBackdrop(
                 val panX = remember { Animatable(-20f) }
                 LaunchedEffect(tabActive) {
                     if (tabActive) {
+                        // Animações são automaticamente canceladas quando o LaunchedEffect é destruído
                         launch {
-                            while (isActive) {
-                                scale.animateTo(1.08f, tween(12000, easing = LinearEasing))
-                                scale.animateTo(1f, tween(12000, easing = LinearEasing))
-                            }
+                            try {
+                                while (isActive) {
+                                    scale.animateTo(1.08f, tween(12000, easing = LinearEasing))
+                                    scale.animateTo(1f, tween(12000, easing = LinearEasing))
+                                }
+                            } catch (_: Exception) {} // Ignora cancellation exception
                         }
                         launch {
-                            while (isActive) {
-                                panX.animateTo(20f, tween(15000, easing = LinearEasing))
-                                panX.animateTo(-20f, tween(15000, easing = LinearEasing))
-                            }
+                            try {
+                                while (isActive) {
+                                    panX.animateTo(20f, tween(15000, easing = LinearEasing))
+                                    panX.animateTo(-20f, tween(15000, easing = LinearEasing))
+                                }
+                            } catch (_: Exception) {} // Ignora cancellation exception
                         }
                     } else {
+                        // Cancela animações imediatamente quando tab sai do foco
                         scale.snapTo(1f)
                         panX.snapTo(0f)
                     }
                 }
 
+                // Otimização: .size(1280, 720) evita decodificar imagens full-size
                 AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
                         .data(currentMovie.bannerUrl)
-                        .crossfade(true)
+                        .size(1280, 720)  // Full HD para backdrops
+                        .diskCacheKey(currentMovie.bannerUrl)
+                        .memoryCacheKey(currentMovie.bannerUrl)
                         .crossfade(800)
                         .build(),
                     contentDescription = null,
@@ -521,7 +538,7 @@ private fun NavigationCardsRow(
     ) {
         NavCard(
             icon = Icons.Default.LiveTv,
-            label = "TV AO VIVO",
+            label = "CANAIS",
             isActive = true,
             onClick = { onNavigate(1) },
             modifier = Modifier.weight(1f)

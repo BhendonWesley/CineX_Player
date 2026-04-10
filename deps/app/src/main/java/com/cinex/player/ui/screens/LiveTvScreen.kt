@@ -239,7 +239,7 @@ fun LiveTvScreen(
                     }
                     Spacer(Modifier.height(16.dp))
                     Text(
-                        text = "Carregando TV ao Vivo...",
+                        text = "Carregando Canais...",
                         color = Color.White.copy(alpha = 0.5f),
                         fontSize = 14.sp
                     )
@@ -334,27 +334,6 @@ fun LiveTvScreen(
             }
             val channelListState = rememberLazyListState()
 
-            // Auto-scroll para o canal selecionado na lista
-            // Nota: channelCount removido das keys — Room re-emite channels ao qualquer escrita
-            // na tabela (episódio, favorito, EPG), o que fazia o scroll voltar ao canal selecionado
-            // enquanto o usuário estava rolando. selectedChannel?.id já cobre o caso de carga inicial
-            // pois a auto-seleção do 1º canal (LaunchedEffect acima) muda o ID e dispara o scroll.
-            LaunchedEffect(selectedChannel?.id) {
-                val targetId = selectedChannel?.id ?: return@LaunchedEffect
-                if (isTv) {
-                    val index = liveChannels.indexOfFirst { it.id == targetId }
-                    if (index >= 0) channelListState.animateScrollToItem(index)
-                } else if (pagingItems != null && pagingItems.itemCount > 0) {
-                    for (i in 0 until pagingItems.itemCount) {
-                        val item = try { pagingItems.peek(i) } catch (_: Exception) { null }
-                        if (item?.id == targetId) {
-                            channelListState.animateScrollToItem(i)
-                            break
-                        }
-                    }
-                }
-            }
-
             LazyColumn(
                 state = channelListState,
                 modifier = Modifier
@@ -369,7 +348,12 @@ fun LiveTvScreen(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .onFocusChanged { isFocused = it.isFocused }
+                                .onFocusChanged {
+                                    isFocused = it.isFocused
+                                    if (it.isFocused && selectedChannel?.id != channel.id) {
+                                        viewModel.updateSelectedChannel(channel)
+                                    }
+                                }
                                 .focusable(interactionSource = remember { MutableInteractionSource() })
                                 .onKeyEvent { event ->
                                     if (event.type == KeyEventType.KeyUp &&

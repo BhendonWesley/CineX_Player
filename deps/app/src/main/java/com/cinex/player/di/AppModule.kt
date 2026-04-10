@@ -72,8 +72,9 @@ object AppModule {
     @Singleton
     fun provideOkHttpClient(): OkHttpClient {
         val builder = OkHttpClient.Builder()
-            .connectTimeout(30, TimeUnit.SECONDS)
-            .readTimeout(120, TimeUnit.SECONDS)
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(60, TimeUnit.SECONDS)
+            .connectionPool(okhttp3.ConnectionPool(10, 5, TimeUnit.MINUTES))
 
         // Em debug, aceita qualquer certificado SSL (resolve emuladores com certs desatualizados)
         if (com.cinex.player.BuildConfig.DEBUG) {

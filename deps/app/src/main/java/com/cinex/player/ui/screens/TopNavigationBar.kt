@@ -60,7 +60,7 @@ fun TopNavigationBar(
     val keyboardController = LocalSoftwareKeyboardController.current
     val allTabs = listOf(
         "INÍCIO"     to 0,
-        "TV AO VIVO" to 1,
+        "CANAIS"     to 1,
         "FILMES"     to 2,
         "SÉRIES"     to 3
     )

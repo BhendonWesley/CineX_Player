@@ -135,7 +135,7 @@ class MainViewModel @Inject constructor(
     val accountInfo = _accountInfo.asStateFlow()
 
     private var liveRetryCount = 0
-    private val maxLiveRetries = 2
+    private val maxLiveRetries = 5  // Aumentado de 2 para 5 (backoff exponencial)
 
     private val _livePlayerError = MutableStateFlow(false)
     val livePlayerError = _livePlayerError.asStateFlow()
@@ -220,23 +220,15 @@ class MainViewModel @Inject constructor(
             if (elapsed < 3000) kotlinx.coroutines.delay(3000 - elapsed)
             _isInitializing.value = false
 
-            // Se a Home não tem banners, enriquece apenas 20 filmes aleatórios (rápido)
+            // Se a Home não tem banners e já tem filmes no banco, enriquece para a Home
             _currentPlaylist.value?.let { pl ->
                 val featured = repository.getFeaturedContent(pl.url).first()
                 if (featured.isEmpty()) {
-                    android.util.Log.d("CineX-Home", "Sem featured content — enriquecendo 20 filmes para a Home...")
-                    repository.enrichRandomForHome(pl.url, 20)
-                    // Depois continua o resto em background silencioso
-                    repository.triggerBackgroundEnrichment(pl.url)
-                }
-            }
-
-            // Delta sync silencioso — atualiza conteúdo sempre que o app abre
-            if (_currentPlaylist.value != null) {
-                val result = repository.syncPlaylistDelta()
-                result.onSuccess { newCount ->
-                    if (newCount > 0) {
-                        _deltaSyncMessage.tryEmit("$newCount novos conteúdos adicionados")
+                    // Tenta enriquecer se já tem conteúdo no banco de sessão anterior
+                    launch {
+                        repository.ensureTypeLoaded("MOVIE")
+                        repository.enrichRandomForHome(pl.url, 20)
+                        repository.triggerBackgroundEnrichment(pl.url)
                     }
                 }
             }
@@ -457,6 +449,29 @@ class MainViewModel @Inject constructor(
 
     fun setSeriesSortOrder(sort: String) {
         _seriesSortOrder.value = sort
+    }
+
+    // === LAZY LOADING POR ABA ===
+    private val _isLoadingType = MutableStateFlow<String?>(null)
+    val isLoadingType = _isLoadingType.asStateFlow()
+
+    /** Carrega conteúdo de um tipo sob demanda (chamado ao navegar para aba) */
+    fun ensureTypeLoaded(type: String) {
+        viewModelScope.launch {
+            _isLoadingType.value = type
+            val result = repository.ensureTypeLoaded(type)
+            result.onSuccess {
+                // Após carregar MOVIE ou SERIES pela primeira vez, enriquecer para Home
+                if (type == "MOVIE" || type == "SERIES") {
+                    _currentPlaylist.value?.let { pl ->
+                        launch { repository.enrichRandomForHome(pl.url, 20) }
+                    }
+                }
+            }.onFailure {
+                _errorMessage.value = "Erro ao carregar conteúdo: ${it.message}"
+            }
+            _isLoadingType.value = null
+        }
     }
 
     fun getPagedMoviesByCategory(group: String): Flow<PagingData<Channel>> {
@@ -965,7 +980,9 @@ class MainViewModel @Inject constructor(
                             // NÃO seta _currentPlaylist aqui — o usuário clica em "ACESSAR PLATAFORMA"
                             fetchRealAccountInfo(url)
                         }.onFailure {
-                            _errorMessage.value = it.message ?: "Erro ao carregar lista M3U"
+                            if (it.message != "Sincronização já em andamento") {
+                                _errorMessage.value = it.message ?: "Erro ao carregar lista M3U"
+                            }
                         }
                     }
                     "xtream" -> {
@@ -991,7 +1008,9 @@ class MainViewModel @Inject constructor(
                             // NÃO seta _currentPlaylist aqui — o usuário clica em "ACESSAR PLATAFORMA"
                             fetchRealAccountInfo(xtreamUrl)
                         }.onFailure {
-                            _errorMessage.value = it.message ?: "Erro ao carregar lista Xtream"
+                            if (it.message != "Sincronização já em andamento") {
+                                _errorMessage.value = it.message ?: "Erro ao carregar lista Xtream"
+                            }
                         }
                     }
                     else -> {
@@ -1119,8 +1138,15 @@ class MainViewModel @Inject constructor(
         val lastChannel = _selectedLiveChannel.value
         if (lastChannel != null && liveRetryCount < maxLiveRetries) {
             liveRetryCount++
+            // Backoff exponencial com jitter: 1s → 2s → 4s → 8s → 16s (máx 30s)
+            val baseDelay = kotlin.math.min(1000L * (1L shl (liveRetryCount - 1)), 30000L)
+            val jitter = (baseDelay * 0.25).toLong()  // ±25% jitter
+            val actualDelay = baseDelay + (kotlin.random.Random.nextLong(-jitter, jitter + 1))
+
+            android.util.Log.d("CineX-Live", "Reconectando canal (retry $liveRetryCount/$maxLiveRetries), delay: ${actualDelay}ms")
+
             viewModelScope.launch {
-                kotlinx.coroutines.delay(800L * liveRetryCount) // backoff progressivo
+                kotlinx.coroutines.delay(actualDelay)
                 liveTvPlayer.stop()
                 liveTvPlayer.clearMediaItems()
                 val mediaItem = androidx.media3.common.MediaItem.Builder()
@@ -1141,6 +1167,7 @@ class MainViewModel @Inject constructor(
         } else if (lastChannel != null) {
             _isLiveBuffering.value = false
             _livePlayerError.value = true
+            android.util.Log.w("CineX-Live", "Máximo de retries atingido ($maxLiveRetries), exibindo erro")
         }
     }
 
@@ -1215,7 +1242,9 @@ class MainViewModel @Inject constructor(
                 _syncStatus.value = "Lista carregada com sucesso!"
                 playlist.epgUrl?.let { scheduleEpgSync(it) }
             }.onFailure {
-                _errorMessage.value = it.message ?: "Erro ao conectar ao servidor"
+                if (it.message != "Sincronização já em andamento") {
+                    _errorMessage.value = it.message ?: "Erro ao conectar ao servidor"
+                }
             }
             
             rotateJob.cancel()
@@ -1243,6 +1272,7 @@ class MainViewModel @Inject constructor(
     fun refreshPlaylist() {
         refreshAccountFromPanel()
         clearPagingCaches()
+        _homeReady.value = false
         val playlist = _currentPlaylist.value ?: return
         loadPlaylist(playlist.url)
     }
@@ -1274,7 +1304,10 @@ class MainViewModel @Inject constructor(
                 fetchRealAccountInfo(url)
                 _syncCompletedEvent.tryEmit("Servidor resincronizado com sucesso!")
             }.onFailure {
-                _errorMessage.value = it.message ?: "Erro desconhecido ao carregar lista"
+                // Ignorar silenciosamente se outro sync já estava rodando
+                if (it.message != "Sincronização já em andamento") {
+                    _errorMessage.value = it.message ?: "Erro desconhecido ao carregar lista"
+                }
             }
 
             rotateJob.cancel()

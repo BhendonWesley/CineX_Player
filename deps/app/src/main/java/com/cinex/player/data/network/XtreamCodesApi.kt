@@ -150,7 +150,7 @@ data class XtreamCategory(
 
 data class LiveStreamItem(
     val num: String? = null,
-    val name: String,
+    val name: String? = null,  // Pode vir null da API
     val stream_type: String? = null,
     val stream_id: Int,
     val stream_icon: String? = null,
@@ -160,24 +160,41 @@ data class LiveStreamItem(
 
 data class VodStreamItem(
     val num: String? = null,
-    val name: String,
+    val name: String? = null,  // Pode vir null da API
     val stream_type: String? = null,
     val stream_id: Int,
     val stream_icon: String? = null,
     val rating: String? = null,
     val category_id: String,
     val container_extension: String? = "mp4",
-    val added: String? = null
-)
+    val added: Any? = null
+) {
+    /** Timestamp unix de quando foi adicionado no servidor. Lida com String, Number ou null. */
+    fun addedTimestamp(): Long {
+        return when (added) {
+            is Number -> added.toLong()
+            is String -> added.toLongOrNull() ?: 0L
+            else -> 0L
+        }
+    }
+}
 
 data class SeriesItem(
     val num: String? = null,
-    val name: String,
+    val name: String? = null,  // Pode vir null da API
     val series_id: Int,
     val cover: String? = null,
     val plot: String? = null,
     val cast: String? = null,
     val rating: String? = null,
     val category_id: String,
-    val last_modified: String? = null
-)
+    val last_modified: Any? = null
+) {
+    fun lastModifiedTimestamp(): Long {
+        return when (last_modified) {
+            is Number -> last_modified.toLong()
+            is String -> last_modified.toLongOrNull() ?: 0L
+            else -> 0L
+        }
+    }
+}

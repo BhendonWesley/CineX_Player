@@ -13,8 +13,8 @@ android {
         applicationId = "com.cinex.player"
         minSdk = 24
         targetSdk = 34
-        versionCode = 20300
-        versionName = "2.3"
+        versionCode = 20400
+        versionName = "2.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

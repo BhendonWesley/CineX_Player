@@ -17,7 +17,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
@@ -226,7 +228,6 @@ fun VodScreen(
         var initialLoadComplete by remember { mutableStateOf(false) }
         if (!initialLoadComplete) {
             if (type == "SEARCH") {
-                // Para busca: espera o primeiro refresh terminar (dados prontos ou sem resultados)
                 val refreshState = pagingItems.loadState.refresh
                 if (refreshState is androidx.paging.LoadState.NotLoading) {
                     initialLoadComplete = true
@@ -459,6 +460,45 @@ fun VodScreen(
             LaunchedEffect(currentSort) {
                 gridState.scrollToItem(0)
             }
+
+            // Viewport-aware enrichment: só enriquece itens visíveis na tela
+            // Evita OOM em TVs com 16k+ itens
+            LaunchedEffect(gridState, tvChannels, useTvMemory) {
+                if (!useTvMemory) return@LaunchedEffect
+
+                snapshotFlow { gridState.layoutInfo }
+                    .distinctUntilChanged()
+                    .collect { layoutInfo ->
+                        val visibleItems = layoutInfo.visibleItemsInfo
+                        if (visibleItems.isEmpty()) return@collect
+
+                        // Enriquece itens visíveis
+                        visibleItems.forEach { item ->
+                            val index = item.index
+                            if (index in tvChannels.indices) {
+                                val channel = tvChannels[index]
+                                // Enriquece apenas se ainda não tem dados TMDB
+                                if (channel.posterUrl.isNullOrEmpty() && channel.tmdbSynopsis.isNullOrEmpty()) {
+                                    viewModel.onChannelVisible(channel)
+                                }
+                            }
+                        }
+
+                        // Prefetch: enriquece próximos 8 itens (ainda não visíveis)
+                        val lastVisibleIndex = visibleItems.maxOfOrNull { it.index } ?: 0
+                        val prefetchCount = 8
+                        for (i in 1..prefetchCount) {
+                            val prefetchIndex = lastVisibleIndex + i
+                            if (prefetchIndex in tvChannels.indices) {
+                                val channel = tvChannels[prefetchIndex]
+                                if (channel.posterUrl.isNullOrEmpty() && channel.tmdbSynopsis.isNullOrEmpty()) {
+                                    viewModel.onChannelVisible(channel)
+                                }
+                            }
+                        }
+                    }
+            }
+
             LazyVerticalGrid(
                 state = gridState,
                 columns = GridCells.Fixed(4),
@@ -471,14 +511,13 @@ fun VodScreen(
             ) {
                 if (useTvMemory) {
                     // TV: usa lista em memória para troca instantânea
+                    // REMOVIDO: LaunchedEffect por item (causava OOM)
+                    // Novo: enrichment controlado pelo snapshotFlow acima
                     items(
                         count = tvChannels.size,
                         key = { tvChannels[it].id }
                     ) { index ->
                         val channel = tvChannels[index]
-                        LaunchedEffect(channel.id) {
-                            viewModel.onChannelVisible(channel)
-                        }
                         VodPosterItem(
                             channel = channel,
                             showProgress = selectedCategory == "Continuar Assistindo",

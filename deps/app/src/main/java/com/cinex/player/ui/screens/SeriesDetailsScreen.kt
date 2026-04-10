@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.activity.compose.BackHandler
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
 import com.cinex.player.data.model.Channel
@@ -259,8 +260,14 @@ fun SeriesDetailsScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize().background(DarkBackground)) {
+        // Otimização: .size(1280, 720) evita decodificar imagens full-size
         AsyncImage(
-            model = currentSeries.bannerUrl ?: currentSeries.logoUrl,
+            model = ImageRequest.Builder(LocalContext.current)
+                .data(currentSeries.bannerUrl ?: currentSeries.logoUrl)
+                .size(1280, 720)
+                .diskCacheKey(currentSeries.bannerUrl ?: currentSeries.logoUrl)
+                .memoryCacheKey(currentSeries.bannerUrl ?: currentSeries.logoUrl)
+                .build(),
             contentDescription = null,
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop,
@@ -332,8 +339,14 @@ fun SeriesDetailsScreen(
                             .padding(horizontal = 60.dp, vertical = 16.dp),
                         verticalAlignment = Alignment.Top
                     ) {
+                        // Poster com redimensionamento otimizado
                         AsyncImage(
-                            model = currentSeries.logoUrl,
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(currentSeries.logoUrl)
+                                .size(320, 480)
+                                .diskCacheKey(currentSeries.logoUrl)
+                                .memoryCacheKey(currentSeries.logoUrl)
+                                .build(),
                             contentDescription = null,
                             modifier = Modifier
                                 .width(160.dp)

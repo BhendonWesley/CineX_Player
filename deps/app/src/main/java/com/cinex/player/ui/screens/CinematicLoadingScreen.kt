@@ -200,7 +200,7 @@ fun CinematicLoadingScreen(
                 verticalArrangement = Arrangement.spacedBy(20.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                ProgressCard(title = "TV AO VIVO", progress = tvProgress)
+                ProgressCard(title = "CANAIS", progress = tvProgress)
                 ProgressCard(title = "FILMES", progress = moviesProgress)
                 ProgressCard(title = "SÉRIES", progress = seriesProgress)
             }

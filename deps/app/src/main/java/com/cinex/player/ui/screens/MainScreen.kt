@@ -116,17 +116,24 @@ fun MainScreen(
     }
 
     // Para o player ao trocar de aba (imediato, sem depender do onDispose do LiveTvScreen)
+    // E carrega conteúdo sob demanda (lazy loading)
     LaunchedEffect(selectedTab) {
         if (selectedTab != 1) {
             viewModel.stopLiveTv()
         }
-        // Reseta categoria e sort ao entrar em Filmes ou Séries
-        if (selectedTab == 2) {
-            viewModel.setMovieCategory("Tudo")
-            viewModel.setMovieSortOrder("RECENT")
-        } else if (selectedTab == 3) {
-            viewModel.setSeriesCategory("Tudo")
-            viewModel.setSeriesSortOrder("RECENT")
+        // Lazy loading: carrega conteúdo da aba ao navegar
+        when (selectedTab) {
+            1 -> viewModel.ensureTypeLoaded("LIVE_TV")
+            2 -> {
+                viewModel.setMovieCategory("Tudo")
+                viewModel.setMovieSortOrder("RECENT")
+                viewModel.ensureTypeLoaded("MOVIE")
+            }
+            3 -> {
+                viewModel.setSeriesCategory("Tudo")
+                viewModel.setSeriesSortOrder("RECENT")
+                viewModel.ensureTypeLoaded("SERIES")
+            }
         }
     }
 
