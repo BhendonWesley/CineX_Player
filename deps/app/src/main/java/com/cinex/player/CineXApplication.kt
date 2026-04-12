@@ -44,7 +44,7 @@ class CineXApplication : Application(), Configuration.Provider, ImageLoaderFacto
             })
             .build()
 
-        return ImageLoader.Builder(this)
+        val builder = ImageLoader.Builder(this)
             .okHttpClient(okHttpClient)
             .fetcherDispatcher(
                 if (isTv) Dispatchers.IO.limitedParallelism(3)  // TV: 3 fetchers
@@ -68,9 +68,14 @@ class CineXApplication : Application(), Configuration.Provider, ImageLoaderFacto
                     .build()
             }
             .crossfade(true)
-            // Otimização crítica para TV: usar RGB_565 para posters
-            // Reduz uso de memória em 50% (4 bytes/pixel → 2 bytes/pixel)
             .respectCacheHeaders(false)  // Ignorar cache headers para melhor hit rate
-            .build()
+
+        // TV: RGB_565 corta uso de memória por bitmap pela metade (2 bytes/pixel vs 4).
+        // Mobile mantém ARGB_8888 padrão para qualidade máxima.
+        if (isTv) {
+            builder.bitmapConfig(android.graphics.Bitmap.Config.RGB_565)
+        }
+
+        return builder.build()
     }
 }

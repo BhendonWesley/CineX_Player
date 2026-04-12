@@ -66,11 +66,35 @@ fun HomeScreen(
     var showAccountDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
+    // Prioriza filmes/séries com banner TMDB de alta qualidade (/original/) + sinopse
+    // Cai para posterUrl do Xtream SOMENTE se a lista de qualidade for menor que 3
     val validMovies = remember(featuredMovies) {
-        featuredMovies
-            .filter { !it.bannerUrl.isNullOrEmpty() && !it.bannerUrl.endsWith("null") }
+        // Helper: sinopse válida = não nula, não vazia, não a string "null"
+        fun String?.isValidSynopsis() = !isNullOrEmpty() && !equals("null", ignoreCase = true)
+
+        val tmdbBanners = featuredMovies
+            .filter {
+                !it.bannerUrl.isNullOrEmpty() &&
+                !it.bannerUrl.endsWith("null") &&
+                it.bannerUrl.contains("/original/") &&
+                it.tmdbSynopsis.isValidSynopsis()  // garante sinopse real
+            }
             .distinctBy { it.seriesName ?: cleanSeriesTitle(it.name) }
             .take(10)
+
+        if (tmdbBanners.size >= 3) {
+            tmdbBanners
+        } else {
+            val xtreamFallback = featuredMovies
+                .filter {
+                    val hasBanner = !it.bannerUrl.isNullOrEmpty() && !it.bannerUrl.endsWith("null")
+                    val hasPoster = !it.posterUrl.isNullOrEmpty() && !it.posterUrl.endsWith("null")
+                    (hasBanner || hasPoster) && it.tmdbSynopsis.isValidSynopsis()
+                }
+                .distinctBy { it.seriesName ?: cleanSeriesTitle(it.name) }
+                .take(10)
+            xtreamFallback
+        }
     }
 
     // Debug: log para diagnosticar banners ausentes
@@ -122,7 +146,14 @@ fun HomeScreen(
         if (validMovies.isNotEmpty()) {
             // Pré-carrega os primeiros banners em paralelo (não sequencial)
             // Otimização: .size(1280, 720) + cache keys para hit rate máximo
-            val bannersToPreload = validMovies.take(3).mapNotNull { it.bannerUrl }
+            // Pré-carrega os primeiros banners/posters em paralelo
+            val bannersToPreload = validMovies.take(3).mapNotNull { movie ->
+                if (!movie.bannerUrl.isNullOrEmpty() && !movie.bannerUrl.endsWith("null")) {
+                    movie.bannerUrl
+                } else {
+                    movie.posterUrl
+                }
+            }
             android.util.Log.d("CineX-Home", "Preloading ${bannersToPreload.size} banners...")
             kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                 kotlinx.coroutines.coroutineScope {
@@ -248,7 +279,33 @@ private fun HeroBackdrop(
             }
         } else {
             val movie = movies.getOrNull(currentIndex) ?: movies.first()
-            val isTabActive = isActive
+
+            // Ken Burns: fora do AnimatedContent para não resetar/jankar ao trocar de item
+            val scale = remember { Animatable(1f) }
+            val panX = remember { Animatable(-20f) }
+            LaunchedEffect(isActive) {
+                if (isActive) {
+                    launch {
+                        try {
+                            while (true) {
+                                scale.animateTo(1.08f, tween(12000, easing = LinearEasing))
+                                scale.animateTo(1f, tween(12000, easing = LinearEasing))
+                            }
+                        } catch (_: Exception) {}
+                    }
+                    launch {
+                        try {
+                            while (true) {
+                                panX.animateTo(20f, tween(15000, easing = LinearEasing))
+                                panX.animateTo(-20f, tween(15000, easing = LinearEasing))
+                            }
+                        } catch (_: Exception) {}
+                    }
+                } else {
+                    scale.snapTo(1f)
+                    panX.snapTo(0f)
+                }
+            }
 
             AnimatedContent(
                 targetState = movie,
@@ -259,43 +316,23 @@ private fun HeroBackdrop(
                 modifier = Modifier.fillMaxSize(),
                 label = "hero_backdrop"
             ) { currentMovie ->
-                // Ken Burns apenas quando tab ativa
-                val tabActive = isTabActive
-                val scale = remember { Animatable(1f) }
-                val panX = remember { Animatable(-20f) }
-                LaunchedEffect(tabActive) {
-                    if (tabActive) {
-                        // Animações são automaticamente canceladas quando o LaunchedEffect é destruído
-                        launch {
-                            try {
-                                while (isActive) {
-                                    scale.animateTo(1.08f, tween(12000, easing = LinearEasing))
-                                    scale.animateTo(1f, tween(12000, easing = LinearEasing))
-                                }
-                            } catch (_: Exception) {} // Ignora cancellation exception
-                        }
-                        launch {
-                            try {
-                                while (isActive) {
-                                    panX.animateTo(20f, tween(15000, easing = LinearEasing))
-                                    panX.animateTo(-20f, tween(15000, easing = LinearEasing))
-                                }
-                            } catch (_: Exception) {} // Ignora cancellation exception
-                        }
-                    } else {
-                        // Cancela animações imediatamente quando tab sai do foco
-                        scale.snapTo(1f)
-                        panX.snapTo(0f)
-                    }
+                // Usa bannerUrl TMDB (/original/) se disponível — melhor qualidade
+                // Fallback: posterUrl do Xtream (só em caso extremo, sem banner)
+                val imageUrl = when {
+                    !currentMovie.bannerUrl.isNullOrEmpty() &&
+                    !currentMovie.bannerUrl.endsWith("null") &&
+                    currentMovie.bannerUrl.contains("/original/") -> currentMovie.bannerUrl
+                    !currentMovie.bannerUrl.isNullOrEmpty() &&
+                    !currentMovie.bannerUrl.endsWith("null") -> currentMovie.bannerUrl
+                    else -> currentMovie.posterUrl
                 }
 
-                // Otimização: .size(1280, 720) evita decodificar imagens full-size
                 AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
-                        .data(currentMovie.bannerUrl)
-                        .size(1280, 720)  // Full HD para backdrops
-                        .diskCacheKey(currentMovie.bannerUrl)
-                        .memoryCacheKey(currentMovie.bannerUrl)
+                        .data(imageUrl)
+                        .size(1920, 1080)  // Full HD real para backdrops landscape
+                        .diskCacheKey(imageUrl)
+                        .memoryCacheKey(imageUrl)
                         .crossfade(800)
                         .build(),
                     contentDescription = null,
@@ -430,7 +467,8 @@ private fun HeroMovieInfo(
             Spacer(modifier = Modifier.height(8.dp))
 
             val synopsis = currentMovie.tmdbSynopsis?.trim()
-            if (!synopsis.isNullOrEmpty()) {
+            // Guarda contra null Kotlin E a string literal "null" que pode vir do banco
+            if (!synopsis.isNullOrEmpty() && !synopsis.equals("null", ignoreCase = true)) {
                 Text(
                     text = synopsis,
                     color = CineX_TextSecondary,
@@ -506,7 +544,8 @@ private fun HeaderButton(
             .onFocusChanged { isFocused = it.isFocused }
             .focusable(interactionSource = remember { MutableInteractionSource() })
             .onKeyEvent { event ->
-                if (event.type == KeyEventType.KeyUp &&
+                // OTIMIZADO: KeyDown ao invés de KeyUp para resposta instantânea
+                if (event.type == KeyEventType.KeyDown &&
                     (event.key == Key.DirectionCenter || event.key == Key.Enter)
                 ) { onClick(); true } else false
             }
@@ -589,7 +628,8 @@ private fun NavCard(
             .onFocusChanged { isFocused = it.isFocused }
             .focusable(interactionSource = remember { MutableInteractionSource() })
             .onKeyEvent { event ->
-                if (event.type == KeyEventType.KeyUp &&
+                // OTIMIZADO: KeyDown ao invés de KeyUp para resposta instantânea
+                if (event.type == KeyEventType.KeyDown &&
                     (event.key == Key.DirectionCenter || event.key == Key.Enter)
                 ) { onClick(); true } else false
             }

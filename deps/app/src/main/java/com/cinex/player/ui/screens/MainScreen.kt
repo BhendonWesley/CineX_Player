@@ -4,6 +4,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -43,6 +45,8 @@ import com.cinex.player.ui.MainViewModel
 import com.cinex.player.ui.components.UpdatePromptDialog
 import com.cinex.player.ui.components.ChangelogDialog
 import com.cinex.player.ui.theme.DarkBackground
+import androidx.compose.ui.focus.*
+import androidx.compose.ui.input.key.*
 import androidx.paging.compose.collectAsLazyPagingItems
 
 @Composable
@@ -244,12 +248,17 @@ fun MainScreen(
             }
         }
 
+        val isOverlayActive = playingChannel != null || selectedDetailsChannel != null
+
         Box(modifier = modifier.fillMaxSize()) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(DarkBackground)
-        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(DarkBackground)
+                    .focusProperties { canFocus = !isOverlayActive } // Bloqueia foco no fundo quando o player está aberto
+                    // Segurança Adicional: Intercepta e mata as teclas antes que cheguem nos itens do grid
+                    .onPreviewKeyEvent { isOverlayActive } 
+            ) {
             if (selectedTab != 0 || searchQuery.isNotEmpty()) {
                 TopNavigationBar(
                     selectedTab = selectedTab,
@@ -474,11 +483,21 @@ fun MainScreen(
 @Composable
 fun DeviceBlockedScreen(macAddress: String, onRetry: () -> Unit = {}) {
     var isChecking by remember { mutableStateOf(false) }
+    var isRetryFocused by remember { mutableStateOf(false) }
+    val retryFocusRequester = remember { FocusRequester() }
 
     LaunchedEffect(isChecking) {
         if (isChecking) {
             kotlinx.coroutines.delay(2000)
             isChecking = false
+        }
+    }
+
+    // Auto-foco no botão ao entrar na tela
+    LaunchedEffect(Unit) {
+        for (delayMs in listOf(150L, 250L, 400L)) {
+            kotlinx.coroutines.delay(delayMs)
+            try { retryFocusRequester.requestFocus(); break } catch (_: Exception) {}
         }
     }
 
@@ -553,6 +572,18 @@ fun DeviceBlockedScreen(macAddress: String, onRetry: () -> Unit = {}) {
             Box(
                 modifier = Modifier
                     .widthIn(min = 280.dp)
+                    .focusRequester(retryFocusRequester)
+                    .onFocusChanged { isRetryFocused = it.isFocused }
+                    .then(
+                        if (isRetryFocused) Modifier.border(2.dp, Color(0xFFF59E0B), RoundedCornerShape(12.dp))
+                        else Modifier
+                    )
+                    .focusable(interactionSource = remember { MutableInteractionSource() })
+                    .onKeyEvent { event ->
+                        if (!isChecking && event.type == KeyEventType.KeyDown &&
+                            (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                        ) { isChecking = true; onRetry(); true } else false
+                    }
                     .background(
                         if (isChecking) Color(0xFF888888) else Color(0xFFC62828),
                         RoundedCornerShape(12.dp)

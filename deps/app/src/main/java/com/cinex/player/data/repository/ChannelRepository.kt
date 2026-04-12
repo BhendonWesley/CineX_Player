@@ -16,6 +16,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import com.cinex.player.data.network.LiveStreamItem
 import com.cinex.player.data.network.VodStreamItem
@@ -47,9 +48,17 @@ class ChannelRepository @Inject constructor(
     private val epgDao: com.cinex.player.data.local.EpgDao,
     private val epgParser: com.cinex.player.data.parser.EpgParser,
     private val okHttpClient: OkHttpClient,
-    private val tmdbApi: TmdbApi
+    private val tmdbApi: TmdbApi,
+    private val application: android.app.Application
 ) {
     private val repositoryScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    // Detecta Android TV para serializar downloads e evitar OOM/travamento na sync.
+    // No mobile, o comportamento paralelo é mantido.
+    private val isTv: Boolean by lazy {
+        val uiModeManager = application.getSystemService(android.content.Context.UI_MODE_SERVICE) as? android.app.UiModeManager
+        uiModeManager?.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    }
 
     private val _activePlaylistUrl = MutableStateFlow<String?>(null)
     val activePlaylistUrl = _activePlaylistUrl.asStateFlow()
@@ -134,13 +143,45 @@ class ChannelRepository @Inject constructor(
         val host = uri.host
 
         if (username != null && password != null && host != null) {
-            // Xtream Codes: usar sync COMPLETO (baixa tudo como TiviMate/XCIPTV)
+            // Xtream: sync categorias → bloqueia tela de carregamento até conteúdo completo
             val scheme = uri.scheme
             val port = uri.port
             val baseUrl = "$scheme://$host${if (port != -1) ":$port" else ""}/"
-            syncXtreamFull(baseUrl, username, password, playlist.url, onProgress)
+            val result = syncXtream(baseUrl, username, password, playlist.url, onProgress)
+            if (result.isSuccess) {
+                _activePlaylistUrl.value = playlist.url
+                // Paralelo: canais, filmes e séries baixam ao mesmo tempo.
+                // Só retorna quando os 3 estão prontos — loading screen fica visível até lá.
+                onProgress(5, 5, 5, "Carregando conteúdo...")
+                val lp = AtomicInteger(5); val mp = AtomicInteger(5); val sp = AtomicInteger(5)
+                coroutineScope {
+                    awaitAll(
+                        async { ensureTypeLoaded("LIVE_TV", onProgress = { pct ->
+                            lp.set(pct); onProgress(pct, mp.get(), sp.get(), "Canais ao vivo...")
+                        })},
+                        async { ensureTypeLoaded("MOVIE", onProgress = { pct ->
+                            mp.set(pct); onProgress(lp.get(), pct, sp.get(), "Filmes...")
+                        })},
+                        async { ensureTypeLoaded("SERIES", onProgress = { pct ->
+                            sp.set(pct); onProgress(lp.get(), mp.get(), pct, "Séries...")
+                        })}
+                    )
+                }
+                // Retry se filmes falharam (OOM, timeout de rede, etc.)
+                if (channelDao.countByType("MOVIE", playlist.url) == 0) {
+                    android.util.Log.w("CineX-Sync", "MOVIE: nenhum filme no banco após sync — retentando...")
+                    onProgress(100, 5, 100, "Recarregando filmes...")
+                    mp.set(5)
+                    ensureTypeLoaded("MOVIE", onProgress = { pct ->
+                        mp.set(pct); onProgress(100, pct, 100, "Filmes...")
+                    })
+                }
+                Result.success(Unit)
+            } else {
+                Result.failure(result.exceptionOrNull() ?: Exception("Falha ao sincronizar"))
+            }
         } else {
-            // M3U: usar sync tradicional
+            // M3U: sync tradicional
             syncPlaylist(playlist.url, onProgress)
         }
     }
@@ -165,10 +206,40 @@ class ChannelRepository @Inject constructor(
         }
     }
 
-    fun observeAllSeries(): Flow<List<Channel>> {
+    fun observeMoviesByCategory(categoryId: String): Flow<List<Channel>> {
         return _activePlaylistUrl.flatMapLatest { url ->
             if (url == null) flowOf(emptyList())
-            else channelDao.observeAllSeries(url)
+            else channelDao.observeMoviesByCategory(url, categoryId)
+        }
+    }
+
+    fun observeSeriesByCategory(categoryId: String): Flow<List<Channel>> {
+        return _activePlaylistUrl.flatMapLatest { url ->
+            if (url == null) flowOf(emptyList())
+            else channelDao.observeSeriesByCategory(url, categoryId)
+        }
+    }
+
+    fun observeAllSeries(): Flow<List<Channel>> {
+        return _activePlaylistUrl.flatMapLatest { url ->
+            if (url == null) {
+                android.util.Log.d("CineX-Series", "observeAllSeries: URL da playlist é null")
+                flowOf(emptyList())
+            } else {
+                android.util.Log.d("CineX-Series", "observeAllSeries: Buscando séries para playlist...")
+                channelDao.observeAllSeries(url).onEach { series ->
+                    android.util.Log.d("CineX-Series", "observeAllSeries: DAO retornou ${series.size} séries (seasonNumber IS NULL)")
+                    if (series.isEmpty()) {
+                        // Verificar se há séries sem o filtro seasonNumber
+                        val allSeriesCount = channelDao.countByType("SERIES", url)
+                        val episodesCount = channelDao.countEpisodesOnly(url)
+                        android.util.Log.d("CineX-Series", "observeAllSeries: DEBUG - Total SERIES no banco: $allSeriesCount, Episódios: $episodesCount")
+                        if (allSeriesCount == 0) {
+                            android.util.Log.e("CineX-Series", "observeAllSeries: ⚠️ NENHUMA SÉRIE NO BANCO! Sync falhou ou não foi executado.")
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -251,9 +322,23 @@ class ChannelRepository @Inject constructor(
             if (url == null) flowOf(PagingData.empty())
             else Pager(PagingConfig(pageSize = 50, initialLoadSize = 50, prefetchDistance = 10)) {
                 when (categoryId) {
-                    "Favorito", "Favoritos" -> channelDao.getMoviesFavoritesPaged(url, sort)
+                    "Favorito", "Favoritos" -> {
+                        when (sort) {
+                            "AZ" -> channelDao.getMoviesFavoritesPagedAZ(url)
+                            "ZA" -> channelDao.getMoviesFavoritesPagedZA(url)
+                            "RATING" -> channelDao.getMoviesFavoritesPagedRating(url)
+                            else -> channelDao.getMoviesFavoritesPagedRecent(url)
+                        }
+                    }
                     "Continuar Assistindo" -> channelDao.getContinueWatchingPaged("MOVIE", url)
-                    else -> channelDao.getMoviesPaged(url, categoryId, sort)
+                    else -> {
+                        when (sort) {
+                            "AZ" -> channelDao.getMoviesPagedAZ(url, categoryId)
+                            "ZA" -> channelDao.getMoviesPagedZA(url, categoryId)
+                            "RATING" -> channelDao.getMoviesPagedRating(url, categoryId)
+                            else -> channelDao.getMoviesPagedRecent(url, categoryId)
+                        }
+                    }
                 }
             }.flow
         }
@@ -264,9 +349,23 @@ class ChannelRepository @Inject constructor(
             if (url == null) flowOf(PagingData.empty())
             else Pager(PagingConfig(pageSize = 50, initialLoadSize = 50, prefetchDistance = 10)) {
                 when (categoryId) {
-                    "Favorito", "Favoritos" -> channelDao.getSeriesFavoritesPaged(url, sort)
+                    "Favorito", "Favoritos" -> {
+                        when (sort) {
+                            "AZ" -> channelDao.getSeriesFavoritesPagedAZ(url)
+                            "ZA" -> channelDao.getSeriesFavoritesPagedZA(url)
+                            "RATING" -> channelDao.getSeriesFavoritesPagedRating(url)
+                            else -> channelDao.getSeriesFavoritesPagedRecent(url)
+                        }
+                    }
                     "Continuar Assistindo" -> channelDao.getContinueWatchingPaged("SERIES", url)
-                    else -> channelDao.getSeriesPaged(url, categoryId, sort)
+                    else -> {
+                        when (sort) {
+                            "AZ" -> channelDao.getSeriesPagedAZ(url, categoryId)
+                            "ZA" -> channelDao.getSeriesPagedZA(url, categoryId)
+                            "RATING" -> channelDao.getSeriesPagedRating(url, categoryId)
+                            else -> channelDao.getSeriesPagedRecent(url, categoryId)
+                        }
+                    }
                 }
             }.flow
         }
@@ -289,6 +388,10 @@ class ChannelRepository @Inject constructor(
      * Não tenta enriquecer o catálogo inteiro — só o necessário para mostrar banners.
      */
     suspend fun enrichRandomForHome(url: String, count: Int = 20) = withContext(Dispatchers.IO) {
+        // MIGRAÇÕES: limpa dados ruins antes de enriquecer
+        channelDao.clearStaleW1280Banners()       // bannerUrl /w1280/ → NULL, re-enriquece com /original/
+        channelDao.clearNullStringSynopsis()       // tmdbSynopsis = "null" → NULL, re-enriquece sinopse real
+
         val movies = channelDao.getMoviesToEnrich(url).shuffled().take(count / 2)
         val series = channelDao.getSeriesToEnrich(url).shuffled().take(count / 2)
         val toEnrich = (movies + series).shuffled()
@@ -310,6 +413,11 @@ class ChannelRepository @Inject constructor(
         }
     }
 
+    /**
+     * OTIMIZAÇÃO: Garante que a Home tenha pelo menos minFeatured banners antes de retornar.
+     * Agora AGUARDA o enriquecimento completar antes de verificar o resultado.
+     * Antes: lançava corrotinas e verificava imediatamente (sempre via 0 itens).
+     */
     private suspend fun ensureHomeFeaturedSeed(
         url: String,
         minFeatured: Int = 3,
@@ -333,15 +441,17 @@ class ChannelRepository @Inject constructor(
 
             android.util.Log.d("CineX-Home", "Seed attempt ${attempt + 1}: enriquecendo ${batch.size} itens para a Home")
 
-            batch.chunked(10).forEach { chunk ->
-                coroutineScope {
-                    chunk.forEach { channel ->
-                        launch { enrichChannelWithTmdb(channel) }
-                    }
+            // CORREÇÃO: Aguarda TODOS os enriquecimentos completarem antes de verificar
+            coroutineScope {
+                batch.forEach { channel ->
+                    launch { enrichChannelWithTmdb(channel) }
                 }
             }
 
+            // Agora sim verifica - os dados TMDB já estão no banco
             featuredCount = channelDao.getFeaturedContent(url).first().size
+            android.util.Log.d("CineX-Home", "Seed attempt ${attempt + 1}: featuredCount=$featuredCount")
+            
             offset += batch.size
             batchSize += 12
         }
@@ -371,43 +481,41 @@ class ChannelRepository @Inject constructor(
             val host = uri.host
             val scheme = uri.scheme
             val port = uri.port
-
+            
+            // Se tem username+password na URL, usa Xtream API (mais rápido e correto).
+            // M3U só é usado quando não há credenciais.
             if (username != null && password != null && host != null) {
                 val baseUrl = "$scheme://$host${if (port != -1) ":$port" else ""}/"
                 val syncResult = syncXtream(baseUrl, username, password, url, onProgress)
                 if (syncResult.isSuccess) {
                     _activePlaylistUrl.value = url
 
-                    // Carrega TODO o conteúdo em paralelo (como apps profissionais)
-                    // Loading screen permanece visível — quando terminar, tudo está pronto
-                    val lp = AtomicInteger(35); val mp = AtomicInteger(35); val sp = AtomicInteger(35)
-                    onProgress(35, 35, 35, "Carregando conteúdo...")
-
+                    // Bloqueia a tela de carregamento até todo conteúdo estar no banco.
+                    // Paralelo: canais, filmes e séries baixam ao mesmo tempo.
+                    onProgress(5, 5, 5, "Carregando conteúdo...")
+                    val lp = AtomicInteger(5); val mp = AtomicInteger(5); val sp = AtomicInteger(5)
                     coroutineScope {
-                        launch {
-                            ensureTypeLoaded("LIVE_TV")
-                            lp.set(100)
-                            onProgress(lp.get(), mp.get(), sp.get(), "TV ao vivo pronta")
-                        }
-                        launch {
-                            ensureTypeLoaded("MOVIE")
-                            mp.set(100)
-                            onProgress(lp.get(), mp.get(), sp.get(), "Filmes prontos")
-                        }
-                        launch {
-                            ensureTypeLoaded("SERIES")
-                            sp.set(100)
-                            onProgress(lp.get(), mp.get(), sp.get(), "Séries prontas")
-                        }
+                        awaitAll(
+                            async { ensureTypeLoaded("LIVE_TV", onProgress = { pct ->
+                                lp.set(pct); onProgress(pct, mp.get(), sp.get(), "Canais ao vivo...")
+                            })},
+                            async { ensureTypeLoaded("MOVIE", onProgress = { pct ->
+                                mp.set(pct); onProgress(lp.get(), pct, sp.get(), "Filmes...")
+                            })},
+                            async { ensureTypeLoaded("SERIES", onProgress = { pct ->
+                                sp.set(pct); onProgress(lp.get(), mp.get(), pct, "Séries...")
+                            })}
+                        )
                     }
-
-                    val featured = channelDao.getFeaturedContent(url).first()
-                    if (featured.size < 3) {
-                        onProgress(95, 95, 95, "Preparando banners da Home...")
-                        ensureHomeFeaturedSeed(url, minFeatured = 3)
+                    // Retry se filmes falharam (OOM, timeout, etc.)
+                    if (channelDao.countByType("MOVIE", url) == 0) {
+                        android.util.Log.w("CineX-Sync", "MOVIE: nenhum filme no banco — retentando...")
+                        onProgress(100, 5, 100, "Recarregando filmes...")
+                        mp.set(5)
+                        ensureTypeLoaded("MOVIE", onProgress = { pct ->
+                            mp.set(pct); onProgress(100, pct, 100, "Filmes...")
+                        })
                     }
-
-                    onProgress(100, 100, 100, "Concluído!")
 
                     // Logs de debug para rastrear perda de conteúdo
                     val liveCount = channelDao.countByType("LIVE_TV", url)
@@ -418,6 +526,13 @@ class ChannelRepository @Inject constructor(
                     // TMDB enrichment em background — não bloqueia o usuário
                     repositoryScope.launch {
                         try {
+                            val candidatesForPrefetch = (
+                                channelDao.getMoviesToEnrich(url).shuffled().take(30) +
+                                channelDao.getSeriesToEnrich(url).shuffled().take(30)
+                            )
+                            if (candidatesForPrefetch.isNotEmpty()) {
+                                try { prefetchTmdbCache(candidatesForPrefetch) } catch (_: Exception) {}
+                            }
                             enrichRandomForHome(url, 20)
                             triggerBackgroundEnrichment(url)
                         } catch (e: Exception) {
@@ -445,9 +560,12 @@ class ChannelRepository @Inject constructor(
                 // garantem que a Home mostre banners imediatamente após resync
                 val existingUserData = channelDao.getTmdbAndUserDataByPlaylist(url).associateBy { it.remoteId }
 
-                onProgress(50, 50, 50, "Limpando dados antigos...")
-                channelDao.clearByPlaylist(url)
-                categoryDao.clearByPlaylist(url)
+                // Sincronização Incremental: NÃO limpamos o banco no início.
+                // Itens novos e atualizados serão tratados pelo conflito REPLACE.
+                // Futuramente podemos adicionar uma limpeza de órfãos ao final.
+                // onProgress(50, 50, 50, "Limpando dados antigos...")
+                // channelDao.clearByPlaylist(url)
+                // categoryDao.clearByPlaylist(url)
 
                 onProgress(55, 55, 55, "Processando categorias...")
                 val channelsByGroup = parsedChannels.groupBy { it.groupTitle }
@@ -473,9 +591,12 @@ class ChannelRepository @Inject constructor(
 
                 val totalChannels = parsedChannels.size
                 onProgress(60, 60, 60, "Salvando canais...")
+
+                // Insere em chunks para evitar OOM e manter progresso visível na UI.
+                // Uma única transação com 277k linhas segura o lock SQLite por tempo demais
+                // e mantém todos os objetos na RAM simultaneamente.
                 val chunkedChannels = parsedChannels.chunked(1000)
                 var processed = 0
-                
                 chunkedChannels.forEach { chunk ->
                     val mappedChunk = chunk.mapIndexed { chunkIndex, channel ->
                         val old = existingUserData[channel.remoteId]
@@ -499,6 +620,7 @@ class ChannelRepository @Inject constructor(
                     val pct = 60 + (40 * processed / totalChannels)
                     onProgress(pct, pct, pct, "Salvando canais ($processed/$totalChannels)...")
                 }
+                onProgress(100, 100, 100, "Sincronização concluída!")
 
                 // EPG sync em background — NÃO bloqueia o sync principal
                 // Arquivos XMLTV podem ser 50MB+ e levar 30s+ para parsear
@@ -515,14 +637,9 @@ class ChannelRepository @Inject constructor(
                 _activePlaylistUrl.value = url
                 playlistDao.updateLastSyncTime(url, System.currentTimeMillis())
 
-                // Enriquecer 20 conteúdos aleatórios (filmes+séries) para a Home ter banners
-                val featured = channelDao.getFeaturedContent(url).first()
-                if (featured.size < 3) {
-                    onProgress(95, 95, 95, "Preparando banners da Home...")
-                    ensureHomeFeaturedSeed(url, minFeatured = 3)
-                }
-
-                onProgress(100, 100, 100, "Iniciando em segundo plano...")
+                // NÃO bloqueia sync para TMDB - a Home aparece imediatamente com posters do Xtream
+                // TMDB enrichment roda 100% em background
+                onProgress(100, 100, 100, "Concluído!")
             } else {
                 return@withContext Result.failure(Exception("Nenhum conteúdo encontrado na lista. Verifique a URL."))
             }
@@ -547,42 +664,34 @@ class ChannelRepository @Inject constructor(
         onProgress: (livePct: Int, moviePct: Int, seriesPct: Int, status: String) -> Unit
     ) {
         repositoryScope.launch {
-            // === PRE-FETCH SUPABASE CACHE (batch) ===
-            val allToEnrich = channelDao.getMoviesToEnrich(url) + channelDao.getSeriesToEnrich(url)
+            // === PRIORIDADE 1: Seed rápido da Home (3-5 filmes com TMDB) ===
+            // Isso faz os banners aparecerem na Home poucos segundos após o app abrir
+            val featuredCount = channelDao.getFeaturedContent(url).first().size
+            if (featuredCount < 3) {
+                android.util.Log.d("CineX-Home", "Iniciando seed rápido da Home em background...")
+                try {
+                    ensureHomeFeaturedSeed(url, minFeatured = 3)
+                    android.util.Log.d("CineX-Home", "Seed da Home concluído")
+                } catch (e: Exception) {
+                    android.util.Log.e("CineX-Home", "Seed falhou: ${e.message}")
+                }
+            }
+
+            // === PRIORIDADE 2: Pre-fetch Supabase cache (batch) ===
+            // PROTEÇÃO TÉRMICA: Limitar a 500 itens por sessão para não fritar o celular
+            val allToEnrich = (channelDao.getMoviesToEnrich(url).take(300) + channelDao.getSeriesToEnrich(url).take(200))
             if (allToEnrich.isNotEmpty()) {
                 android.util.Log.d("CineX-Cache", "Pre-fetching TMDB cache for ${allToEnrich.size} items...")
                 allToEnrich.chunked(100).forEach { batch ->
                     try { prefetchTmdbCache(batch) } catch (_: Exception) {}
+                    delay(500) // Pausa para rede/GPU respirar
                 }
             }
-            // === END PRE-FETCH ===
 
-            // Prioridade 1: enriquecer os featured da Home primeiro
-            val initialFeatured = channelDao.getFeaturedContent(url).first().take(5)
-            if (initialFeatured.isNotEmpty()) {
-                initialFeatured.forEach { channel ->
-                    enrichChannelWithTmdb(channel)
-                }
-            } else {
-                // Sem featured ainda (dados TMDB vazios) — enriquecer os primeiros filmes
-                // com alta paralelização para que a Home tenha banners o mais rápido possível
-                android.util.Log.d("CineX-Home", "Seed: enriquecendo primeiros 50 filmes com paralelismo 10...")
-                val seedMovies = channelDao.getMoviesToEnrich(url).take(50)
-                seedMovies.chunked(10).forEach { chunk ->
-                    coroutineScope {
-                        chunk.forEach { channel ->
-                            launch { enrichChannelWithTmdb(channel) }
-                        }
-                    }
-                }
-                android.util.Log.d("CineX-Home", "Seed concluído. Verificando featured...")
-                val postSeedFeatured = channelDao.getFeaturedContent(url).first()
-                android.util.Log.d("CineX-Home", "Featured após seed: ${postSeedFeatured.size}")
-            }
-
-            // Resto em background com blocos de 10 (mais rápido)
-            val moviesToEnrich = channelDao.getMoviesToEnrich(url)
-            val seriesToEnrich = channelDao.getSeriesToEnrich(url)
+            // === PRIORIDADE 3: Enriquecer o resto em background ===
+            // PROTEÇÃO TÉRMICA: Nunca processar os 16k filmes de uma vez.
+            val moviesToEnrich = channelDao.getMoviesToEnrich(url).take(200)
+            val seriesToEnrich = channelDao.getSeriesToEnrich(url).take(100)
 
             val totalMovies = moviesToEnrich.size
             if (totalMovies > 0) {
@@ -600,7 +709,7 @@ class ChannelRepository @Inject constructor(
                             }
                         }
                     }
-                    delay(50)
+                    delay(2000) // 2s de pausa térmica para o celular não aquecer (antes: 50ms)
                 }
             }
 
@@ -620,11 +729,10 @@ class ChannelRepository @Inject constructor(
                             }
                         }
                     }
-                    delay(50)
+                    delay(2000) // 2s pausa térmica
                 }
             }
 
-            // Flush qualquer entrada pendente na fila do cache Supabase
             flushTmdbCacheQueue()
         }
     }
@@ -931,67 +1039,66 @@ class ChannelRepository @Inject constructor(
 
             onProgress(10, 10, 10, "Conectando ao servidor...")
 
-            suspend fun fetchCategoriesRelaxed(action: String): List<com.cinex.player.data.network.XtreamCategory> {
-                val url = "${baseUrl}player_api.php?username=$user&password=$pass&action=$action"
-                val request = Request.Builder().url(url).build()
-                return try {
-                    val response = okHttpClient.newCall(request).execute()
-                    if (!response.isSuccessful) return emptyList()
-                    var jsonStr = response.body?.string() ?: ""
-                    jsonStr = jsonStr.trim()
-                    if (jsonStr.startsWith("[") && !jsonStr.endsWith("]")) {
-                        val lastBracket = jsonStr.lastIndexOf("}")
-                        if (lastBracket > 0) jsonStr = jsonStr.substring(0, lastBracket + 1) + "]"
-                        else jsonStr += "]"
-                    }
-                    val type = object : com.google.gson.reflect.TypeToken<List<com.cinex.player.data.network.XtreamCategory>>() {}.type
-                    gson.fromJson<List<com.cinex.player.data.network.XtreamCategory>>(jsonStr, type) ?: emptyList()
-                } catch (e: Exception) {
-                    android.util.Log.e("CineX-Sync", "Relaxed fetch for $action failed: ${e.message}")
-                    emptyList()
-                }
-            }
-
-            suspend fun <T> fetchWithRetry(label: String, maxRetries: Int = 3, action: String = "", block: suspend () -> T): T? {
-                repeat(maxRetries) { attempt ->
-                    try {
-                        return block()
-                    } catch (e: Exception) {
-                        android.util.Log.e("CineX-Sync", "$label attempt ${attempt + 1} failed: ${e.message}")
-                        if (action.isNotEmpty() && (e is java.io.EOFException || e.message?.contains("End of input") == true || e.message?.contains("malformed") == true)) {
-                            val relaxed = fetchCategoriesRelaxed(action)
-                            if (relaxed.isNotEmpty()) {
-                                @Suppress("UNCHECKED_CAST")
-                                return relaxed as T
-                            }
-                        }
-                        if (attempt < maxRetries - 1) kotlinx.coroutines.delay(1000)
-                    }
-                }
-                return null
-            }
+            // Extrair credenciais para o fetch
+            val uri = android.net.Uri.parse(playlistUrl)
+            val username = uri.getQueryParameter("username") ?: ""
+            val password = uri.getQueryParameter("password") ?: ""
 
             android.util.Log.d("CineX-Sync", "=== SYNC XTREAM (LAZY) — SÓ CATEGORIAS ===")
             onProgress(20, 20, 20, "Buscando categorias...")
 
-            val liveCats = fetchWithRetry("Live cats", action = "get_live_categories") { api.getLiveCategories(user, pass) } ?: emptyList()
+            val liveCats = fetchListRelaxed(baseUrl, username, password, "get_live_categories", null, com.cinex.player.data.network.XtreamCategory::class.java)
             android.util.Log.d("CineX-Sync", "Live cats: ${liveCats.size}")
-            val vodCats = fetchWithRetry("VOD cats", action = "get_vod_categories") { api.getVodCategories(user, pass) } ?: emptyList()
+            
+            val vodCats = fetchListRelaxed(baseUrl, username, password, "get_vod_categories", null, com.cinex.player.data.network.XtreamCategory::class.java)
             android.util.Log.d("CineX-Sync", "VOD cats: ${vodCats.size}")
-            val seriesCats = fetchWithRetry("Series cats", action = "get_series_categories") { api.getSeriesCategories(user, pass) } ?: emptyList()
+            
+            val seriesCats = fetchListRelaxed(baseUrl, username, password, "get_series_categories", null, com.cinex.player.data.network.XtreamCategory::class.java)
             android.util.Log.d("CineX-Sync", "Series cats: ${seriesCats.size}")
 
-            onProgress(60, 60, 60, "Salvando categorias...")
+            // decodeUnicodeEscapes removido daqui, usando o top-level decodeUnicode
+
+            // Sincronização Incremental (Lazy): NÃO limpamos o banco aqui.
+            // A Home e as abas continuam com o conteúdo antigo enquanto o novo é baixado em background.
             withContext(Dispatchers.IO) {
-                channelDao.clearByPlaylist(playlistUrl)
-                categoryDao.clearByPlaylist(playlistUrl)
+                // channelDao.clearByPlaylist(playlistUrl)
+                // categoryDao.clearByPlaylist(playlistUrl)
 
                 val allCats = mutableListOf<com.cinex.player.data.model.Category>()
-                allCats += liveCats.mapIndexed { index, cat -> com.cinex.player.data.model.Category("live_${cat.category_id}", cat.category_name, "LIVE_TV", playlistUrl, orderIndex = index) }
-                allCats += vodCats.mapIndexed { index, cat -> com.cinex.player.data.model.Category("vod_${cat.category_id}", cat.category_name, "MOVIE", playlistUrl, orderIndex = index) }
-                allCats += seriesCats.mapIndexed { index, cat -> com.cinex.player.data.model.Category("series_${cat.category_id}", cat.category_name, "SERIES", playlistUrl, orderIndex = index) }
+                allCats += liveCats.mapIndexed { index, cat -> 
+                    com.cinex.player.data.model.Category(
+                        "live_${cat.category_id}", 
+                        decodeUnicode(cat.category_name) ?: "Categoria", 
+                        "LIVE_TV", 
+                        playlistUrl, 
+                        orderIndex = index
+                    ) 
+                }
+                allCats += vodCats.mapIndexed { index, cat -> 
+                    com.cinex.player.data.model.Category(
+                        "vod_${cat.category_id}", 
+                        decodeUnicode(cat.category_name) ?: "Filmes", 
+                        "MOVIE", 
+                        playlistUrl, 
+                        orderIndex = index
+                    ) 
+                }
+                allCats += seriesCats.mapIndexed { index, cat -> 
+                    com.cinex.player.data.model.Category(
+                        "series_${cat.category_id}", 
+                        decodeUnicode(cat.category_name) ?: "Séries", 
+                        "SERIES", 
+                        playlistUrl, 
+                        orderIndex = index
+                    ) 
+                }
                 if (allCats.isNotEmpty()) categoryDao.insertAll(allCats)
             }
+
+            // Limpa canais antigos — remove dados corrompidos de syncs anteriores.
+            // TMDB e favoritos são preservados dentro do ensureTypeLoaded (carregados antes de inserir).
+            channelDao.clearByPlaylist(playlistUrl)
+            android.util.Log.d("CineX-Sync", "Canais limpos — conteúdo será re-baixado por demanda")
 
             // Limpa flags de tipos carregados — forçar re-download na próxima navegação
             loadedTypes.clear()
@@ -1026,20 +1133,28 @@ class ChannelRepository @Inject constructor(
 
             onProgress(10, 10, 10, "Baixando TODOS os canais...")
 
-            // Agora baixa TODOS os streams de TODAS as categorias
-            coroutineScope {
-                val liveDeferred = async { ensureTypeLoaded("LIVE_TV") }
-                val movieDeferred = async { ensureTypeLoaded("MOVIE") }
-                val seriesDeferred = async { ensureTypeLoaded("SERIES") }
+            // TV: serializa os 3 tipos — 3 tipos em paralelo × 6 categorias simultâneas =
+            // até 18 conexões HTTP concorrentes saturam o servidor IPTV e o heap da TV.
+            // Mobile: mantém paralelismo para velocidade máxima.
+            if (isTv) {
+                ensureTypeLoaded("LIVE_TV", forceRefresh = true) { p -> onProgress(p, 10, 10, "Baixando TV ao vivo...") }
+                onProgress(100, 10, 10, "TV ao vivo baixada!")
 
-                liveDeferred.await()
-                onProgress(100, 30, 30, "TV ao vivo baixada!")
+                ensureTypeLoaded("MOVIE", forceRefresh = true) { p -> onProgress(100, p/2 + 10, 10, "Baixando Filmes...") }
+                onProgress(100, 100, 10, "Filmes baixados!")
 
-                movieDeferred.await()
-                onProgress(100, 100, 30, "Filmes baixados!")
-
-                seriesDeferred.await()
+                ensureTypeLoaded("SERIES", forceRefresh = true) { p -> onProgress(100, 100, p/2 + 10, "Baixando Séries...") }
                 onProgress(100, 100, 100, "Séries baixadas!")
+            } else {
+                coroutineScope {
+                    val liveDeferred = async { ensureTypeLoaded("LIVE_TV", forceRefresh = true) { p -> onProgress(p, 10, 10, "Canais...") } }
+                    val movieDeferred = async { ensureTypeLoaded("MOVIE", forceRefresh = true) { p -> onProgress(100, p, 10, "Filmes...") } }
+                    val seriesDeferred = async { ensureTypeLoaded("SERIES", forceRefresh = true) { p -> onProgress(100, 100, p, "Séries...") } }
+
+                    liveDeferred.await()
+                    movieDeferred.await()
+                    seriesDeferred.await()
+                }
             }
 
             val liveCount = channelDao.countByType("LIVE_TV", playlistUrl)
@@ -1060,17 +1175,21 @@ class ChannelRepository @Inject constructor(
      * Mutex por tipo evita downloads duplicados (sync + tab-click simultâneo).
      * Categorias são baixadas em paralelo (5 simultâneas) para máxima velocidade.
      */
-    suspend fun ensureTypeLoaded(type: String): Result<Unit> = withContext(Dispatchers.IO) {
+    suspend fun ensureTypeLoaded(type: String, forceRefresh: Boolean = false, onProgress: ((Int) -> Unit)? = null): Result<Unit> = withContext(Dispatchers.IO) {
         val url = _activePlaylistUrl.value ?: return@withContext Result.failure(Exception("Nenhuma playlist ativa"))
 
         // Mutex: se outra coroutine já está carregando este tipo, espera ela terminar
         val mutex = typeMutexes[type] ?: return@withContext Result.failure(Exception("Tipo desconhecido: $type"))
         mutex.withLock {
-            val existingCount = channelDao.countByType(type, url)
-            if (existingCount > 0) {
-                loadedTypes.add(type)
-                android.util.Log.d("CineX-Sync", "ensureTypeLoaded($type): $existingCount já no banco, skip")
-                return@withContext Result.success(Unit)
+            if (!forceRefresh) {
+                val existingCount = channelDao.countByType(type, url)
+                if (existingCount > 0) {
+                    loadedTypes.add(type)
+                    android.util.Log.d("CineX-Sync", "ensureTypeLoaded($type): $existingCount já no banco, skip")
+                    return@withContext Result.success(Unit)
+                }
+            } else {
+                android.util.Log.d("CineX-Sync", "ensureTypeLoaded($type): forceRefresh=true, baixando tudo do servidor...")
             }
 
             android.util.Log.d("CineX-Sync", "ensureTypeLoaded($type): carregando do servidor...")
@@ -1086,55 +1205,37 @@ class ChannelRepository @Inject constructor(
             val port = uri.port
             val baseUrl = "$scheme://$host${if (port != -1) ":$port" else ""}/"
 
-            val gson = com.google.gson.GsonBuilder().setLenient().create()
-            val api = Retrofit.Builder()
-                .baseUrl(baseUrl)
-                .client(okHttpClient)
-                .addConverterFactory(GsonConverterFactory.create(gson))
-                .build()
-                .create(XtreamCodesApi::class.java)
-
-            // Helper para fetch com fallback relaxed (JSON truncado)
-            suspend fun <T> fetchListRelaxed(action: String, catId: String?, typeToken: java.lang.reflect.Type): List<T> {
-                val fetchUrl = "${baseUrl}player_api.php?username=$username&password=$password&action=$action${if (catId != null) "&category_id=$catId" else ""}"
-                val request = Request.Builder().url(fetchUrl).build()
-                return try {
-                    val response = okHttpClient.newCall(request).execute()
-                    if (!response.isSuccessful) return emptyList()
-                    var jsonStr = response.body?.string() ?: ""
-                    jsonStr = jsonStr.trim()
-                    if (jsonStr.startsWith("[") && !jsonStr.endsWith("]")) {
-                        val lastBracket = jsonStr.lastIndexOf("}")
-                        if (lastBracket > 0) jsonStr = jsonStr.substring(0, lastBracket + 1) + "]"
-                        else jsonStr += "]"
-                    }
-                    gson.fromJson(jsonStr, typeToken) ?: emptyList()
-                } catch (e: Exception) {
-                    android.util.Log.e("CineX-Sync", "Relaxed fetch for $action failed: ${e.message}")
-                    emptyList()
-                }
-            }
-
             // Preservar dados do usuário existentes (favoritos, resume, TMDB)
             val existingTmdbData = channelDao.getTmdbAndUserDataByPlaylist(url)
                 .filter { it.remoteId.startsWith(when(type) { "LIVE_TV" -> "live_"; "MOVIE" -> "vod_"; "SERIES" -> "series_"; else -> "" }) }
                 .associateBy { it.remoteId }
 
+            // forceRefresh: limpa dados antigos APÓS salvar os dados TMDB/usuário.
+            // Isso remove itens corrompidos/orphaned de syncs anteriores quebrados.
+            if (forceRefresh) {
+                channelDao.clearByCategory(type, url)
+                android.util.Log.d("CineX-Sync", "ensureTypeLoaded($type): banco limpo (${existingTmdbData.size} registros TMDB preservados)")
+            }
+
             // Buscar categorias do banco para mapear nomes
             val categories = categoryDao.getAllByPlaylist(url)
+
+            // Estimate total por tipo para barra de progresso (generoso para não travar em 99%)
+            val estimatedTotal = when (type) { "LIVE_TV" -> 3000; "MOVIE" -> 20000; else -> 10000 }
 
             when (type) {
                 "LIVE_TV" -> {
                     val catsMap = categories.filter { it.type == "LIVE_TV" }.associateBy { it.id.removePrefix("live_") }
-
-                    fun mapLive(stream: LiveStreamItem, index: Int): Channel {
+                    android.util.Log.d("CineX-Sync", "LIVE: Streaming fetch iniciado (${catsMap.size} categorias)")
+                    val inserted = streamingFetch(
+                        baseUrl, username, password, "get_live_streams", null,
+                        LiveStreamItem::class.java, "stream_id", estimatedTotal, onProgress = onProgress
+                    ) { stream, index ->
                         val old = existingTmdbData["live_${stream.stream_id}"]
-                        // Proteção: nome nulo/vazio usa fallback com ID do stream
-                        val safeName = stream.name.orEmpty().ifBlank { "Canal #${stream.stream_id}" }
-                        return Channel(
-                            name = safeName,
+                        Channel(
+                            name = stream.name.orEmpty().ifBlank { "Canal #${stream.stream_id}" },
                             logoUrl = stream.stream_icon,
-                            groupTitle = catsMap[stream.category_id]?.name ?: "Live",
+                            groupTitle = decodeUnicode(catsMap[stream.category_id]?.name) ?: "Live",
                             categoryId = buildStoredCategoryId("LIVE_TV", stream.category_id),
                             streamUrl = "${baseUrl}live/$username/$password/${stream.stream_id}.ts",
                             category = "LIVE_TV",
@@ -1145,76 +1246,22 @@ class ChannelRepository @Inject constructor(
                             isFavorite = old?.isFavorite ?: false
                         )
                     }
-
-                    if (catsMap.isNotEmpty()) {
-                        // Fetch paralelo por categoria — 6 requests simultâneos, 3-5x mais rápido
-                        val globalIndex = AtomicInteger(0)
-                        val failedCategories = java.util.Collections.synchronizedList(mutableListOf<String>())
-                        coroutineScope {
-                            catsMap.keys.forEach { catId ->
-                                launch {
-                                    fetchSemaphore.withPermit {
-                                        try {
-                                            val catStreams = try { api.getLiveStreams(username, password, catId) }
-                                                catch (e: Exception) {
-                                                    val t = object : com.google.gson.reflect.TypeToken<List<LiveStreamItem>>() {}.type
-                                                    fetchListRelaxed<LiveStreamItem>("get_live_streams", catId, t)
-                                                }
-                                            if (catStreams.isNotEmpty()) {
-                                                val startIdx = globalIndex.getAndAdd(catStreams.size)
-                                                channelDao.insertAll(catStreams.mapIndexed { i, s -> mapLive(s, startIdx + i) })
-                                            }
-                                        } catch (e: Exception) {
-                                            failedCategories.add(catId)
-                                            android.util.Log.e("CineX-Sync", "LIVE cat $catId falhou: ${e.message}")
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        android.util.Log.d("CineX-Sync", "LIVE: ${globalIndex.get()} streams (paralelo), ${failedCategories.size} categorias falharam")
-                        // Fallback bulk se per-category não retornou nada
-                        if (globalIndex.get() == 0) {
-                            val streams = try { api.getLiveStreams(username, password) }
-                                catch (e: Exception) {
-                                    val t = object : com.google.gson.reflect.TypeToken<List<LiveStreamItem>>() {}.type
-                                    fetchListRelaxed<LiveStreamItem>("get_live_streams", null, t)
-                                }
-                            android.util.Log.d("CineX-Sync", "LIVE bulk fallback: ${streams.size} streams")
-                            streams.chunked(500).forEachIndexed { ci, chunk ->
-                                channelDao.insertAll(chunk.mapIndexed { i, s -> mapLive(s, ci * 500 + i) })
-                            }
-                        }
-                    } else {
-                        // Sem categorias — bulk direto
-                        val streams = try { api.getLiveStreams(username, password) }
-                            catch (e: Exception) {
-                                val t = object : com.google.gson.reflect.TypeToken<List<LiveStreamItem>>() {}.type
-                                fetchListRelaxed<LiveStreamItem>("get_live_streams", null, t)
-                            }
-                        android.util.Log.d("CineX-Sync", "LIVE bulk (sem cats): ${streams.size} streams")
-                        streams.chunked(500).forEachIndexed { ci, chunk ->
-                            channelDao.insertAll(chunk.mapIndexed { i, s -> mapLive(s, ci * 500 + i) })
-                        }
-                        if (streams.isNotEmpty()) {
-                            categoryDao.insertAll(streams.groupBy { it.category_id }.entries.mapIndexed { idx, (catId, _) ->
-                                com.cinex.player.data.model.Category("live_$catId", "Grupo $catId", "LIVE_TV", url, orderIndex = idx)
-                            })
-                        }
-                    }
+                    android.util.Log.d("CineX-Sync", "LIVE: ✅ $inserted canais inseridos")
+                    if (inserted == 0) android.util.Log.w("CineX-Sync", "LIVE: ⚠️ Nenhum canal inserido")
                 }
                 "MOVIE" -> {
                     val catsMap = categories.filter { it.type == "MOVIE" }.associateBy { it.id.removePrefix("vod_") }
-
-                    fun mapVod(m: VodStreamItem, index: Int): Channel {
+                    android.util.Log.d("CineX-Sync", "MOVIE: Streaming fetch iniciado (${catsMap.size} categorias)")
+                    val inserted = streamingFetch(
+                        baseUrl, username, password, "get_vod_streams", null,
+                        VodStreamItem::class.java, "stream_id", estimatedTotal, onProgress = onProgress
+                    ) { m, index ->
                         val ext = m.container_extension ?: "mp4"
                         val old = existingTmdbData["vod_${m.stream_id}"]
-                        // Proteção: nome nulo/vazio usa fallback com ID do stream
-                        val safeName = m.name.orEmpty().ifBlank { "Filme #${m.stream_id}" }
-                        return Channel(
-                            name = safeName,
+                        Channel(
+                            name = m.name.orEmpty().ifBlank { "Filme #${m.stream_id}" },
                             logoUrl = m.stream_icon,
-                            groupTitle = catsMap[m.category_id]?.name ?: "VOD",
+                            groupTitle = decodeUnicode(catsMap[m.category_id]?.name) ?: "VOD",
                             categoryId = buildStoredCategoryId("MOVIE", m.category_id),
                             streamUrl = "${baseUrl}movie/$username/$password/${m.stream_id}.$ext",
                             category = "MOVIE",
@@ -1234,85 +1281,21 @@ class ChannelRepository @Inject constructor(
                             syncedAt = m.addedTimestamp()
                         )
                     }
-
-                    if (catsMap.isNotEmpty()) {
-                        val globalIndex = AtomicInteger(0)
-                        val failedCategories = java.util.Collections.synchronizedList(mutableListOf<String>())
-                        val nullNameCount = AtomicInteger(0)
-                        coroutineScope {
-                            catsMap.keys.forEach { catId ->
-                                launch {
-                                    fetchSemaphore.withPermit {
-                                        try {
-                                            val catStreams = try { api.getVodStreams(username, password, catId) }
-                                                catch (e: Exception) {
-                                                    val t = object : com.google.gson.reflect.TypeToken<List<VodStreamItem>>() {}.type
-                                                    fetchListRelaxed<VodStreamItem>("get_vod_streams", catId, t)
-                                                }
-                                            if (catStreams.isNotEmpty()) {
-                                                // Contar itens com nome nulo/vazio
-                                                val nullNames = catStreams.count { it.name.isNullOrBlank() }
-                                                if (nullNames > 0) {
-                                                    nullNameCount.addAndGet(nullNames)
-                                                    android.util.Log.w("CineX-Sync", "MOVIE cat $catId: $nullNames itens com nome nulo/vazio (usarão fallback)")
-                                                }
-                                                val startIdx = globalIndex.getAndAdd(catStreams.size)
-                                                channelDao.insertAll(catStreams.mapIndexed { i, m -> mapVod(m, startIdx + i) })
-                                                android.util.Log.d("CineX-Sync", "MOVIE cat $catId: ${catStreams.size} streams inseridos")
-                                            }
-                                        } catch (e: Exception) {
-                                            failedCategories.add(catId)
-                                            android.util.Log.e("CineX-Sync", "MOVIE cat $catId falhou: ${e.message}")
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        if (nullNameCount.get() > 0) {
-                            android.util.Log.w("CineX-Sync", "MOVIE total: ${nullNameCount.get()} filmes com nome nulo/vazio (fallback aplicado)")
-                        }
-                        android.util.Log.d("CineX-Sync", "MOVIE: ${globalIndex.get()} streams (paralelo), ${failedCategories.size} categorias falharam")
-                        if (globalIndex.get() == 0) {
-                            android.util.Log.w("CineX-Sync", "MOVIE: paralelismo não retornou nada, tentando bulk...")
-                            val streams = try { api.getVodStreams(username, password) }
-                                catch (e: Exception) {
-                                    val t = object : com.google.gson.reflect.TypeToken<List<VodStreamItem>>() {}.type
-                                    fetchListRelaxed<VodStreamItem>("get_vod_streams", null, t)
-                                }
-                            android.util.Log.d("CineX-Sync", "MOVIE bulk fallback: ${streams.size} streams")
-                            streams.chunked(500).forEachIndexed { ci, chunk ->
-                                channelDao.insertAll(chunk.mapIndexed { i, m -> mapVod(m, ci * 500 + i) })
-                            }
-                            android.util.Log.d("CineX-Sync", "MOVIE bulk fallback: ${streams.size} inseridos")
-                        }
-                    } else {
-                        val streams = try { api.getVodStreams(username, password) }
-                            catch (e: Exception) {
-                                val t = object : com.google.gson.reflect.TypeToken<List<VodStreamItem>>() {}.type
-                                fetchListRelaxed<VodStreamItem>("get_vod_streams", null, t)
-                            }
-                        android.util.Log.d("CineX-Sync", "MOVIE bulk (sem cats): ${streams.size} streams")
-                        streams.chunked(500).forEachIndexed { ci, chunk ->
-                            channelDao.insertAll(chunk.mapIndexed { i, m -> mapVod(m, ci * 500 + i) })
-                        }
-                        if (streams.isNotEmpty()) {
-                            categoryDao.insertAll(streams.groupBy { it.category_id }.entries.mapIndexed { idx, (catId, _) ->
-                                com.cinex.player.data.model.Category("vod_$catId", "Grupo $catId", "MOVIE", url, orderIndex = idx)
-                            })
-                        }
-                    }
+                    android.util.Log.d("CineX-Sync", "MOVIE: ✅ $inserted filmes inseridos")
+                    if (inserted == 0) android.util.Log.w("CineX-Sync", "MOVIE: ⚠️ Nenhum filme inserido — servidor pode ter JSON inválido")
                 }
                 "SERIES" -> {
                     val catsMap = categories.filter { it.type == "SERIES" }.associateBy { it.id.removePrefix("series_") }
-
-                    fun mapSeries(s: SeriesItem, index: Int): Channel {
+                    android.util.Log.d("CineX-Sync", "SERIES: Streaming fetch iniciado (${catsMap.size} categorias)")
+                    val inserted = streamingFetch(
+                        baseUrl, username, password, "get_series", null,
+                        SeriesItem::class.java, "series_id", estimatedTotal, onProgress = onProgress
+                    ) { s, index ->
                         val old = existingTmdbData["series_${s.series_id}"]
-                        // Proteção: nome nulo/vazio usa fallback com ID da série
-                        val safeName = s.name.orEmpty().ifBlank { "Série #${s.series_id}" }
-                        return Channel(
-                            name = safeName,
+                        Channel(
+                            name = s.name.orEmpty().ifBlank { "Série #${s.series_id}" },
                             logoUrl = s.cover,
-                            groupTitle = catsMap[s.category_id]?.name ?: "SÉRIES",
+                            groupTitle = decodeUnicode(catsMap[s.category_id]?.name) ?: "SÉRIES",
                             categoryId = buildStoredCategoryId("SERIES", s.category_id),
                             streamUrl = "",
                             category = "SERIES",
@@ -1333,55 +1316,8 @@ class ChannelRepository @Inject constructor(
                             syncedAt = s.lastModifiedTimestamp()
                         )
                     }
-
-                    if (catsMap.isNotEmpty()) {
-                        val globalIndex = AtomicInteger(0)
-                        val failedCategories = java.util.Collections.synchronizedList(mutableListOf<String>())
-                        coroutineScope {
-                            catsMap.keys.forEach { catId ->
-                                launch {
-                                    fetchSemaphore.withPermit {
-                                        try {
-                                            val catSeries = try { api.getSeries(username, password, catId) }
-                                                catch (e: Exception) {
-                                                    val t = object : com.google.gson.reflect.TypeToken<List<SeriesItem>>() {}.type
-                                                    fetchListRelaxed<SeriesItem>("get_series", catId, t)
-                                                }
-                                            if (catSeries.isNotEmpty()) {
-                                                val startIdx = globalIndex.getAndAdd(catSeries.size)
-                                                channelDao.insertAll(catSeries.mapIndexed { i, s -> mapSeries(s, startIdx + i) })
-                                            }
-                                        } catch (e: Exception) {
-                                            failedCategories.add(catId)
-                                            android.util.Log.e("CineX-Sync", "SERIES cat $catId falhou: ${e.message}")
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        android.util.Log.d("CineX-Sync", "SERIES: ${globalIndex.get()} items (paralelo), ${failedCategories.size} categorias falharam")
-                        if (globalIndex.get() == 0) {
-                            val seriesList = try { api.getSeries(username, password) }
-                                catch (e: Exception) {
-                                    val t = object : com.google.gson.reflect.TypeToken<List<SeriesItem>>() {}.type
-                                    fetchListRelaxed<SeriesItem>("get_series", null, t)
-                                }
-                            android.util.Log.d("CineX-Sync", "SERIES bulk fallback: ${seriesList.size} items")
-                            seriesList.chunked(500).forEachIndexed { ci, chunk ->
-                                channelDao.insertAll(chunk.mapIndexed { i, s -> mapSeries(s, ci * 500 + i) })
-                            }
-                        }
-                    } else {
-                        val seriesList = try { api.getSeries(username, password) }
-                            catch (e: Exception) {
-                                val t = object : com.google.gson.reflect.TypeToken<List<SeriesItem>>() {}.type
-                                fetchListRelaxed<SeriesItem>("get_series", null, t)
-                            }
-                        android.util.Log.d("CineX-Sync", "SERIES bulk (sem cats): ${seriesList.size} items")
-                        seriesList.chunked(500).forEachIndexed { ci, chunk ->
-                            channelDao.insertAll(chunk.mapIndexed { i, s -> mapSeries(s, ci * 500 + i) })
-                        }
-                    }
+                    android.util.Log.d("CineX-Sync", "SERIES: ✅ $inserted séries inseridas")
+                    if (inserted == 0) android.util.Log.w("CineX-Sync", "SERIES: ⚠️ Nenhuma série inserida")
                 }
             }
 
@@ -1615,7 +1551,13 @@ class ChannelRepository @Inject constructor(
         try {
             // === SUPABASE CACHE CHECK ===
             val cacheKey = generateCacheKey(channel)
-            val cached = tmdbMemoryCache[cacheKey]
+            var cached = tmdbMemoryCache[cacheKey]
+            // Invalida cache se o bannerUrl ainda usa /w1280/ (formato antigo, não passa no filtro getFeaturedContent)
+            if (cached != null && cached.bannerUrl?.contains("/t/p/w1280") == true) {
+                android.util.Log.d("CineX-Cache", "[STALE] '$cacheKey' → banner w1280, invalidando cache")
+                tmdbMemoryCache.remove(cacheKey)
+                cached = null
+            }
             if (cached != null && (cached.posterUrl != null || cached.synopsis != null)) {
                 android.util.Log.d("CineX-Cache", "[HIT] '$cacheKey' → poster=${cached.posterUrl != null}")
                 if (channel.category == "SERIES" && channel.seriesName != null) {
@@ -1751,7 +1693,8 @@ class ChannelRepository @Inject constructor(
                 }
 
                 val posterUrl = details.poster_path?.let { "https://image.tmdb.org/t/p/w500$it" }
-                val backdropUrl = details.backdrop_path?.let { "https://image.tmdb.org/t/p/w1280$it" }
+                // CRÍTICO: usa /original/ para que getFeaturedContent (LIKE '%/original/%') aceite este backdrop
+                val backdropUrl = details.backdrop_path?.let { "https://image.tmdb.org/t/p/original$it" }
                 android.util.Log.d("CineX-TMDB", "  → backdrop=$backdropUrl, synopsis=${details.overview?.take(30)}")
                 val cast = details.credits?.cast?.take(10)?.joinToString(", ") { it.name }
                 val year = tmdbResult.release_date?.take(4) ?: tmdbResult.first_air_date?.take(4)
@@ -1792,23 +1735,10 @@ class ChannelRepository @Inject constructor(
                         cast
                     )
 
-                    // Busca thumbnails e sinopses específicas de episódios em uma única passada
-                    details.seasons?.forEach { season ->
-                        try {
-                            val seasonDetails = tmdbApi.getSeasonDetails(bestMatch.id, season.season_number, tmdbApiKey)
-                            seasonDetails.episodes.forEach { tmdbEp ->
-                                val stillUrl = tmdbEp.still_path?.let { "https://image.tmdb.org/t/p/w500$it" }
-                                channelDao.updateEpisodeStillAndSynopsis(
-                                    channel.seriesName!!,
-                                    season.season_number,
-                                    tmdbEp.episode_number,
-                                    stillUrl ?: "",
-                                    tmdbEp.overview,
-                                    channel.playlistUrl
-                                )
-                            }
-                        } catch (_: Exception) {}
-                    }
+                    // NOTA: thumbnails/sinopses por episódio são carregados lazy em
+                    // enrichSeriesSeasonWithTmdb() quando o usuário abre uma temporada.
+                    // Manter o loop aqui gerava 1 write por episódio (centenas por série),
+                    // disparando re-emissões de observeAllSeries() e travando a TV.
                 } else {
                     channelDao.updateTmdbInfo(
                         channel.id,
@@ -2212,4 +2142,378 @@ class ChannelRepository @Inject constructor(
             e.printStackTrace()
         }
     }
+
+    private fun decodeUnicode(text: String?): String? {
+        if (text == null) return null
+        return try {
+            text.replace(Regex("""\\u([0-9a-fA-F]{4})""")) { match ->
+                match.groupValues[1].toInt(16).toChar().toString()
+            }
+        } catch (_: Exception) {
+            text
+        }
+    }
+
+    /**
+     * Lê um objeto JSON campo-a-campo tolerando campos malformados.
+     * Quando um campo tem sintaxe inválida (ex: rating_5based:3.4), pula só aquele campo
+     * e preserva o objeto com os demais campos — igual a TiviMate/XCIPTV.
+     */
+    private fun readObjectLenient(reader: com.google.gson.stream.JsonReader): String {
+        val sb = StringBuilder("{")
+        var first = true
+        try { reader.beginObject() } catch (_: Exception) { return "{}" }
+        while (true) {
+            try {
+                if (!reader.hasNext()) break
+                val name = try { reader.nextName() } catch (_: Exception) {
+                    try { reader.skipValue() } catch (_: Exception) {}
+                    continue
+                }
+                val value: String? = try {
+                    when (reader.peek()) {
+                        com.google.gson.stream.JsonToken.STRING -> {
+                            val s = reader.nextString()
+                            "\"${s.replace("\\", "\\\\").replace("\"", "\\\"")}\""
+                        }
+                        com.google.gson.stream.JsonToken.NUMBER -> reader.nextString()
+                        com.google.gson.stream.JsonToken.BOOLEAN -> reader.nextBoolean().toString()
+                        com.google.gson.stream.JsonToken.NULL -> { reader.nextNull(); "null" }
+                        com.google.gson.stream.JsonToken.BEGIN_ARRAY -> {
+                            val arr = StringBuilder("[")
+                            reader.beginArray()
+                            var af = true
+                            while (reader.hasNext()) {
+                                try {
+                                    val v = when (reader.peek()) {
+                                        com.google.gson.stream.JsonToken.STRING -> "\"${reader.nextString()}\""
+                                        com.google.gson.stream.JsonToken.NUMBER -> reader.nextString()
+                                        else -> { reader.skipValue(); null }
+                                    }
+                                    if (v != null) { if (!af) arr.append(","); arr.append(v); af = false }
+                                } catch (_: Exception) { try { reader.skipValue() } catch (_: Exception) { break } }
+                            }
+                            try { reader.endArray() } catch (_: Exception) {}
+                            arr.append("]"); arr.toString()
+                        }
+                        else -> { reader.skipValue(); null }
+                    }
+                } catch (_: Exception) {
+                    try { reader.skipValue() } catch (_: Exception) {}
+                    null
+                }
+                if (value != null) {
+                    if (!first) sb.append(",")
+                    sb.append("\"${name.replace("\"", "\\\"")}\":$value")
+                    first = false
+                }
+            } catch (_: Exception) {
+                try { reader.skipValue() } catch (_: Exception) { break }
+            }
+        }
+        try { reader.endObject() } catch (_: Exception) {}
+        sb.append("}")
+        return sb.toString()
+    }
+
+    /**
+     * Streaming fetch direto da rede — nunca carrega o JSON inteiro na memória.
+     * Lê um objeto JSON por vez da resposta HTTP, mapeia para Channel e insere em batches.
+     * Usa readObjectLenient para tolerar JSON malformado (campos inválidos, truncamentos).
+     * Pico de RAM: ~[batchSize] objetos Channel (~500), não os 16k+ do catálogo completo.
+     *
+     * @return total de itens inseridos
+     */
+    private suspend fun <T : Any> streamingFetch(
+        baseUrl: String,
+        user: String,
+        pass: String,
+        action: String,
+        catId: String?,
+        itemClass: Class<T>,
+        idFieldName: String,
+        estimatedTotal: Int,
+        batchSize: Int = 500,
+        onProgress: ((Int) -> Unit)? = null,
+        mapper: (T, Int) -> Channel
+    ): Int = withContext(Dispatchers.IO) {
+        val fetchUrl = "${baseUrl}player_api.php?username=$user&password=$pass&action=$action${if (catId != null) "&category_id=$catId" else ""}"
+        val request = Request.Builder().url(fetchUrl).build()
+        val gson = com.google.gson.GsonBuilder().setLenient().create()
+
+        var totalInserted = 0
+        val batch = ArrayList<Channel>(batchSize)
+        val seenIds = mutableSetOf<String>()
+
+        try {
+            okHttpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    android.util.Log.w("CineX-Stream", "$action: HTTP ${response.code}")
+                    return@withContext 0
+                }
+                val body = response.body ?: return@withContext 0
+
+                val reader = com.google.gson.stream.JsonReader(body.charStream().buffered())
+                reader.isLenient = true
+
+                try {
+                    if (reader.peek() != com.google.gson.stream.JsonToken.BEGIN_ARRAY) {
+                        android.util.Log.w("CineX-Stream", "$action: resposta não é array JSON")
+                        return@withContext 0
+                    }
+                    reader.beginArray()
+                    while (reader.hasNext()) {
+                        try {
+                            val objJson = readObjectLenient(reader)
+                            val item = try { gson.fromJson<T>(objJson, itemClass) } catch (_: Exception) { null }
+                            if (item != null) {
+                                val id = try {
+                                    itemClass.getDeclaredField(idFieldName)
+                                        .apply { isAccessible = true }
+                                        .get(item)?.toString()
+                                } catch (_: Exception) { null }
+
+                                if (id != null && seenIds.add(id)) {
+                                    batch.add(mapper(item, totalInserted + batch.size))
+                                    if (batch.size >= batchSize) {
+                                        channelDao.insertAll(batch.toList())
+                                        totalInserted += batch.size
+                                        batch.clear()
+                                        val pct = (totalInserted * 100 / estimatedTotal).coerceIn(1, 99)
+                                        onProgress?.invoke(pct)
+                                    }
+                                }
+                            }
+                        } catch (_: Exception) {
+                            try { reader.skipValue() } catch (_: Exception) { break }
+                        }
+                    }
+                    try { reader.endArray() } catch (_: Exception) {}
+                } finally {
+                    try { reader.close() } catch (_: Exception) {}
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("CineX-Stream", "$action: erro de streaming: ${e.message}")
+        }
+
+        // Flush último batch parcial
+        if (batch.isNotEmpty()) {
+            try {
+                channelDao.insertAll(batch.toList())
+                totalInserted += batch.size
+            } catch (e: Exception) {
+                android.util.Log.e("CineX-Stream", "$action: erro no batch final: ${e.message}")
+            }
+        }
+        if (totalInserted > 0) onProgress?.invoke(100)
+
+        totalInserted
+    }
+
+    /**
+     * Helper para fetch com fallback relaxed (JSON truncado/malformado via Streaming)
+     * Utiliza Brute-Force Regex para recuperar itens que quebram o parser JSON.
+     */
+    private suspend fun <T : Any> fetchListRelaxed(
+        baseUrl: String,
+        user: String,
+        pass: String,
+        action: String,
+        catId: String?,
+        itemClass: Class<T>
+    ): List<T> {
+        val fetchUrl = "${baseUrl}player_api.php?username=$user&password=$pass&action=$action${if (catId != null) "&category_id=$catId" else ""}"
+        val request = Request.Builder().url(fetchUrl).build()
+        val gson = com.google.gson.GsonBuilder().setLenient().create()
+        val resultList = mutableListOf<T>()
+
+        try {
+            val response = okHttpClient.newCall(request).execute()
+            if (!response.isSuccessful) {
+                android.util.Log.w("CineX-Sync", "$action: HTTP ${response.code}")
+                return emptyList()
+            }
+
+            var jsonStr = response.body?.string() ?: ""
+            jsonStr = jsonStr.trim()
+
+            if (jsonStr.isEmpty()) {
+                android.util.Log.w("CineX-Sync", "$action: Resposta vazia")
+                return emptyList()
+            }
+
+            // PRÉ-PROCESSAMENTO: Corrigir problemas em JSON de servidores Xtream
+            android.util.Log.d("CineX-Sync", "$action: Analisando JSON (${jsonStr.length} chars)...")
+
+            // SOMENTE corrigir backslashes soltos (não escapados) que quebram o parser
+            // NÃO tocar em unicode escapes (\uXXXX) - eles são válidos mesmo se incompletos no meio do truncamento
+            // Regex: encontra \ que não está escapando nada válido
+            val beforeLength = jsonStr.length
+            jsonStr = jsonStr.replace(Regex("""(?<!\\)\\(?!["\\/bfnrtu\\])""")) { match ->
+                android.util.Log.d("CineX-Sync", "$action: Backslash solto escapado")
+                "\\\\"
+            }
+
+            if (jsonStr.length != beforeLength) {
+                android.util.Log.d("CineX-Sync", "$action: JSON modificado (${beforeLength} -> ${jsonStr.length} chars)")
+            }
+
+            // Reparo básico de truncagem no final da string
+            if (jsonStr.startsWith("[") && !jsonStr.endsWith("]")) {
+                val lastBrace = jsonStr.lastIndexOf('}')
+                if (lastBrace > 0) {
+                    jsonStr = jsonStr.substring(0, lastBrace + 1) + "]"
+                    android.util.Log.d("CineX-Sync", "$action: JSON truncado reparado")
+                } else {
+                    jsonStr += "]"
+                }
+            }
+
+            val isSeries = itemClass.simpleName == "SeriesItem"
+            val isCategory = itemClass.simpleName == "XtreamCategory"
+            val idField = when {
+                isSeries -> "series_id"
+                isCategory -> "category_id"
+                else -> "stream_id"
+            }
+            val seenIds = mutableSetOf<String>()
+            var streamingFailed = false
+
+            // Parser campo-a-campo via readObjectLenient (membro da classe)
+            try {
+                val reader = com.google.gson.stream.JsonReader(java.io.StringReader(jsonStr))
+                reader.isLenient = true
+
+                if (jsonStr.startsWith("[")) {
+                    reader.beginArray()
+                    while (reader.hasNext()) {
+                        try {
+                            val objJson = readObjectLenient(reader)
+                            val item = gson.fromJson<T>(objJson, itemClass)
+                            if (item != null) {
+                                val id = try {
+                                    itemClass.getDeclaredField(idField).apply { isAccessible = true }.get(item).toString()
+                                } catch (_: Exception) { null }
+                                if (id != null && seenIds.add(id)) resultList.add(item)
+                            }
+                        } catch (e: Exception) {
+                            try { reader.skipValue() } catch (_: Exception) {
+                                streamingFailed = true
+                                break
+                            }
+                        }
+                    }
+                    if (!streamingFailed) try { reader.endArray() } catch (_: Exception) {}
+                } else {
+                    val item = gson.fromJson(jsonStr, itemClass)
+                    if (item != null) resultList.add(item)
+                }
+                reader.close()
+            } catch (e: Exception) {
+                android.util.Log.e("CineX-Sync", "$action: Parser falhou: ${e.message}")
+                streamingFailed = true
+            }
+
+            // TENTA 2: Se streaming falhou, usa recovery OTIMIZADA por chunks
+            if (streamingFailed) {
+                val recoveryStartTime = System.currentTimeMillis()
+                android.util.Log.w("CineX-Sync", "$action: Streaming falhou, tentando recovery por CHUNKS otimizada...")
+                android.util.Log.d("CineX-Sync", "$action: Já recuperado ${resultList.size} itens antes da falha...")
+                
+                try {
+                    // Estratégia rápida: encontra objetos JSON por scan linear (sem regex pesado)
+                    val idFieldPattern = if (isSeries) "series_id" else "stream_id"
+                    val objectBoundaries = mutableListOf<Pair<Int, Int>>()
+                    
+                    // Scan linear para encontrar limites de objetos { ... }
+                    var braceCount = 0
+                    var objectStart = -1
+                    var inString = false
+                    var escapeNext = false
+                    
+                    for (i in jsonStr.indices) {
+                        val c = jsonStr[i]
+                        
+                        if (escapeNext) {
+                            escapeNext = false
+                            continue
+                        }
+                        if (c == '\\') {
+                            escapeNext = true
+                            continue
+                        }
+                        if (c == '"') {
+                            inString = !inString
+                            continue
+                        }
+                        if (inString) continue
+                        
+                        when (c) {
+                            '{' -> {
+                                if (braceCount == 0) objectStart = i
+                                braceCount++
+                            }
+                            '}' -> {
+                                braceCount--
+                                if (braceCount == 0 && objectStart >= 0) {
+                                    objectBoundaries.add(objectStart to i)
+                                    objectStart = -1
+                                }
+                            }
+                        }
+                    }
+                    
+                    android.util.Log.d("CineX-Sync", "$action: Encontrados ${objectBoundaries.size} objetos")
+                    
+                    // Processa objetos que ainda não foram adicionados
+                    var recoveredCount = 0
+                    var failedCount = 0
+                    val startIndex = resultList.size.coerceAtMost(objectBoundaries.size)
+                    
+                    for (idx in startIndex until objectBoundaries.size) {
+                        // Yield a cada 100 itens para evitar ANR
+                        if (idx % 100 == 0) {
+                            kotlinx.coroutines.yield()
+                        }
+                        
+                        val (start, end) = objectBoundaries[idx]
+                        val objJson = jsonStr.substring(start, end + 1)
+                        
+                        try {
+                            val item = gson.fromJson(objJson, itemClass)
+                            if (item != null) {
+                                val id = try {
+                                    itemClass.getDeclaredField(idField).apply { isAccessible = true }.get(item).toString()
+                                } catch (_: Exception) { null }
+                                
+                                if (id != null && !seenIds.contains(id)) {
+                                    resultList.add(item)
+                                    seenIds.add(id)
+                                    recoveredCount++
+                                }
+                            }
+                        } catch (_: Exception) {
+                            failedCount++
+                        }
+                    }
+                    
+                    val recoveryTime = System.currentTimeMillis() - recoveryStartTime
+                    android.util.Log.d("CineX-Sync", "$action: ✅ Recovery concluída em ${recoveryTime}ms: ${resultList.size} itens totais (+$recoveredCount recuperados, $failedCount falhas)")
+                } catch (e: Exception) {
+                    android.util.Log.e("CineX-Sync", "$action: Recovery falhou: ${e.message}")
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("CineX-Sync", "$action: Erro fatal no fetch relaxed: ${e.message}")
+            e.printStackTrace()
+        }
+
+        return resultList
+    }
+
+    // Helpers de recovery DESABILITADOS - causavam ANR/OOM em JSON > 8MB
+    // @Suppress("unused")
+    // private fun findObjectStart(json: String, pos: Int): Int { ... }
+    // private fun findObjectEnd(json: String, pos: Int): Int { ... }
 }

@@ -60,9 +60,15 @@ fun CategoryItem(
             .onFocusChanged { isFocused = it.isFocused }
             .focusable(interactionSource = remember { MutableInteractionSource() })
             .onKeyEvent { event ->
-                if (event.type == KeyEventType.KeyUp &&
-                    (event.key == Key.DirectionCenter || event.key == Key.Enter)
-                ) { onClick(); true } else false
+                when {
+                    event.type == KeyEventType.KeyUp &&
+                    (event.key == Key.DirectionCenter || event.key == Key.Enter) -> {
+                        onClick(); true
+                    }
+                    // Consome LEFT para evitar que TVs interpretem como BACK navigation
+                    isTV && event.key == Key.DirectionLeft -> true
+                    else -> false
+                }
             }
             .clip(shape)
             .border(

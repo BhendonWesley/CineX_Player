@@ -40,6 +40,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
@@ -56,6 +57,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
 import coil.compose.SubcomposeAsyncImageContent
 import android.content.res.Configuration as AndroidConfig
@@ -72,6 +74,7 @@ fun VodPosterItem(
     channel: Channel,
     modifier: Modifier = Modifier,
     showProgress: Boolean = false,
+    onFocused: ((Channel) -> Unit)? = null,
     onClick: () -> Unit = {}
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -88,63 +91,99 @@ fun VodPosterItem(
         uiModeManager.currentModeType == AndroidConfig.UI_MODE_TYPE_TELEVISION
     }
 
-    val showOverlay = isPressed || isFocused
+    val focusScale by animateFloatAsState(
+        targetValue = if (isFocused) 1.05f else 1f,
+        animationSpec = tween(durationMillis = 150),
+        label = "vodFocusScale"
+    )
 
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .aspectRatio(2f / 3f)
-            .onFocusChanged { isFocused = it.isFocused }
-            .focusable(interactionSource = remember { MutableInteractionSource() })
-            .onKeyEvent { event ->
-                if (event.type == KeyEventType.KeyUp &&
-                    (event.key == Key.DirectionCenter || event.key == Key.Enter)
-                ) {
-                    onClick()
-                    true
-                } else {
-                    false
-                }
-            }
-            .clip(RoundedCornerShape(12.dp))
-            .then(
-                if (showOverlay) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(12.dp))
-                else Modifier
-            )
-            .background(CineX_SecondaryBackground)
-            .clickable(
-                interactionSource = interactionSource,
-                indication = null,
-                onClick = onClick
-            )
+            .padding(vertical = if (isTv) 4.dp else 0.dp)
     ) {
-        fun String?.asValidImageUrl(): String? {
-            val value = this?.trim()
-            if (value.isNullOrEmpty()) return null
-            if (value.equals("null", ignoreCase = true)) return null
-            return value
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(2f / 3f)
+                .onFocusChanged {
+                    isFocused = it.isFocused
+                    if (it.isFocused) {
+                        onFocused?.invoke(channel)
+                    }
+                }
+                .focusable(interactionSource = remember { MutableInteractionSource() })
+                .onKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyUp &&
+                        (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                    ) {
+                        onClick()
+                        true
+                    } else {
+                        false
+                    }
+                }
+                .graphicsLayer {
+                    scaleX = focusScale
+                    scaleY = focusScale
+                    shape = RoundedCornerShape(12.dp)
+                    clip = true
+                }
+                .then(
+                    if (isFocused) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(12.dp))
+                    else Modifier
+                )
+                .background(CineX_SecondaryBackground)
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                    onClick = onClick
+                )
+        ) {
+        val imageCandidates = remember(channel.id, channel.logoUrl, channel.posterUrl) {
+            fun String?.asValidImageUrl(): String? {
+                val value = this?.trim()
+                if (value.isNullOrEmpty()) return null
+                if (value.equals("null", ignoreCase = true)) return null
+                return value
+            }
+            listOfNotNull(
+                channel.logoUrl.asValidImageUrl(),
+                channel.posterUrl.asValidImageUrl()
+            ).distinct()
         }
 
-        val imageCandidates = listOfNotNull(
-            channel.logoUrl.asValidImageUrl(),
-            channel.posterUrl.asValidImageUrl()
-        ).distinct()
-
-        var imageIndex by remember(channel.id, imageCandidates) { mutableIntStateOf(0) }
+        var imageIndex by remember(channel.id) { mutableIntStateOf(0) }
         val imageUrl = imageCandidates.getOrNull(imageIndex)
 
         if (imageUrl != null) {
-            val imageRequest = remember(imageUrl) {
+            val imageRequest = remember(imageUrl, isTv) {
                 coil.request.ImageRequest.Builder(context)
                     .data(imageUrl)
-                    .crossfade(300)
+                    .crossfade(if (isTv) 0 else 300)
                     .memoryCacheKey(imageUrl)
                     .diskCacheKey(imageUrl)
-                    .size(320, 480)
+                    .size(if (isTv) 200 else 320, if (isTv) 300 else 480)
                     .build()
             }
 
-            SubcomposeAsyncImage(
+            if (isTv) {
+                AsyncImage(
+                    model = imageRequest,
+                    contentDescription = channel.name,
+                    contentScale = ContentScale.Crop,
+                    alignment = Alignment.TopCenter,
+                    modifier = Modifier.fillMaxSize(),
+                    placeholder = painterResource(id = com.cinex.player.R.drawable.logo_cinex),
+                    error = painterResource(id = com.cinex.player.R.drawable.logo_cinex),
+                    onError = {
+                        if (imageIndex < imageCandidates.lastIndex) {
+                            imageIndex++
+                        }
+                    }
+                )
+            } else {
+                SubcomposeAsyncImage(
                 model = imageRequest,
                 contentDescription = channel.name,
                 contentScale = ContentScale.Crop,
@@ -210,6 +249,7 @@ fun VodPosterItem(
                     }
                 }
             )
+            }
         } else {
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -225,7 +265,7 @@ fun VodPosterItem(
             }
         }
 
-        if (showOverlay) {
+        if (isFocused && !isTv) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -318,6 +358,7 @@ fun VodPosterItem(
                     )
                 }
             }
+        }
         }
     }
 }

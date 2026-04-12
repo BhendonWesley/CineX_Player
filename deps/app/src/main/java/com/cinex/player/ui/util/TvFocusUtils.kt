@@ -17,6 +17,10 @@ private val FocusBorderColor = Color(0xFFF59E0B) // Gold
 /**
  * Modifier that makes a composable focusable for D-pad navigation on TV.
  * Shows a gold border when focused and triggers [onClick] on DPAD_CENTER / ENTER.
+ * 
+ * OTIMIZAÇÃO: Usa KeyDown ao invés de KeyUp para resposta mais rápida.
+ * A navegação por D-pad no Compose já é processada no KeyDown, então
+ * responder no mesmo evento reduz a latência percebida.
  */
 fun Modifier.tvClickable(
     onClick: () -> Unit,
@@ -32,7 +36,8 @@ fun Modifier.tvClickable(
         )
         .focusable(interactionSource = remember { MutableInteractionSource() })
         .onKeyEvent { event ->
-            if (event.type == KeyEventType.KeyUp &&
+            // OTIMIZADO: KeyDown ao invés de KeyUp para resposta instantânea
+            if (event.type == KeyEventType.KeyDown &&
                 (event.key == Key.DirectionCenter || event.key == Key.Enter)
             ) {
                 onClick()

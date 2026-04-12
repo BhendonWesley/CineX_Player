@@ -99,7 +99,8 @@ fun SeriesDetailsScreen(
     var viewMode by remember(series.remoteId) { mutableStateOf(SeriesViewMode.LOADING) }
     var pendingOpenEpisodes by remember(series.remoteId) { mutableStateOf(false) }
     val hasEpisodesReady = sortedSeasons.isNotEmpty()
-    val canOpenEpisodes = hasEpisodesReady && !isLoadingEpisodes
+    // Abre assim que qualquer temporada está no banco — TMDB roda em background sem bloquear
+    val canOpenEpisodes = hasEpisodesReady
 
     val context = LocalContext.current
     val isTv = remember {
@@ -132,10 +133,30 @@ fun SeriesDetailsScreen(
         }
     }
 
-    // Gerencia as transições a partir da tela de LOADING garantida no início
-    LaunchedEffect(viewMode, canOpenEpisodes, pendingOpenEpisodes) {
-        if (viewMode == SeriesViewMode.LOADING && canOpenEpisodes && !pendingOpenEpisodes) {
-            viewMode = SeriesViewMode.LANDING
+    // Gerencia as transições a partir da tela de LOADING garantida no início.
+    // Observa também sortedSeasons para desbloquear quando o Room emitir dados
+    // mesmo que isLoadingEpisodes nunca tenha mudado (séries com cache local).
+    LaunchedEffect(viewMode, canOpenEpisodes, pendingOpenEpisodes, isLoadingEpisodes, sortedSeasons) {
+        if (viewMode == SeriesViewMode.LOADING) {
+            if (!isLoadingEpisodes) {
+                // Terminou de carregar (ou cache local já disponível): sai do LOADING
+                if (pendingOpenEpisodes && canOpenEpisodes) {
+                    pendingOpenEpisodes = false
+                    viewMode = SeriesViewMode.EPISODES
+                } else {
+                    viewMode = SeriesViewMode.LANDING
+                }
+            } else if (canOpenEpisodes && !pendingOpenEpisodes) {
+                // Ainda baixando em background, mas temporadas já chegaram do banco
+                viewMode = SeriesViewMode.LANDING
+            } else {
+                // Timeout de segurança: nunca fica preso mais de 8s
+                kotlinx.coroutines.delay(8000)
+                if (viewMode == SeriesViewMode.LOADING) {
+                    pendingOpenEpisodes = false
+                    viewMode = SeriesViewMode.LANDING
+                }
+            }
         }
     }
 
@@ -777,8 +798,10 @@ fun SeriesDetailsScreen(
                             }
                         } else {
                             // Mobile: Paging
+                            // Usa apenas isPagingLoading — isLoadingEpisodes é sobre download de API
+                            // e não reflete o estado do banco. Confiar no Paging evita spinner infinito.
                             val isPagingLoading = pagingItems.loadState.refresh is androidx.paging.LoadState.Loading
-                            if (pagingItems.itemCount == 0 && (isLoadingEpisodes || isPagingLoading)) {
+                            if (pagingItems.itemCount == 0 && isPagingLoading) {
                                 Box(
                                     modifier = Modifier.fillMaxWidth().padding(top = 100.dp),
                                     contentAlignment = Alignment.Center

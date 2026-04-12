@@ -22,6 +22,7 @@
         android:banner="@drawable/banner"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:largeHeap="true"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.CineXPlayer"
@@ -57,9 +58,14 @@
             android:exported="true"
             android:screenOrientation="sensorLandscape"
             android:theme="@style/Theme.CineXPlayer">
+            <!-- Launcher para dispositivos móveis/tablets -->
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Launcher para Android TV / Fire TV — usa android:banner da <activity> -->
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
         </activity>

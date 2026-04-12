@@ -169,7 +169,7 @@ fun LoadingScreen(
                 )
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
             Text(
                 text = "Aguarde enquanto preparamos sua experiência CineX",

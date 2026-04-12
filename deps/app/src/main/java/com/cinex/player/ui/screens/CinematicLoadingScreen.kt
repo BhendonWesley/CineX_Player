@@ -181,8 +181,8 @@ fun CinematicLoadingScreen(
                     )
                 }
 
-                Spacer(modifier = Modifier.height(8.dp))
-                
+                Spacer(modifier = Modifier.height(4.dp))
+
                 Text(
                     text = "Aguarde enquanto preparamos seu portal",
                     color = Color(0xFF9CA3AF).copy(alpha = 0.7f),

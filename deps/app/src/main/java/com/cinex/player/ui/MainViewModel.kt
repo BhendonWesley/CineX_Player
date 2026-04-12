@@ -227,8 +227,14 @@ class MainViewModel @Inject constructor(
                     // Tenta enriquecer se já tem conteúdo no banco de sessão anterior
                     launch {
                         repository.ensureTypeLoaded("MOVIE")
+                        repository.ensureTypeLoaded("SERIES") // ✅ Carregar séries também!
                         repository.enrichRandomForHome(pl.url, 20)
                         repository.triggerBackgroundEnrichment(pl.url)
+                    }
+                } else {
+                    // Mesmo se já tem featured content, garantir que séries estejam carregadas
+                    launch {
+                        repository.ensureTypeLoaded("SERIES")
                     }
                 }
             }
@@ -322,13 +328,19 @@ class MainViewModel @Inject constructor(
             var locked = false
             repository.getFeaturedContent(playlist.url)
                 .map { channels ->
-                    channels.shuffled(kotlin.random.Random(seed)).take(10)
+                    channels.filter { isValidSynopsis(it.tmdbSynopsis) }
+                        .shuffled(kotlin.random.Random(seed))
+                        .take(10)
                 }
                 .distinctUntilChanged { old, new ->
-                    // Trava a lista assim que tiver 5+ filmes — para de reagir ao enrichment
+                    // Só trava quando tiver 3+ itens com banner TMDB real (/original/).
+                    // Travar com itens Xtream impedia o TMDB de substituí-los depois.
                     if (locked) true
                     else {
-                        if (old.size >= 5) { locked = true; true }
+                        val tmdbCount = old.count {
+                            !it.bannerUrl.isNullOrEmpty() && it.bannerUrl.contains("/original/")
+                        }
+                        if (tmdbCount >= 3) { locked = true; true }
                         else false
                     }
                 }
@@ -377,7 +389,10 @@ class MainViewModel @Inject constructor(
     }
 
     // Cache em memória de todos os canais ao vivo — filtragem por categoria é instantânea
+    // debounce coalesca rajadas de writes (enrichment, sync) em uma única emissão por 150ms,
+    // evitando storms de recomposição no grid TV.
     private val _allLiveChannels = repository.observeAllLiveChannels()
+        .debounce(250)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -411,31 +426,52 @@ class MainViewModel @Inject constructor(
     fun setMovieCategory(id: String) { _selectedMovieCategory.value = id }
     fun setSeriesCategory(id: String) { _selectedSeriesCategory.value = id }
 
-    // Cache em memória de todos os filmes — filtragem por categoria é instantânea (TV)
-    private val _allMovies = repository.observeAllMovies()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
-
-    val moviesByCategory: StateFlow<List<Channel>> = combine(_selectedMovieCategory, _allMovies) { categoryId, allMovies ->
-        when (categoryId) {
-            "Tudo" -> allMovies
-            "Favorito", "Favoritos" -> allMovies.filter { it.isFavorite }
-            "Continuar Assistindo" -> allMovies.filter { it.resumePosition > 0 }
-            else -> allMovies.filter { it.categoryId == categoryId }
+    // Filtra filmes por categoria DIRETAMENTE no banco — nunca carrega 16k itens na memória.
+    // Quando o usuário muda de categoria, o flatMapLatest cancela a query anterior e inicia nova.
+    private val _allMoviesFlow = _selectedMovieCategory
+        .flatMapLatest { categoryId ->
+            when (categoryId) {
+                "Favorito", "Favoritos" -> repository.observeMoviesByCategory("Tudo")
+                    .map { list -> categoryId to list.filter { it.isFavorite } }
+                "Continuar Assistindo" -> repository.observeMoviesByCategory("Tudo")
+                    .map { list -> categoryId to list.filter { it.resumePosition > 0 } }
+                else -> repository.observeMoviesByCategory(categoryId)
+                    .map { list -> categoryId to list }
+            }
         }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .debounce(50) // TV OTIMIZAÇÃO: Debounce muito menor (50ms) para carregar filmes instantaneamente na TV, em vez de segurar por meio segundo.
 
-    // Cache em memória de todas as séries — filtragem por categoria é instantânea (TV)
-    private val _allSeries = repository.observeAllSeries()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    private val _allMovies = _allMoviesFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "Tudo" to emptyList())
 
-    val seriesByCategory: StateFlow<List<Channel>> = combine(_selectedSeriesCategory, _allSeries) { categoryId, allSeries ->
-        when (categoryId) {
-            "Tudo" -> allSeries
-            "Favorito", "Favoritos" -> allSeries.filter { it.isFavorite }
-            "Continuar Assistindo" -> allSeries.filter { it.resumePosition > 0 }
-            else -> allSeries.filter { it.categoryId == categoryId }
+    val isMoviesReady: StateFlow<Boolean> = _allMoviesFlow
+        .map { true }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    val moviesByCategory: StateFlow<Pair<String, List<Channel>>> = _allMovies
+
+    // Filtra séries por categoria diretamente no banco — nunca carrega 8k itens na memória.
+    private val _allSeriesFlow = _selectedSeriesCategory
+        .flatMapLatest { categoryId ->
+            when (categoryId) {
+                "Favorito", "Favoritos" -> repository.observeSeriesByCategory("Tudo")
+                    .map { list -> categoryId to list.filter { it.isFavorite } }
+                "Continuar Assistindo" -> repository.observeSeriesByCategory("Tudo")
+                    .map { list -> categoryId to list.filter { it.resumePosition > 0 } }
+                else -> repository.observeSeriesByCategory(categoryId)
+                    .map { list -> categoryId to list }
+            }
         }
-    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .debounce(50) // TV OTIMIZAÇÃO: 50ms para responsividade instantânea no D-pad.
+
+    private val _allSeries = _allSeriesFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), "Tudo" to emptyList())
+
+    val isSeriesReady: StateFlow<Boolean> = _allSeriesFlow
+        .map { true }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    val seriesByCategory: StateFlow<Pair<String, List<Channel>>> = _allSeries
 
     private val _movieSortOrder = MutableStateFlow("RECENT")
     val movieSortOrder = _movieSortOrder.asStateFlow()
@@ -477,12 +513,20 @@ class MainViewModel @Inject constructor(
     fun getPagedMoviesByCategory(group: String): Flow<PagingData<Channel>> {
         val sort = _movieSortOrder.value
         // Não usa cache por sort — sempre cria flow fresco para garantir ordem correta
-        return repository.getPagedMoviesByCategory(group, sort).cachedIn(viewModelScope)
+        return repository.getPagedMoviesByCategory(group, sort)
+            .cachedIn(viewModelScope)
     }
 
     fun getPagedSeriesByCategory(group: String): Flow<PagingData<Channel>> {
         val sort = _seriesSortOrder.value
-        return repository.getPagedSeriesByCategory(group, sort).cachedIn(viewModelScope)
+        return repository.getPagedSeriesByCategory(group, sort)
+            .cachedIn(viewModelScope)
+    }
+
+    private fun isValidSynopsis(synopsis: String?): Boolean {
+        if (synopsis.isNullOrBlank()) return false
+        val clean = synopsis.trim().lowercase()
+        return clean != "null"
     }
 
     fun clearPagingCaches() {
@@ -967,6 +1011,12 @@ class MainViewModel @Inject constructor(
                             rotateJob.cancel()
                             return@launch
                         }
+                        if (!isCineXUrl(url)) {
+                            _errorMessage.value = "⚠️ Somente servidores CineX são aceitos no CineX Player"
+                            _isLoading.value = false
+                            rotateJob.cancel()
+                            return@launch
+                        }
                         repository.addPlaylist("CineX Panel", url)
                         val result = repository.syncPlaylist(url) { l, m, s, _ ->
                             _liveProgress.value = l
@@ -992,6 +1042,12 @@ class MainViewModel @Inject constructor(
 
                         if (dns.isBlank() || user.isBlank() || pass.isBlank()) {
                             _errorMessage.value = "Credenciais Xtream não configuradas no painel."
+                            _isLoading.value = false
+                            rotateJob.cancel()
+                            return@launch
+                        }
+                        if (!isCineXUrl(dns)) {
+                            _errorMessage.value = "⚠️ Somente servidores CineX são aceitos no CineX Player"
                             _isLoading.value = false
                             rotateJob.cancel()
                             return@launch
@@ -1064,19 +1120,23 @@ class MainViewModel @Inject constructor(
             if (channel.category == "SERIES") {
                 val seriesName = channel.seriesName ?: channel.name
                 val seriesId = try { channel.remoteId.replace("series_", "").toInt() } catch (e: Exception) { -1 }
-                // Verifica se já tem episódios no banco — se sim, não bloqueia com loading
+                // Verifica se já tem episódios no banco
                 val hasEpisodes = repository.hasEpisodesForSeries(seriesName)
                 if (!hasEpisodes) {
                     _isLoadingEpisodes.value = true
                 }
-                if (seriesId != -1) {
-                    repository.fetchAndStoreEpisodes(seriesId, seriesName)
+                try {
+                    if (seriesId != -1) {
+                        repository.fetchAndStoreEpisodes(seriesId, seriesName)
+                    }
+                } finally {
+                    // Sempre libera o loading, inclusive se fetchAndStoreEpisodes retornou cedo (cache hit)
+                    _isLoadingEpisodes.value = false
                 }
                 // Em TV, pula o TMDB para não bloquear carregamento com chamadas de rede desnecessárias
                 if (!skipTmdb && shouldEnrichChannelMetadata(channel)) {
                     repository.enrichSeriesMetadataWithTmdb(channel)
                 }
-                _isLoadingEpisodes.value = false
             } else {
                 if (shouldEnrichChannelMetadata(channel)) {
                     repository.enrichChannelWithTmdb(channel)
@@ -1264,8 +1324,23 @@ class MainViewModel @Inject constructor(
     }
 
     fun addPlaylist(url: String) {
+        if (!isCineXUrl(url)) {
+            _errorMessage.value = "⚠️ Somente servidores CineX são aceitos no CineX Player"
+            return
+        }
         viewModelScope.launch {
             repository.addPlaylist("Servidor #${System.currentTimeMillis() % 1000}", url)
+        }
+    }
+
+    // Valida se a URL/DNS pertence exclusivamente aos servidores CineX autorizados.
+    // Apenas as DNS cinextv.com.br são aceitas neste aplicativo.
+    private fun isCineXUrl(url: String): Boolean {
+        return try {
+            val host = java.net.URI(url).host?.lowercase() ?: return false
+            host == "cdn.cinextv.com.br" || host == "iptv.cinextv.com.br"
+        } catch (_: Exception) {
+            false
         }
     }
 

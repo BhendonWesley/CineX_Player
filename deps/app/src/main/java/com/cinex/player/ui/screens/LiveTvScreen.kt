@@ -57,6 +57,7 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -84,11 +85,15 @@ private fun Modifier.lazyScrollbar(
     val viewportH = size.height
     val firstVisible = listState.firstVisibleItemIndex
     val firstOffset = listState.firstVisibleItemScrollOffset
-    val avgItemH = visibleItems.sumOf { it.size } / visibleItems.size.toFloat()
-    val totalContentH = avgItemH * totalItems
+    // Usa apenas itens totalmente dentro do viewport para evitar flutuação da altura
+    // ao incluir itens parcialmente visíveis nas bordas (causava salto no polegar).
+    val fullItems = visibleItems.filter { it.offset >= 0 && (it.offset + it.size) <= viewportH.toInt() }
+    val refItems = if (fullItems.size >= 2) fullItems else visibleItems
+    val itemH = refItems.sumOf { it.size }.toFloat() / refItems.size
+    val totalContentH = itemH * totalItems
     if (totalContentH <= viewportH) return@drawWithContent
 
-    val scrolled = firstVisible * avgItemH + firstOffset
+    val scrolled = firstVisible * itemH + firstOffset
     val maxScroll = totalContentH - viewportH
     val fraction = (scrolled / maxScroll).coerceIn(0f, 1f)
 
@@ -132,12 +137,20 @@ fun LiveTvScreen(
     val categories by viewModel.liveCategories.collectAsState(initial = emptyList())
     val selectedCategory by viewModel.liveCategoryId.collectAsState()
     val selectedCatFocusRequester = remember { FocusRequester() }
+    val channelFocusRequester = remember { FocusRequester() }
+    val favFocusRequester = remember { FocusRequester() }
 
-    // Na TV, solicitar foco na categoria selecionada quando a tela fica ativa
-    LaunchedEffect(isTv, isActive, categories) {
+    // Na TV, restaura foco na categoria ao entrar na tela ou ao trocar de categoria.
+    // Retry com backoff: o Compose pode ainda estar reorganizando a árvore ao voltar.
+    LaunchedEffect(isTv, isActive, categories, selectedCategory) {
         if (isTv && isActive && categories.isNotEmpty()) {
-            delay(300)
-            try { selectedCatFocusRequester.requestFocus() } catch (_: Exception) {}
+            for (delayMs in listOf(100L, 200L, 350L)) {
+                delay(delayMs)
+                try {
+                    selectedCatFocusRequester.requestFocus()
+                    break
+                } catch (_: Exception) {}
+            }
         }
     }
     val adultUnlocked by viewModel.adultUnlocked.collectAsState()
@@ -162,16 +175,39 @@ fun LiveTvScreen(
     val favoriteCounts by viewModel.favoriteCounts.collectAsState()
 
     val channelCount = if (isTv) liveChannels.size else (pagingItems?.itemCount ?: 0)
+    val preferredTurboCategory = remember(categories) {
+        categories.firstOrNull { it.name.equals("CineX Turbo", ignoreCase = true) }
+    }
 
-    // Auto-seleciona o primeiro canal apenas quando a aba Live TV está visível
-    LaunchedEffect(channelCount, isActive) {
-        if (isActive && selectedChannel == null && channelCount > 0) {
-            if (isTv) {
-                liveChannels.firstOrNull()?.let { viewModel.updateSelectedChannel(it) }
-            } else {
-                delay(300)
-                pagingItems?.get(0)?.let { viewModel.updateSelectedChannel(it) }
-            }
+    LaunchedEffect(isActive, categories, selectedCategory) {
+        val turboCategoryId = preferredTurboCategory?.id
+        if (
+            isActive &&
+            turboCategoryId != null &&
+            selectedCategory != turboCategoryId &&
+            (selectedCategory == "Tudo" || categories.none { it.id == selectedCategory })
+        ) {
+            viewModel.setLiveCategory(turboCategoryId)
+        }
+    }
+
+    // Auto-seleciona o primeiro canal apenas na abertura inicial (nenhum canal selecionado ainda)
+    // Troca de categoria NÃO deve mudar o canal — o usuário clica explicitamente no canal desejado
+    LaunchedEffect(channelCount, isActive, selectedCategory) {
+        // Já há um canal selecionado — nunca sobrescreve automaticamente
+        if (selectedChannel != null) return@LaunchedEffect
+        if (!isActive || channelCount == 0) return@LaunchedEffect
+
+        // Se existe categoria preferida (CineX Turbo), aguarda ela ser ativada antes de auto-selecionar
+        // Evita pegar o primeiro canal de "Tudo" (ex: BBB) antes da categoria correta carregar
+        val turboCategoryId = preferredTurboCategory?.id
+        if (turboCategoryId != null && selectedCategory != turboCategoryId) return@LaunchedEffect
+
+        if (isTv) {
+            liveChannels.firstOrNull()?.let { viewModel.updateSelectedChannel(it) }
+        } else {
+            delay(300)
+            pagingItems?.get(0)?.let { viewModel.updateSelectedChannel(it) }
         }
     }
 
@@ -290,7 +326,16 @@ fun LiveTvScreen(
                             viewModel.setLiveCategory(category.id)
                         }
                     },
-                    modifier = if (isTv && category.id == selectedCategory) Modifier.focusRequester(selectedCatFocusRequester) else Modifier
+                    modifier = Modifier
+                        .then(
+                            if (isTv && category.id == selectedCategory)
+                                Modifier.focusRequester(selectedCatFocusRequester)
+                            else Modifier
+                        )
+                        .then(
+                            if (isTv) Modifier.focusProperties { right = channelFocusRequester }
+                            else Modifier
+                        )
                 )
             }
         }
@@ -333,6 +378,15 @@ fun LiveTvScreen(
                 }
             }
             val channelListState = rememberLazyListState()
+            val selectedChannelScrollIndex = remember(liveChannels, selectedChannel) {
+                liveChannels.indexOfFirst { it.id == selectedChannel?.id }.takeIf { it >= 0 } ?: 0
+            }
+            LaunchedEffect(selectedChannelScrollIndex) {
+                if (isTv && selectedChannelScrollIndex > 0) {
+                    channelListState.scrollToItem(selectedChannelScrollIndex)
+                }
+            }
+            val channelListScope = androidx.compose.runtime.rememberCoroutineScope()
 
             LazyColumn(
                 state = channelListState,
@@ -348,15 +402,32 @@ fun LiveTvScreen(
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .onFocusChanged {
-                                    isFocused = it.isFocused
-                                    if (it.isFocused && selectedChannel?.id != channel.id) {
-                                        viewModel.updateSelectedChannel(channel)
+                                .then(
+                                    if (index == selectedChannelScrollIndex) Modifier.focusRequester(channelFocusRequester)
+                                    else Modifier
+                                )
+                                .focusProperties {
+                                    left = selectedCatFocusRequester
+                                    right = favFocusRequester
+                                }
+                                .onFocusChanged { focusState ->
+                                    isFocused = focusState.isFocused
+                                    if (focusState.isFocused) {
+                                        val visible = channelListState.layoutInfo.visibleItemsInfo.map { it.index }
+                                        if (index !in visible) {
+                                            channelListScope.launch {
+                                                channelListState.scrollToItem(index)
+                                            }
+                                        }
                                     }
                                 }
+                                .then(
+                                    if (isFocused) Modifier.border(2.dp, Color(0xFFF59E0B), RoundedCornerShape(8.dp))
+                                    else Modifier
+                                )
                                 .focusable(interactionSource = remember { MutableInteractionSource() })
                                 .onKeyEvent { event ->
-                                    if (event.type == KeyEventType.KeyUp &&
+                                    if (event.type == KeyEventType.KeyDown &&
                                         (event.key == Key.DirectionCenter || event.key == Key.Enter)
                                     ) {
                                         if (isSelected) onChannelExpand(channel)
@@ -392,9 +463,14 @@ fun LiveTvScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .onFocusChanged { isFocused = it.isFocused }
+                                    .then(
+                                        if (isFocused) Modifier.border(2.dp, Color(0xFFF59E0B), RoundedCornerShape(8.dp))
+                                        else Modifier
+                                    )
                                     .focusable(interactionSource = remember { MutableInteractionSource() })
                                     .onKeyEvent { event ->
-                                        if (event.type == KeyEventType.KeyUp &&
+                                        // OTIMIZADO: KeyDown ao invés de KeyUp para resposta instantânea
+                                        if (event.type == KeyEventType.KeyDown &&
                                             (event.key == Key.DirectionCenter || event.key == Key.Enter)
                                         ) {
                                             if (isSelected) onChannelExpand(channel)
@@ -429,7 +505,6 @@ fun LiveTvScreen(
                 .background(Color(0xBB0E0E0E))
         ) {
             // Player (proporção fixa, sem consumir toda a altura)
-            val favFocusRequester = remember { FocusRequester() }
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -439,9 +514,9 @@ fun LiveTvScreen(
                         if (!isTv) Modifier
                             .onFocusChanged { if (it.isFocused) try { favFocusRequester.requestFocus() } catch (_: Exception) {} }
                             .focusable(interactionSource = remember { MutableInteractionSource() })
+                            .clickable { selectedChannel?.let { onChannelExpand(it) } }
                         else Modifier
-                    )
-                    .clickable { selectedChannel?.let { onChannelExpand(it) } },
+                    ),
                 contentAlignment = Alignment.Center
             ) {
                 if (selectedChannel != null) {
@@ -547,30 +622,27 @@ fun LiveTvScreen(
                         .align(Alignment.TopEnd)
                         .padding(8.dp)
                         .size(if (isFavFocused) 36.dp else 28.dp)
-                        .then(
-                            if (!isTv) Modifier
-                                .focusRequester(favFocusRequester)
-                                .onFocusChanged { isFavFocused = it.isFocused }
-                                .focusable(interactionSource = remember { MutableInteractionSource() })
-                                .onKeyEvent { event ->
-                                    if (event.type == KeyEventType.KeyUp &&
-                                        (event.key == Key.DirectionCenter || event.key == Key.Enter)
-                                    ) {
-                                        selectedChannel?.let {
-                                            isFavLocal = !isFavLocal
-                                            viewModel.updateFavorite(it.id, isFavLocal)
-                                        }
-                                        true
-                                    } else false
-                                }
-                            else Modifier
-                        )
                         .clip(RoundedCornerShape(50))
                         .background(Color.Black.copy(alpha = if (isFavFocused) 0.8f else 0.5f))
                         .then(
                             if (isFavFocused) Modifier.border(2.dp, Color(0xFFF59E0B), RoundedCornerShape(50))
                             else Modifier
                         )
+                        .focusRequester(favFocusRequester)
+                        .focusProperties { left = channelFocusRequester }
+                        .onFocusChanged { isFavFocused = it.isFocused }
+                        .focusable(interactionSource = remember { MutableInteractionSource() })
+                        .onKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyUp &&
+                                (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                            ) {
+                                selectedChannel?.let {
+                                    isFavLocal = !isFavLocal
+                                    viewModel.updateFavorite(it.id, isFavLocal)
+                                }
+                                true
+                            } else false
+                        }
                         .clickable {
                             selectedChannel?.let {
                                 isFavLocal = !isFavLocal

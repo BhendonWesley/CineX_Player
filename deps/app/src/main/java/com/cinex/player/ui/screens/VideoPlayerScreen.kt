@@ -258,6 +258,8 @@ fun VideoPlayerScreen(
 
     LaunchedEffect(channel) {
         if (!isLiveTv) {
+            // Yield para deixar o frame da UI renderizar antes de iniciar o player
+            kotlinx.coroutines.yield()
             val mediaItem = MediaItem.fromUri(Uri.parse(channel.streamUrl))
             exoPlayer.setMediaItem(mediaItem)
 
@@ -289,22 +291,40 @@ fun VideoPlayerScreen(
         }
     }
 
-    // Auto-hide dos controles após 5 segundos
-    LaunchedEffect(isControlsVisible) {
-        if (isControlsVisible && !showResumeDialog && !showExitDialog) {
-            delay(5000)
-            isControlsVisible = false
-        }
-    }
+    val playerFocusRequester = remember { FocusRequester() }
+    val playPauseFocusRequester = remember { FocusRequester() }
+    val backButtonFocusRequester = remember { FocusRequester() }
+    val infoButtonFocusRequester = remember { FocusRequester() }
+    val favoriteButtonFocusRequester = remember { FocusRequester() }
+    val aspectButtonFocusRequester = remember { FocusRequester() }
+    val seekBackFocusRequester = remember { FocusRequester() }
+    val seekForwardFocusRequester = remember { FocusRequester() }
+
+    var pendingTopFocus by remember { mutableStateOf<PlayerTopFocusTarget?>(null) }
+    var focusedTopControl by remember { mutableStateOf<PlayerTopFocusTarget?>(null) }
+
+    // Contador para reiniciar o auto-hide em qualquer interação
+    var interactionCount by remember { mutableStateOf(0) }
+    var isSeeking by remember { mutableStateOf(false) }
 
     // Só pollar posição quando os controles estão visíveis e não é Live TV
-    LaunchedEffect(isControlsVisible, isLiveTv) {
-        if (isLiveTv) return@LaunchedEffect
+    // CORREÇÃO: Pausa polling durante o seek para evitar "saltos" no progresso
+    LaunchedEffect(isControlsVisible, isLiveTv, isSeeking) {
+        if (isLiveTv || isSeeking) return@LaunchedEffect
         while (true) {
             currentPosition = exoPlayer.currentPosition
             duration = exoPlayer.duration.coerceAtLeast(0L)
             if (!isControlsVisible) break
-            delay(500)
+            delay(if (isControlsVisible) 500 else 1000)
+        }
+    }
+
+    // Reset do estado de seeking após 2 segundos de inatividade
+    LaunchedEffect(interactionCount) {
+        if (interactionCount > 0) {
+            isSeeking = true
+            delay(2000)
+            isSeeking = false
         }
     }
 
@@ -320,46 +340,76 @@ fun VideoPlayerScreen(
         }
     }
 
-    val playerFocusRequester = remember { FocusRequester() }
-    val backButtonFocusRequester = remember { FocusRequester() }
-    val infoButtonFocusRequester = remember { FocusRequester() }
-    val favoriteButtonFocusRequester = remember { FocusRequester() }
-    val aspectButtonFocusRequester = remember { FocusRequester() }
-    var pendingTopFocus by remember { mutableStateOf<PlayerTopFocusTarget?>(null) }
-    var focusedTopControl by remember { mutableStateOf<PlayerTopFocusTarget?>(null) }
-    LaunchedEffect(Unit) { playerFocusRequester.requestFocus() }
-
-    LaunchedEffect(isControlsVisible, pendingTopFocus, isTv) {
-        if (!isTv) return@LaunchedEffect
-        if (!isControlsVisible) {
-            pendingTopFocus = null
-            focusedTopControl = null
-            try { playerFocusRequester.requestFocus() } catch (_: Exception) {}
-            return@LaunchedEffect
+    // Auto-hide dos controles após 5 segundos
+    // Agora reinicia se o foco mudar no topo ou se houver qualquer interação (interactionCount)
+    // ADICIONADO: Se o foco estiver no topo, o timer NÃO RODA para evitar que a UI suma na cara do usuário
+    LaunchedEffect(isControlsVisible, showResumeDialog, showExitDialog, showPlaybackError, showNextEpisodeOverlay, focusedTopControl, interactionCount) {
+        val anyDialogOpen = showResumeDialog || showExitDialog || showPlaybackError || showNextEpisodeOverlay
+        if (isControlsVisible && !anyDialogOpen && focusedTopControl == null) {
+            delay(5000)
+            // Double check final antes de esconder: se ganhou foco no topo ou abriu dialog, aborta
+            if (!showResumeDialog && !showExitDialog && !showPlaybackError && !showNextEpisodeOverlay && focusedTopControl == null) {
+                isControlsVisible = false
+            }
         }
-        when (pendingTopFocus) {
+    }
+    // Foco inicial: garante que o Box captura teclas desde a primeira composição
+    LaunchedEffect(Unit) {
+        if (isTv) {
+            delay(150)
+            try { playerFocusRequester.requestFocus() } catch (_: Exception) {
+                delay(300)
+                try { playerFocusRequester.requestFocus() } catch (_: Exception) {}
+            }
+        }
+    }
+
+    // Restaura o foco após dialogs fecharem
+    LaunchedEffect(showResumeDialog, showExitDialog, showPlaybackError, showNextEpisodeOverlay) {
+        if (!showResumeDialog && !showExitDialog && !showPlaybackError && !showNextEpisodeOverlay && isTv) {
+            delay(150)
+            try { playerFocusRequester.requestFocus() } catch (_: Exception) {
+                delay(300)
+                try { playerFocusRequester.requestFocus() } catch (_: Exception) {}
+            }
+        }
+    }
+
+    // 1. Foco Inicial: Quando os controles aparecem pela primeira vez
+    LaunchedEffect(isControlsVisible) {
+        // CORREÇÃO: Se houver um pendingTopFocus (usuário apertou pra cima), ABORTA o auto-foco no centro
+        if (isTv && isControlsVisible && focusedTopControl == null && pendingTopFocus == null) {
+            delay(150)
+            // Double-check final para evitar roubo de foco se o usuário navegou direto pro topo em < 150ms
+            if (focusedTopControl == null && pendingTopFocus == null) {
+                try { playPauseFocusRequester.requestFocus() } catch (_: Exception) {}
+            }
+        }
+    }
+
+    // 2. Foco Assíncrono para Navegação (PENDING TOP FOCUS)
+    // Isso garante que o foco seja solicitado APÓS a UI renderizar (resolve o "foco some")
+    LaunchedEffect(pendingTopFocus, isControlsVisible) {
+        val target = pendingTopFocus ?: return@LaunchedEffect
+        if (!isControlsVisible) return@LaunchedEffect
+        
+        // CORREÇÃO: Aumentado delay para 250ms para garantir que hardware lento da TV termine a recomposição
+        delay(250) 
+        when (target) {
             PlayerTopFocusTarget.BACK -> {
-                delay(80)
                 try { backButtonFocusRequester.requestFocus() } catch (_: Exception) {}
-                pendingTopFocus = null
             }
             PlayerTopFocusTarget.INFO -> {
-                delay(80)
                 try { infoButtonFocusRequester.requestFocus() } catch (_: Exception) {}
-                pendingTopFocus = null
             }
             PlayerTopFocusTarget.FAVORITE -> {
-                delay(80)
                 try { favoriteButtonFocusRequester.requestFocus() } catch (_: Exception) {}
-                pendingTopFocus = null
             }
             PlayerTopFocusTarget.ASPECT -> {
-                delay(80)
                 try { aspectButtonFocusRequester.requestFocus() } catch (_: Exception) {}
-                pendingTopFocus = null
             }
-            null -> Unit
         }
+        pendingTopFocus = null
     }
 
     BackHandler(enabled = !showResumeDialog && !showExitDialog && !showPlaybackError && !showNextEpisodeOverlay) {
@@ -379,101 +429,105 @@ fun VideoPlayerScreen(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
-            .focusRequester(playerFocusRequester)
-            .focusable(interactionSource = remember { MutableInteractionSource() })
-            .onKeyEvent { event ->
-                if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
-                // Quando um dialog está visível, não consumir eventos — deixar o dialog tratar
-                if (showResumeDialog || showExitDialog || showPlaybackError || showNextEpisodeOverlay) return@onKeyEvent false
-                if (focusedTopControl != null) return@onKeyEvent false
+            .onPreviewKeyEvent { event ->
+                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                
+                // Qualquer tecla na TV reseta o timer e garante que a barra esteja visível se não estiver
+                if (isTv) interactionCount++
+
+                // Quando um dialog está visível, SEMPRE consumir o evento para não vazar para o grid ao fundo
+                if (showResumeDialog || showExitDialog || showPlaybackError || showNextEpisodeOverlay) return@onPreviewKeyEvent true
+                
                 when (event.key) {
-                    Key.DirectionCenter, Key.Enter -> {
+                    Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.Spacebar, Key.MediaPlayPause -> {
                         if (!isControlsVisible) {
-                            // Primeira pressão: apenas mostra os controles
                             isControlsVisible = true
-                        } else if (isLiveTv) {
-                            // Live TV não deve pausar no OK. Mantém o canal tocando e alterna o painel detalhado.
-                            showInfoPanel = !showInfoPanel
+                            true
                         } else {
-                            // Controles já visíveis: pausar/retomar
-                            if (exoPlayer.isPlaying) exoPlayer.pause() else exoPlayer.play()
+                            // Deixa o evento chegar no botão focado se os controles já estiverem visíveis
+                            false
                         }
-                        true
                     }
                     Key.DirectionLeft -> {
                         if (isLiveTv) {
-                            // Live TV: mostra controles; se já visíveis, foca o botão Voltar
                             if (!isControlsVisible) {
                                 isControlsVisible = true
-                            } else {
-                                try { backButtonFocusRequester.requestFocus() } catch (_: Exception) {}
-                            }
+                                true
+                            } else if (focusedTopControl == null) {
+                                pendingTopFocus = PlayerTopFocusTarget.BACK
+                                true
+                            } else false
                         } else {
+                            isSeeking = true
                             exoPlayer.seekTo(maxOf(0, exoPlayer.currentPosition - 10_000))
                             isControlsVisible = true
+                            true
                         }
-                        true
                     }
                     Key.DirectionRight -> {
                         if (!isLiveTv) {
+                            isSeeking = true
                             exoPlayer.seekTo(minOf(exoPlayer.duration, exoPlayer.currentPosition + 10_000))
-                        }
-                        isControlsVisible = true
-                        true
+                            isControlsVisible = true
+                            true
+                        } else false
                     }
                     Key.DirectionUp -> {
-                        if (isTv && !isLiveTv) {
-                            pendingTopFocus = PlayerTopFocusTarget.BACK
-                            isControlsVisible = true
-                        } else if (isTv && isControlsVisible) {
-                            pendingTopFocus = PlayerTopFocusTarget.BACK
-                            isControlsVisible = true
-                        } else {
+                        if (isTv) {
+                            if (!isControlsVisible) {
+                                isControlsVisible = true
+                                pendingTopFocus = PlayerTopFocusTarget.BACK
+                                true
+                            } else if (focusedTopControl == null) {
+                                // Se apertar pra cima no player, vai pro Back Button via fila assíncrona
+                                pendingTopFocus = PlayerTopFocusTarget.BACK
+                                true
+                            } else false
+                        } else if (isLiveTv) {
                             onNextChannel?.invoke()
-                        }
-                        true
+                            true
+                        } else false
                     }
                     Key.DirectionDown -> {
-                        onPreviousChannel?.invoke()
-                        true
+                        if (isTv && focusedTopControl != null) {
+                            // Se estiver no topo e apertar pra baixo, volta pro player
+                            focusedTopControl = null
+                            playPauseFocusRequester.requestFocus()
+                            true
+                        } else if (!isLiveTv && !isControlsVisible) {
+                            isControlsVisible = true
+                            true
+                        } else false
                     }
                     Key.Back -> {
                         if (showInfoPanel) {
                             showInfoPanel = false
+                            true
+                        } else if (showExitDialog) {
+                            showExitDialog = false
+                            true
                         } else if (isControlsVisible) {
-                            pendingTopFocus = null
                             focusedTopControl = null
                             isControlsVisible = false
                             try { playerFocusRequester.requestFocus() } catch (_: Exception) {}
+                            true
                         } else {
-                            onBack()
+                            if (isLiveTv) onBack() else showExitDialog = true
+                            true
                         }
-                        true
                     }
                     else -> false
                 }
             }
+            .focusRequester(playerFocusRequester)
+            .focusable(interactionSource = remember { MutableInteractionSource() })
+            // Mobile: tap para mostrar/esconder controles
             .then(
                 if (!isTv) Modifier.pointerInput(Unit) {
-                    detectVerticalDragGestures { change, dragAmount ->
-                        if (showResumeDialog || showExitDialog) return@detectVerticalDragGestures
-                        isControlsVisible = true
-                        val isLeftHalf = change.position.x < (size.width / 2)
-                        if (isLeftHalf) {
-                            val newBrightness = (currentBrightness - (dragAmount / size.height)).coerceIn(0f, 1f)
-                            currentBrightness = newBrightness
-                            activity?.let {
-                                val lp = it.window.attributes
-                                lp.screenBrightness = newBrightness
-                                it.window.attributes = lp
-                            }
-                        } else {
-                            val newVolume = (currentVolume - (dragAmount / size.height)).coerceIn(0f, 1f)
-                            currentVolume = newVolume
-                            val maxVol = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-                            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, (newVolume * maxVol).toInt(), 0)
-                        }
-                    }
+                    detectTapGestures(onTap = {
+                        if (showResumeDialog || showExitDialog) return@detectTapGestures
+                        isControlsVisible = !isControlsVisible
+                    })
                 } else Modifier
             )
     ) {
@@ -491,13 +545,16 @@ fun VideoPlayerScreen(
 
         AndroidView(
             factory = { context ->
-                val layoutRes = if (isTv) com.cinex.player.R.layout.player_view_surface
-                    else com.cinex.player.R.layout.player_view_texture
+                // SurfaceView para TV e mobile: renderização via hardware overlay (zero cópia de frames)
+                // TextureView estava causando cópia de frame por frame na CPU → aquecimento + 2fps
                 val view = android.view.LayoutInflater.from(context)
-                    .inflate(layoutRes, null, false) as PlayerView
+                    .inflate(com.cinex.player.R.layout.player_view_surface, null, false) as PlayerView
                 view.apply {
                     player = exoPlayer
                     useController = false
+                    isFocusable = false
+                    isFocusableInTouchMode = false
+                    descendantFocusability = android.view.ViewGroup.FOCUS_BLOCK_DESCENDANTS
                     layoutParams = FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
@@ -509,26 +566,25 @@ fun VideoPlayerScreen(
                 it.resizeMode = resizeMode
                 if (it.player !== exoPlayer) it.player = exoPlayer
             },
-            modifier = Modifier.fillMaxSize().clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null
-            ) {
-                if (!showResumeDialog && !showExitDialog) {
-                    isControlsVisible = !isControlsVisible
-                }
-            }
+            modifier = Modifier.fillMaxSize()
         )
 
-        AnimatedVisibility(
-            visible = isControlsVisible && !showResumeDialog && !showExitDialog,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier.fillMaxSize()
+        // DETERMINA VISIBILIDADE DOS CONTROLES (Sempre presente na árvore para manter o foco vivo)
+        val controlsVisible = isControlsVisible && !showResumeDialog && !showExitDialog
+        val controlsAlpha = if (controlsVisible) 1f else 0f
+
+        // Container de Controles com Alpha (Mantém FocusRequesters vivos)
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer { alpha = controlsAlpha }
+                .focusProperties { canFocus = controlsVisible } // Impede foco em botões invisíveis
+                .then(
+                    if (controlsVisible && isTv) Modifier.pointerInput(Unit) {
+                        detectTapGestures(onTap = { isControlsVisible = false })
+                    } else Modifier
+                )
         ) {
-            Box(modifier = Modifier.fillMaxSize().background(Color(0x66000000)).clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null
-            ) { isControlsVisible = false }) {
                 
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(24.dp).align(Alignment.TopCenter),
@@ -586,12 +642,17 @@ fun VideoPlayerScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Text(
-                            text = channel.name.uppercase(),
-                            color = Color.White,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.ExtraBold
-                        )
+                        // CORREÇÃO: Mostra nome do canal/filme no topo se tiver EPG ou for VOD
+                        val hasEpg = currentProgram != null || epgListings.isNotEmpty()
+                        
+                        if (hasEpg || !isLiveTv) {
+                            Text(
+                                text = channel.name.uppercase(),
+                                color = Color.White,
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
 
                         // Badge de qualidade do stream
                         val streamQuality = when {
@@ -624,8 +685,8 @@ fun VideoPlayerScreen(
                             }
                         }
 
-                        // Indicador AO VIVO
-                        if (isLiveTv) {
+                        // Indicador AO VIVO - só mostra no topo quando tem EPG
+                        if (isLiveTv && hasEpg) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(4.dp),
@@ -823,13 +884,29 @@ fun VideoPlayerScreen(
                         horizontalArrangement = Arrangement.spacedBy(40.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        SeekButton(icon = Icons.Default.Replay10, description = "-10s", size = 56.dp) {
+                        SeekButton(
+                            icon = Icons.Default.Replay10, 
+                            description = "-10s", 
+                            size = 56.dp,
+                            isTv = isTv,
+                            focusRequester = seekBackFocusRequester
+                        ) {
                             exoPlayer.seekBack()
                         }
 
                         IconButton(
                             onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() },
-                            modifier = Modifier.size(72.dp)
+                            modifier = Modifier
+                                .size(72.dp)
+                                .focusRequester(playPauseFocusRequester)
+                                .focusProperties {
+                                    up = backButtonFocusRequester
+                                    down = FocusRequester.Cancel
+                                    left = seekBackFocusRequester 
+                                    right = seekForwardFocusRequester
+                                }
+                                .onFocusChanged { /* visual feedback is already handled by icon scale if needed, but here we just need focus */ }
+                                .focusable()
                         ) {
                             Icon(
                                 imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
@@ -839,15 +916,21 @@ fun VideoPlayerScreen(
                             )
                         }
 
-                        SeekButton(icon = Icons.Default.Forward10, description = "+10s", size = 56.dp) {
+                        SeekButton(
+                            icon = Icons.Default.Forward10, 
+                            description = "+10s", 
+                            size = 56.dp,
+                            isTv = isTv,
+                            focusRequester = seekForwardFocusRequester
+                        ) {
                             exoPlayer.seekForward()
                         }
                     }
                 }
 
                 // Sliders de Brilho (Esquerda) e Volume (Direita) — somente mobile
-                if (!isTv) BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-                    val sliderHeight = maxHeight * 0.45f
+                if (!isTv) Box(modifier = Modifier.fillMaxSize()) {
+                    val sliderHeight = 200.dp
 
                     // Brilho (Esquerda)
                     Column(
@@ -1074,9 +1157,69 @@ fun VideoPlayerScreen(
                                 }
                             }
                         }
+                    } else if (isLiveTv) {
+                        // CORREÇÃO: Quando não há EPG, mostra nome do canal + AO VIVO na parte inferior
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .align(Alignment.BottomCenter)
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.9f))
+                                    )
+                                )
+                                .padding(horizontal = 32.dp, vertical = 16.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center
+                            ) {
+                                Text(
+                                    text = channel.name.uppercase(),
+                                    color = Color.White,
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                                Spacer(Modifier.width(12.dp))
+                                // Indicador AO VIVO
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(4.dp))
+                                        .background(Color(0xFFDC2626))
+                                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(6.dp)
+                                            .clip(RoundedCornerShape(50))
+                                            .background(Color.White)
+                                    )
+                                    Text(
+                                        text = "AO VIVO",
+                                        color = Color.White,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        letterSpacing = 0.5.sp
+                                    )
+                                }
+                            }
+                        }
                     }
-                }
             }
+        }
+
+        // Toque para mostrar controles
+        if (!controlsVisible) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(Unit) {
+                        detectTapGestures(onTap = { isControlsVisible = true })
+                    }
+            )
         }
 
         // Painel de informações (estilo Smart TV)
@@ -1290,11 +1433,13 @@ fun VideoPlayerScreen(
                 onConfirm = {
                     showResumeDialog = false
                     exoPlayer.playWhenReady = true
+                    try { playerFocusRequester.requestFocus() } catch (_: Exception) {}
                 },
                 onCancel = {
                     showResumeDialog = false
                     exoPlayer.seekTo(0)
                     exoPlayer.playWhenReady = true
+                    try { playerFocusRequester.requestFocus() } catch (_: Exception) {}
                 }
             )
         }
@@ -1304,7 +1449,10 @@ fun VideoPlayerScreen(
                 title = "Parar reprodução?",
                 description = "Clique em SIM para sair da reprodução. Clique em NÃO para cancelar",
                 onConfirm = { onBack() },
-                onCancel = { showExitDialog = false }
+                onCancel = { 
+                    showExitDialog = false 
+                    try { playerFocusRequester.requestFocus() } catch (_: Exception) {}
+                }
             )
         }
 
@@ -1344,25 +1492,37 @@ fun PlayerDialog(
     val dialogFocusBorder = remember {
         Brush.linearGradient(listOf(Color(0xFFE11D2E), Color(0xFFF59E0B)))
     }
+    
+    // CORREÇÃO: Detecta TV para aplicar foco apenas lá
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val isTv = remember {
+        val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
+        uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    }
 
+    // Solicita foco sempre que o dialog é composto
     LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(100)
-        try { confirmRequester.requestFocus() } catch (_: Exception) {}
+        if (isTv) {
+            // Tentativas múltiplas para garantir que o sistema de foco esteja pronto
+            repeat(3) {
+                kotlinx.coroutines.delay(100L * (it + 1))
+                try { confirmRequester.requestFocus() } catch (_: Exception) {}
+            }
+        }
+    }
+
+    // CORREÇÃO: BackHandler para fechar o dialog com botão Voltar
+    androidx.activity.compose.BackHandler {
+        onCancel()
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .focusable()
-            .onPreviewKeyEvent { event ->
-                when (event.key) {
-                    Key.DirectionLeft, Key.DirectionRight, Key.DirectionUp, Key.DirectionDown,
-                    Key.DirectionCenter, Key.Enter, Key.Back -> false
-                    else -> true
-                }
-            }
             .background(Color(0xAA000000))
-            .clickable(enabled = false) {},
+            .pointerInput(Unit) {
+                detectTapGestures { onCancel() }
+            }, // Clique fora fecha o dialog sem ser focável na TV
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -1397,38 +1557,51 @@ fun PlayerDialog(
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 var isConfirmFocused by remember { mutableStateOf(false) }
+                val confirmScale by animateFloatAsState(if (isConfirmFocused) 1.05f else 1f, label = "confirmScale")
+                
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .height(56.dp)
-                        .focusRequester(confirmRequester)
-                        .focusProperties {
-                            right = cancelRequester
-                            left = FocusRequester.Cancel
-                            up = FocusRequester.Cancel
-                            down = FocusRequester.Cancel
+                        .graphicsLayer {
+                            scaleX = confirmScale
+                            scaleY = confirmScale
                         }
-                        .onFocusChanged { isConfirmFocused = it.isFocused }
-                        .focusable()
-                        .onKeyEvent { event ->
-                            when {
-                                event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight -> {
-                                    cancelRequester.requestFocus()
-                                    true
-                                }
-                                event.type == KeyEventType.KeyDown &&
-                                    (event.key == Key.DirectionLeft || event.key == Key.DirectionUp || event.key == Key.DirectionDown) -> true
-                                event.type == KeyEventType.KeyUp &&
-                                    (event.key == Key.DirectionCenter || event.key == Key.Enter) -> {
-                                    onConfirm()
-                                    true
-                                }
-                                else -> false
-                            }
-                        }
-                        .background(com.cinex.player.ui.theme.DeepRed, RoundedCornerShape(8.dp))
+                        .then(if (isTv) Modifier.focusRequester(confirmRequester) else Modifier)
                         .then(
-                            if (isConfirmFocused) Modifier.border(2.dp, dialogFocusBorder, RoundedCornerShape(8.dp))
+                            if (isTv) Modifier.focusProperties {
+                                right = cancelRequester
+                                left = FocusRequester.Cancel
+                                up = FocusRequester.Cancel
+                                down = FocusRequester.Cancel
+                            } else Modifier
+                        )
+                        .then(if (isTv) Modifier.onFocusChanged { isConfirmFocused = it.isFocused } else Modifier)
+                        .then(if (isTv) Modifier.focusable(interactionSource = remember { MutableInteractionSource() }) else Modifier)
+                        .then(
+                            if (isTv) Modifier.onKeyEvent { event ->
+                                when {
+                                    event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight -> {
+                                        cancelRequester.requestFocus()
+                                        true
+                                    }
+                                    event.type == KeyEventType.KeyDown &&
+                                        (event.key == Key.DirectionLeft || event.key == Key.DirectionUp || event.key == Key.DirectionDown) -> true
+                                    event.type == KeyEventType.KeyDown &&
+                                        (event.key == Key.DirectionCenter || event.key == Key.Enter) -> {
+                                        onConfirm()
+                                        true
+                                    }
+                                    else -> false
+                                }
+                            } else Modifier
+                        )
+                        .background(
+                            if (isConfirmFocused) Color(0xFFE11D2E) else com.cinex.player.ui.theme.DeepRed,
+                            RoundedCornerShape(8.dp)
+                        )
+                        .then(
+                            if (isTv && isConfirmFocused) Modifier.border(3.dp, dialogFocusBorder, RoundedCornerShape(8.dp))
                             else Modifier
                         )
                         .clickable { onConfirm() },
@@ -1438,38 +1611,51 @@ fun PlayerDialog(
                 }
 
                 var isCancelFocused by remember { mutableStateOf(false) }
+                val cancelScale by animateFloatAsState(if (isCancelFocused) 1.05f else 1f, label = "cancelScale")
+                
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .height(56.dp)
-                        .focusRequester(cancelRequester)
-                        .focusProperties {
-                            left = confirmRequester
-                            right = FocusRequester.Cancel
-                            up = FocusRequester.Cancel
-                            down = FocusRequester.Cancel
+                        .graphicsLayer {
+                            scaleX = cancelScale
+                            scaleY = cancelScale
                         }
-                        .onFocusChanged { isCancelFocused = it.isFocused }
-                        .focusable()
-                        .onKeyEvent { event ->
-                            when {
-                                event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft -> {
-                                    confirmRequester.requestFocus()
-                                    true
-                                }
-                                event.type == KeyEventType.KeyDown &&
-                                    (event.key == Key.DirectionRight || event.key == Key.DirectionUp || event.key == Key.DirectionDown) -> true
-                                event.type == KeyEventType.KeyUp &&
-                                    (event.key == Key.DirectionCenter || event.key == Key.Enter) -> {
-                                    onCancel()
-                                    true
-                                }
-                                else -> false
-                            }
-                        }
-                        .background(Color.DarkGray, RoundedCornerShape(8.dp))
+                        .then(if (isTv) Modifier.focusRequester(cancelRequester) else Modifier)
                         .then(
-                            if (isCancelFocused) Modifier.border(2.dp, dialogFocusBorder, RoundedCornerShape(8.dp))
+                            if (isTv) Modifier.focusProperties {
+                                left = confirmRequester
+                                right = FocusRequester.Cancel
+                                up = FocusRequester.Cancel
+                                down = FocusRequester.Cancel
+                            } else Modifier
+                        )
+                        .then(if (isTv) Modifier.onFocusChanged { isCancelFocused = it.isFocused } else Modifier)
+                        .then(if (isTv) Modifier.focusable(interactionSource = remember { MutableInteractionSource() }) else Modifier)
+                        .then(
+                            if (isTv) Modifier.onKeyEvent { event ->
+                                when {
+                                    event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft -> {
+                                        confirmRequester.requestFocus()
+                                        true
+                                    }
+                                    event.type == KeyEventType.KeyDown &&
+                                        (event.key == Key.DirectionRight || event.key == Key.DirectionUp || event.key == Key.DirectionDown) -> true
+                                    event.type == KeyEventType.KeyDown &&
+                                        (event.key == Key.DirectionCenter || event.key == Key.Enter) -> {
+                                        onCancel()
+                                        true
+                                    }
+                                    else -> false
+                                }
+                            } else Modifier
+                        )
+                        .background(
+                            if (isCancelFocused) Color.Gray else Color.DarkGray,
+                            RoundedCornerShape(8.dp)
+                        )
+                        .then(
+                            if (isTv && isCancelFocused) Modifier.border(3.dp, dialogFocusBorder, RoundedCornerShape(8.dp))
                             else Modifier
                         )
                         .clickable { onCancel() },
@@ -1482,34 +1668,45 @@ fun PlayerDialog(
     }
 }
 
+@OptIn(ExperimentalComposeUiApi::class)
 @Composable
 fun PlaybackErrorOverlay(
     onExit: () -> Unit,
     onRetry: () -> Unit,
     onPlayNext: (() -> Unit)? = null
 ) {
+    val exitRequester = remember { FocusRequester() }
     val retryRequester = remember { FocusRequester() }
+    val nextRequester = remember { FocusRequester() }
     val gradientBrush = remember { Brush.linearGradient(listOf(Color(0xFFE11D2E), Color(0xFFF59E0B))) }
+    
+    // CORREÇÃO: Detecta TV para aplicar foco apenas lá
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val isTv = remember {
+        val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
+        uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    }
 
-    LaunchedEffect(Unit) {
-        kotlinx.coroutines.delay(100)
-        try { retryRequester.requestFocus() } catch (_: Exception) {}
+    // Foco inicial no botão retry (apenas na TV)
+    LaunchedEffect(isTv) {
+        if (isTv) {
+            kotlinx.coroutines.delay(100)
+            try { retryRequester.requestFocus() } catch (_: Exception) {}
+        }
+    }
+
+    // CORREÇÃO: BackHandler para fechar o dialog
+    androidx.activity.compose.BackHandler {
+        onExit()
     }
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .focusable()
-            .onPreviewKeyEvent { event ->
-                // Permite navegação D-pad dentro do dialog, bloqueia todo o resto de vazar
-                when (event.key) {
-                    Key.DirectionLeft, Key.DirectionRight, Key.DirectionUp, Key.DirectionDown,
-                    Key.DirectionCenter, Key.Enter, Key.Back -> false
-                    else -> true
-                }
-            }
             .background(Color(0xDD000000))
-            .clickable(enabled = false) {},
+            .pointerInput(Unit) {
+                detectTapGestures { onExit() }
+            }, // Clique fora fecha sem ser focável na TV
         contentAlignment = Alignment.Center
     ) {
         Column(
@@ -1554,20 +1751,50 @@ fun PlaybackErrorOverlay(
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 var isExitFocused by remember { mutableStateOf(false) }
+                val exitScale by animateFloatAsState(if (isExitFocused) 1.05f else 1f, label = "exitScale")
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .height(48.dp)
-                        .onFocusChanged { isExitFocused = it.isFocused }
-                        .focusable()
-                        .onKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyUp &&
-                                (event.key == Key.DirectionCenter || event.key == Key.Enter)
-                            ) { onExit(); true } else false
+                        .graphicsLayer {
+                            scaleX = exitScale
+                            scaleY = exitScale
                         }
-                        .background(Color.DarkGray, RoundedCornerShape(8.dp))
+                        .then(if (isTv) Modifier.focusRequester(exitRequester) else Modifier)
+                        .then(if (isTv) Modifier.focusProperties {
+                            right = retryRequester
+                            left = FocusRequester.Cancel
+                            up = FocusRequester.Cancel
+                            down = if (onPlayNext != null) nextRequester else FocusRequester.Cancel
+                        } else Modifier)
+                        .then(if (isTv) Modifier.onFocusChanged { isExitFocused = it.isFocused } else Modifier)
+                        .then(if (isTv) Modifier.focusable(interactionSource = remember { MutableInteractionSource() }) else Modifier)
+                        .then(if (isTv) Modifier.onKeyEvent { event ->
+                            when {
+                                event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight -> {
+                                    retryRequester.requestFocus()
+                                    true
+                                }
+                                event.type == KeyEventType.KeyDown && onPlayNext != null && event.key == Key.DirectionDown -> {
+                                    nextRequester.requestFocus()
+                                    true
+                                }
+                                event.type == KeyEventType.KeyDown &&
+                                    (event.key == Key.DirectionLeft || event.key == Key.DirectionUp) -> true
+                                event.type == KeyEventType.KeyDown &&
+                                    (event.key == Key.DirectionCenter || event.key == Key.Enter) -> {
+                                    onExit()
+                                    true
+                                }
+                                else -> false
+                            }
+                        } else Modifier)
+                        .background(
+                            if (isExitFocused) Color.Gray else Color.DarkGray,
+                            RoundedCornerShape(8.dp)
+                        )
                         .then(
-                            if (isExitFocused) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(8.dp))
+                            if (isTv && isExitFocused) Modifier.border(3.dp, gradientBrush, RoundedCornerShape(8.dp))
                             else Modifier
                         )
                         .clickable { onExit() },
@@ -1577,21 +1804,50 @@ fun PlaybackErrorOverlay(
                 }
 
                 var isRetryFocused by remember { mutableStateOf(false) }
+                val retryScale by animateFloatAsState(if (isRetryFocused) 1.05f else 1f, label = "retryScale")
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .height(48.dp)
-                        .focusRequester(retryRequester)
-                        .onFocusChanged { isRetryFocused = it.isFocused }
-                        .focusable()
-                        .onKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyUp &&
-                                (event.key == Key.DirectionCenter || event.key == Key.Enter)
-                            ) { onRetry(); true } else false
+                        .graphicsLayer {
+                            scaleX = retryScale
+                            scaleY = retryScale
                         }
-                        .background(com.cinex.player.ui.theme.DeepRed, RoundedCornerShape(8.dp))
+                        .then(if (isTv) Modifier.focusRequester(retryRequester) else Modifier)
+                        .then(if (isTv) Modifier.focusProperties {
+                            left = exitRequester
+                            right = FocusRequester.Cancel
+                            up = FocusRequester.Cancel
+                            down = if (onPlayNext != null) nextRequester else FocusRequester.Cancel
+                        } else Modifier)
+                        .then(if (isTv) Modifier.onFocusChanged { isRetryFocused = it.isFocused } else Modifier)
+                        .then(if (isTv) Modifier.focusable(interactionSource = remember { MutableInteractionSource() }) else Modifier)
+                        .then(if (isTv) Modifier.onKeyEvent { event ->
+                            when {
+                                event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft -> {
+                                    exitRequester.requestFocus()
+                                    true
+                                }
+                                event.type == KeyEventType.KeyDown && onPlayNext != null && event.key == Key.DirectionDown -> {
+                                    nextRequester.requestFocus()
+                                    true
+                                }
+                                event.type == KeyEventType.KeyDown &&
+                                    (event.key == Key.DirectionRight || event.key == Key.DirectionUp) -> true
+                                event.type == KeyEventType.KeyDown &&
+                                    (event.key == Key.DirectionCenter || event.key == Key.Enter) -> {
+                                    onRetry()
+                                    true
+                                }
+                                else -> false
+                            }
+                        } else Modifier)
+                        .background(
+                            if (isRetryFocused) Color(0xFFE11D2E) else com.cinex.player.ui.theme.DeepRed,
+                            RoundedCornerShape(8.dp)
+                        )
                         .then(
-                            if (isRetryFocused) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(8.dp))
+                            if (isTv && isRetryFocused) Modifier.border(3.dp, gradientBrush, RoundedCornerShape(8.dp))
                             else Modifier
                         )
                         .clickable { onRetry() },
@@ -1608,16 +1864,34 @@ fun PlaybackErrorOverlay(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(48.dp)
-                        .onFocusChanged { isNextFocused = it.isFocused }
-                        .focusable()
-                        .onKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyUp &&
-                                (event.key == Key.DirectionCenter || event.key == Key.Enter)
-                            ) { onPlayNext(); true } else false
-                        }
+                        .then(if (isTv) Modifier.focusRequester(nextRequester) else Modifier)
+                        .then(if (isTv) Modifier.focusProperties {
+                            up = exitRequester
+                            left = FocusRequester.Cancel
+                            right = FocusRequester.Cancel
+                            down = FocusRequester.Cancel
+                        } else Modifier)
+                        .then(if (isTv) Modifier.onFocusChanged { isNextFocused = it.isFocused } else Modifier)
+                        .then(if (isTv) Modifier.focusable(interactionSource = remember { MutableInteractionSource() }) else Modifier)
+                        .then(if (isTv) Modifier.onKeyEvent { event ->
+                            when {
+                                event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp -> {
+                                    exitRequester.requestFocus()
+                                    true
+                                }
+                                event.type == KeyEventType.KeyDown &&
+                                    (event.key == Key.DirectionLeft || event.key == Key.DirectionRight || event.key == Key.DirectionDown) -> true
+                                event.type == KeyEventType.KeyDown &&
+                                    (event.key == Key.DirectionCenter || event.key == Key.Enter) -> {
+                                    onPlayNext()
+                                    true
+                                }
+                                else -> false
+                            }
+                        } else Modifier)
                         .background(Color.White.copy(alpha = 0.1f), RoundedCornerShape(8.dp))
                         .then(
-                            if (isNextFocused) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(8.dp))
+                            if (isTv && isNextFocused) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(8.dp))
                             else Modifier
                         )
                         .clickable { onPlayNext() },
@@ -1640,6 +1914,13 @@ fun NextEpisodeOverlay(
 ) {
     val progress = remember { Animatable(0f) }
     val autoPlayDuration = if (isVideoEnded) 10_000 else 30_000 // 10s se acabou, 30s durante créditos
+    
+    // CORREÇÃO: Detecta TV para aplicar foco apenas lá
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val isTv = remember {
+        val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
+        uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    }
 
     LaunchedEffect(isVideoEnded) {
         progress.snapTo(0f)
@@ -1694,21 +1975,21 @@ fun NextEpisodeOverlay(
                 }
 
                 Spacer(modifier = Modifier.height(32.dp))
-                NextEpisodeButton(progress = progress.value, accentColor = accentRed, onClick = onPlayNext)
+                NextEpisodeButton(progress = progress.value, accentColor = accentRed, onClick = onPlayNext, isTv = isTv)
                 Spacer(modifier = Modifier.height(16.dp))
                 var isBackFocused by remember { mutableStateOf(false) }
                 Text(
                     text = "Voltar",
-                    color = if (isBackFocused) Color.White else Color.White.copy(alpha = 0.4f),
+                    color = if (isTv && isBackFocused) Color.White else Color.White.copy(alpha = 0.4f),
                     fontSize = 14.sp,
                     modifier = Modifier
-                        .onFocusChanged { isBackFocused = it.isFocused }
-                        .focusable()
-                        .onKeyEvent { event ->
-                            if (event.type == KeyEventType.KeyUp &&
+                        .then(if (isTv) Modifier.focusable(interactionSource = remember { MutableInteractionSource() }) else Modifier)
+                        .then(if (isTv) Modifier.onFocusChanged { isBackFocused = it.isFocused } else Modifier)
+                        .then(if (isTv) Modifier.onKeyEvent { event ->
+                            if (event.type == KeyEventType.KeyDown &&
                                 (event.key == Key.DirectionCenter || event.key == Key.Enter)
                             ) { onBack(); true } else false
-                        }
+                        } else Modifier)
                         .clickable { onBack() }
                 )
             }
@@ -1750,21 +2031,21 @@ fun NextEpisodeOverlay(
                     Icon(
                         imageVector = Icons.Default.Close,
                         contentDescription = "Fechar",
-                        tint = if (isCloseFocused) Color.White else Color.White.copy(alpha = 0.4f),
+                        tint = if (isTv && isCloseFocused) Color.White else Color.White.copy(alpha = 0.4f),
                         modifier = Modifier
                             .size(18.dp)
-                            .onFocusChanged { isCloseFocused = it.isFocused }
-                            .focusable()
-                            .onKeyEvent { event ->
-                                if (event.type == KeyEventType.KeyUp &&
+                            .then(if (isTv) Modifier.focusable(interactionSource = remember { MutableInteractionSource() }) else Modifier)
+                            .then(if (isTv) Modifier.onFocusChanged { isCloseFocused = it.isFocused } else Modifier)
+                            .then(if (isTv) Modifier.onKeyEvent { event ->
+                                if (event.type == KeyEventType.KeyDown &&
                                     (event.key == Key.DirectionCenter || event.key == Key.Enter)
                                 ) { onDismiss(); true } else false
-                            }
+                            } else Modifier)
                             .clickable { onDismiss() }
                     )
                 }
                 Spacer(modifier = Modifier.height(10.dp))
-                NextEpisodeButton(progress = progress.value, accentColor = accentRed, onClick = onPlayNext)
+                NextEpisodeButton(progress = progress.value, accentColor = accentRed, onClick = onPlayNext, isTv = isTv)
             }
         }
     }
@@ -1775,51 +2056,73 @@ private fun SeekButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     description: String,
     size: Dp,
+    isTv: Boolean = false,
+    focusRequester: FocusRequester? = null,
     onClick: () -> Unit
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
+    var isFocused by remember { mutableStateOf(false) }
+    
     val scale by animateFloatAsState(
-        targetValue = if (isPressed) 0.7f else 1f,
+        targetValue = if (isPressed || (isTv && isFocused)) 1.2f else 1f,
         animationSpec = tween(durationMillis = 100), label = "seekScale"
     )
+    
     IconButton(
         onClick = onClick,
         modifier = Modifier
             .size(size)
-            .graphicsLayer(scaleX = scale, scaleY = scale),
+            .graphicsLayer(scaleX = scale, scaleY = scale)
+            .then(if (isTv && focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .then(if (isTv) Modifier.onFocusChanged { isFocused = it.isFocused } else Modifier)
+            .then(if (isTv) Modifier.focusable(interactionSource = interactionSource) else Modifier)
+            .then(if (isTv) Modifier.onKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown && 
+                    (event.key == Key.DirectionCenter || event.key == Key.Enter)) {
+                    onClick()
+                    true
+                } else false
+            } else Modifier),
         interactionSource = interactionSource
     ) {
-        Icon(icon, contentDescription = description, tint = Color.White, modifier = Modifier.fillMaxSize())
+        Icon(
+            imageVector = icon, 
+            contentDescription = description, 
+            tint = if (isTv && isFocused) Color(0xFFE11D2E) else Color.White, 
+            modifier = Modifier.fillMaxSize()
+        )
     }
 }
 
 @Composable
-private fun NextEpisodeButton(progress: Float, accentColor: Color, onClick: () -> Unit) {
+private fun NextEpisodeButton(progress: Float, accentColor: Color, onClick: () -> Unit, isTv: Boolean = false) {
     val btnRequester = remember { FocusRequester() }
     var isFocused by remember { mutableStateOf(false) }
     val gradientBrush = remember { Brush.linearGradient(listOf(Color(0xFFE11D2E), Color(0xFFF59E0B))) }
 
-    LaunchedEffect(Unit) {
-        try { btnRequester.requestFocus() } catch (_: Exception) {}
+    LaunchedEffect(isTv) {
+        if (isTv) {
+            try { btnRequester.requestFocus() } catch (_: Exception) {}
+        }
     }
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(44.dp)
-            .focusRequester(btnRequester)
-            .onFocusChanged { isFocused = it.isFocused }
-            .focusable()
-            .onKeyEvent { event ->
-                if (event.type == KeyEventType.KeyUp &&
+            .then(if (isTv) Modifier.focusRequester(btnRequester) else Modifier)
+            .then(if (isTv) Modifier.onFocusChanged { isFocused = it.isFocused } else Modifier)
+            .then(if (isTv) Modifier.focusable(interactionSource = remember { MutableInteractionSource() }) else Modifier)
+            .then(if (isTv) Modifier.onKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown &&
                     (event.key == Key.DirectionCenter || event.key == Key.Enter)
                 ) { onClick(); true } else false
-            }
+            } else Modifier)
             .clip(RoundedCornerShape(8.dp))
             .background(Color(0xFF1A1A1A))
             .then(
-                if (isFocused) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(8.dp))
+                if (isTv && isFocused) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(8.dp))
                 else Modifier
             )
             .clickable { onClick() },

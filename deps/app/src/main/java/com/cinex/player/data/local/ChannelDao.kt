@@ -14,62 +14,82 @@ interface ChannelDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAll(channels: List<Channel>)
 
-    /** Insere todos os canais em uma única transação — muito mais rápido que múltiplas transações */
+    /** 
+     * Insere todos os canais em uma única transação — muito mais rápido que múltiplas transações.
+     * Usa chunks de 500 para evitar problemas de memória com listas muito grandes.
+     */
     @Transaction
     suspend fun insertAllInTransaction(channels: List<Channel>) {
         channels.chunked(500).forEach { chunk -> insertAll(chunk) }
     }
 
+    /**
+     * OTIMIZAÇÃO: Versão que acumula todos os canais e insere em batch único.
+     * Recebe uma lista de listas (uma por categoria) e insere tudo em uma única transação.
+     * Isso evita o overhead de N transações quando há muitas categorias.
+     */
+    @Transaction
+    suspend fun insertAllChannelsBatch(allChannels: List<List<Channel>>) {
+        // Achata todas as listas e insere em chunks de 1000
+        allChannels.flatten().chunked(1000).forEach { chunk ->
+            insertAll(chunk)
+        }
+    }
+
     @Query("SELECT * FROM channels WHERE category = :category AND playlistUrl = :url ORDER BY orderIndex ASC")
     fun getChannelsByCategory(category: String, url: String): PagingSource<Int, Channel>
 
-    @Query("""
-        SELECT * FROM channels WHERE category = 'MOVIE' AND playlistUrl = :url
-        AND (:categoryId = 'Tudo' OR categoryId = :categoryId)
-        ORDER BY
-            CASE WHEN :sort = 'AZ'     THEN LOWER(COALESCE(name, '')) END ASC,
-            CASE WHEN :sort = 'ZA'     THEN LOWER(COALESCE(name, '')) END DESC,
-            CASE WHEN :sort = 'RATING' THEN CAST(COALESCE(tmdbRating, 0) AS REAL) END DESC,
-            CASE WHEN :sort = 'RECENT' THEN syncedAt END DESC,
-            CASE WHEN :sort = 'RECENT' THEN CAST(SUBSTR(remoteId, INSTR(remoteId, '_') + 1) AS INTEGER) END DESC,
-            CASE WHEN :sort = 'RECENT' THEN orderIndex END DESC,
-            orderIndex ASC
-    """)
-    fun getMoviesPaged(url: String, categoryId: String, sort: String): PagingSource<Int, Channel>
+    // === OTIMIZAÇÃO DE PERFORMANCE (PAGING) ===
+    // Consultas específicas por tipo de ordenação para evitar que o SQLite faça um table scan 
+    // avaliando ORDER BY CASE WHEN... para cada item, o que travava a interface no Paging 3.
 
-    @Query("""
-        SELECT * FROM channels WHERE isFavorite = 1 AND category = 'MOVIE' AND playlistUrl = :url
-        ORDER BY
-            CASE WHEN :sort = 'AZ'     THEN LOWER(COALESCE(name, '')) END ASC,
-            CASE WHEN :sort = 'ZA'     THEN LOWER(COALESCE(name, '')) END DESC,
-            CASE WHEN :sort = 'RATING' THEN CAST(COALESCE(tmdbRating, 0) AS REAL) END DESC,
-            orderIndex ASC
-    """)
-    fun getMoviesFavoritesPaged(url: String, sort: String): PagingSource<Int, Channel>
+    @Query("SELECT * FROM channels WHERE category = 'MOVIE' AND playlistUrl = :url AND (:categoryId = 'Tudo' OR categoryId = :categoryId) ORDER BY name COLLATE NOCASE ASC")
+    fun getMoviesPagedAZ(url: String, categoryId: String): PagingSource<Int, Channel>
+    
+    @Query("SELECT * FROM channels WHERE category = 'MOVIE' AND playlistUrl = :url AND (:categoryId = 'Tudo' OR categoryId = :categoryId) ORDER BY name COLLATE NOCASE DESC")
+    fun getMoviesPagedZA(url: String, categoryId: String): PagingSource<Int, Channel>
+    
+    @Query("SELECT * FROM channels WHERE category = 'MOVIE' AND playlistUrl = :url AND (:categoryId = 'Tudo' OR categoryId = :categoryId) ORDER BY CAST(COALESCE(tmdbRating, 0) AS REAL) DESC, orderIndex ASC")
+    fun getMoviesPagedRating(url: String, categoryId: String): PagingSource<Int, Channel>
+    
+    @Query("SELECT * FROM channels WHERE category = 'MOVIE' AND playlistUrl = :url AND (:categoryId = 'Tudo' OR categoryId = :categoryId) ORDER BY syncedAt DESC, CAST(SUBSTR(remoteId, INSTR(remoteId, '_') + 1) AS INTEGER) DESC, orderIndex DESC")
+    fun getMoviesPagedRecent(url: String, categoryId: String): PagingSource<Int, Channel>
 
-    @Query("""
-        SELECT * FROM channels WHERE category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url
-        AND (:categoryId = 'Tudo' OR categoryId = :categoryId)
-        ORDER BY
-            CASE WHEN :sort = 'AZ'     THEN LOWER(COALESCE(seriesName, name, '')) END ASC,
-            CASE WHEN :sort = 'ZA'     THEN LOWER(COALESCE(seriesName, name, '')) END DESC,
-            CASE WHEN :sort = 'RATING' THEN CAST(COALESCE(tmdbRating, 0) AS REAL) END DESC,
-            CASE WHEN :sort = 'RECENT' THEN syncedAt END DESC,
-            CASE WHEN :sort = 'RECENT' THEN CAST(SUBSTR(remoteId, INSTR(remoteId, '_') + 1) AS INTEGER) END DESC,
-            CASE WHEN :sort = 'RECENT' THEN orderIndex END DESC,
-            orderIndex ASC
-    """)
-    fun getSeriesPaged(url: String, categoryId: String, sort: String): PagingSource<Int, Channel>
+    @Query("SELECT * FROM channels WHERE isFavorite = 1 AND category = 'MOVIE' AND playlistUrl = :url ORDER BY name COLLATE NOCASE ASC")
+    fun getMoviesFavoritesPagedAZ(url: String): PagingSource<Int, Channel>
+    
+    @Query("SELECT * FROM channels WHERE isFavorite = 1 AND category = 'MOVIE' AND playlistUrl = :url ORDER BY name COLLATE NOCASE DESC")
+    fun getMoviesFavoritesPagedZA(url: String): PagingSource<Int, Channel>
+    
+    @Query("SELECT * FROM channels WHERE isFavorite = 1 AND category = 'MOVIE' AND playlistUrl = :url ORDER BY CAST(COALESCE(tmdbRating, 0) AS REAL) DESC, orderIndex ASC")
+    fun getMoviesFavoritesPagedRating(url: String): PagingSource<Int, Channel>
+    
+    @Query("SELECT * FROM channels WHERE isFavorite = 1 AND category = 'MOVIE' AND playlistUrl = :url ORDER BY syncedAt DESC, CAST(SUBSTR(remoteId, INSTR(remoteId, '_') + 1) AS INTEGER) DESC, orderIndex DESC")
+    fun getMoviesFavoritesPagedRecent(url: String): PagingSource<Int, Channel>
 
-    @Query("""
-        SELECT * FROM channels WHERE isFavorite = 1 AND category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url
-        ORDER BY
-            CASE WHEN :sort = 'AZ'     THEN LOWER(COALESCE(seriesName, name, '')) END ASC,
-            CASE WHEN :sort = 'ZA'     THEN LOWER(COALESCE(seriesName, name, '')) END DESC,
-            CASE WHEN :sort = 'RATING' THEN CAST(COALESCE(tmdbRating, 0) AS REAL) END DESC,
-            orderIndex ASC
-    """)
-    fun getSeriesFavoritesPaged(url: String, sort: String): PagingSource<Int, Channel>
+    @Query("SELECT * FROM channels WHERE category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url AND (:categoryId = 'Tudo' OR categoryId = :categoryId) ORDER BY COALESCE(seriesName, name, '') COLLATE NOCASE ASC")
+    fun getSeriesPagedAZ(url: String, categoryId: String): PagingSource<Int, Channel>
+    
+    @Query("SELECT * FROM channels WHERE category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url AND (:categoryId = 'Tudo' OR categoryId = :categoryId) ORDER BY COALESCE(seriesName, name, '') COLLATE NOCASE DESC")
+    fun getSeriesPagedZA(url: String, categoryId: String): PagingSource<Int, Channel>
+    
+    @Query("SELECT * FROM channels WHERE category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url AND (:categoryId = 'Tudo' OR categoryId = :categoryId) ORDER BY CAST(COALESCE(tmdbRating, 0) AS REAL) DESC, orderIndex ASC")
+    fun getSeriesPagedRating(url: String, categoryId: String): PagingSource<Int, Channel>
+    
+    @Query("SELECT * FROM channels WHERE category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url AND (:categoryId = 'Tudo' OR categoryId = :categoryId) ORDER BY syncedAt DESC, CAST(SUBSTR(remoteId, INSTR(remoteId, '_') + 1) AS INTEGER) DESC, orderIndex DESC")
+    fun getSeriesPagedRecent(url: String, categoryId: String): PagingSource<Int, Channel>
+
+    @Query("SELECT * FROM channels WHERE isFavorite = 1 AND category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url ORDER BY COALESCE(seriesName, name, '') COLLATE NOCASE ASC")
+    fun getSeriesFavoritesPagedAZ(url: String): PagingSource<Int, Channel>
+    
+    @Query("SELECT * FROM channels WHERE isFavorite = 1 AND category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url ORDER BY COALESCE(seriesName, name, '') COLLATE NOCASE DESC")
+    fun getSeriesFavoritesPagedZA(url: String): PagingSource<Int, Channel>
+    
+    @Query("SELECT * FROM channels WHERE isFavorite = 1 AND category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url ORDER BY CAST(COALESCE(tmdbRating, 0) AS REAL) DESC, orderIndex ASC")
+    fun getSeriesFavoritesPagedRating(url: String): PagingSource<Int, Channel>
+    
+    @Query("SELECT * FROM channels WHERE isFavorite = 1 AND category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url ORDER BY syncedAt DESC, CAST(SUBSTR(remoteId, INSTR(remoteId, '_') + 1) AS INTEGER) DESC, orderIndex DESC")
+    fun getSeriesFavoritesPagedRecent(url: String): PagingSource<Int, Channel>
 
     @Query("SELECT * FROM channels WHERE category = :category AND playlistUrl = :url")
     suspend fun getChannelsByCategoryList(category: String, url: String): List<Channel>
@@ -80,10 +100,34 @@ interface ChannelDao {
     @Query("SELECT * FROM channels WHERE category = 'MOVIE' AND playlistUrl = :url ORDER BY orderIndex ASC")
     fun observeAllMovies(url: String): Flow<List<Channel>>
 
+    @Query("""
+        SELECT * FROM channels WHERE category = 'MOVIE' AND playlistUrl = :url
+        AND (:categoryId = 'Tudo' OR categoryId = :categoryId)
+        ORDER BY orderIndex ASC
+    """)
+    fun observeMoviesByCategory(url: String, categoryId: String): Flow<List<Channel>>
+
     @Query("SELECT * FROM channels WHERE category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url ORDER BY orderIndex ASC")
     fun observeAllSeries(url: String): Flow<List<Channel>>
 
-    @Query("SELECT * FROM channels WHERE category = 'MOVIE' AND playlistUrl = :url AND (tmdbSynopsis IS NULL OR tmdbSynopsis = '')")
+    @Query("""
+        SELECT * FROM channels WHERE category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url
+        AND (:categoryId = 'Tudo' OR categoryId = :categoryId)
+        ORDER BY orderIndex ASC
+    """)
+    fun observeSeriesByCategory(url: String, categoryId: String): Flow<List<Channel>>
+
+    @Query("SELECT COUNT(*) FROM channels WHERE category = 'SERIES' AND seasonNumber IS NOT NULL AND playlistUrl = :url")
+    suspend fun countEpisodesOnly(url: String): Int
+
+    @Query("""
+        SELECT * FROM channels WHERE category = 'MOVIE' AND playlistUrl = :url
+        AND (
+            tmdbSynopsis IS NULL OR tmdbSynopsis = ''
+            OR bannerUrl IS NULL OR bannerUrl = ''
+            OR bannerUrl NOT LIKE '%/original/%'
+        )
+    """)
     suspend fun getMoviesToEnrich(url: String): List<Channel>
 
     @Query("SELECT * FROM channels WHERE groupTitle = :groupTitle AND playlistUrl = :url ORDER BY orderIndex ASC")
@@ -102,7 +146,14 @@ interface ChannelDao {
     @Query("SELECT * FROM channels WHERE category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url")
     suspend fun getUniqueSeriesList(url: String): List<Channel>
 
-    @Query("SELECT * FROM channels WHERE category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url AND (tmdbSynopsis IS NULL OR tmdbSynopsis = '')")
+    @Query("""
+        SELECT * FROM channels WHERE category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url
+        AND (
+            tmdbSynopsis IS NULL OR tmdbSynopsis = ''
+            OR bannerUrl IS NULL OR bannerUrl = ''
+            OR bannerUrl NOT LIKE '%/original/%'
+        )
+    """)
     suspend fun getSeriesToEnrich(url: String): List<Channel>
 
     @Query("SELECT * FROM channels WHERE categoryId = :categoryId AND category = 'SERIES' AND seasonNumber IS NULL AND playlistUrl = :url ORDER BY orderIndex ASC")
@@ -114,12 +165,23 @@ interface ChannelDao {
             SELECT MIN(id) FROM channels
             WHERE category IN ('MOVIE', 'SERIES')
             AND playlistUrl = :url
-            AND bannerUrl IS NOT NULL AND bannerUrl != '' AND bannerUrl NOT LIKE '%null'
-            AND bannerUrl LIKE '%/original/%'
-            AND tmdbSynopsis IS NOT NULL AND tmdbSynopsis != ''
+            AND (
+                -- Opção 1: Tem dados TMDB completos (banner original + sinopse)
+                (bannerUrl IS NOT NULL AND bannerUrl != '' AND bannerUrl NOT LIKE '%null'
+                 AND bannerUrl LIKE '%/original/%'
+                 AND tmdbSynopsis IS NOT NULL AND tmdbSynopsis != '')
+                OR
+                -- Opção 2: Tem pelo menos poster do Xtream (fallback visual)
+                (posterUrl IS NOT NULL AND posterUrl != '' AND posterUrl NOT LIKE '%null')
+            )
             GROUP BY CASE WHEN category = 'SERIES' THEN seriesName ELSE name END
         )
-        ORDER BY tmdbRating DESC
+        ORDER BY 
+            CASE 
+                WHEN bannerUrl LIKE '%/original/%' THEN tmdbRating 
+                ELSE 0 
+            END DESC,
+            orderIndex ASC
         LIMIT 40
     """)
     fun getFeaturedContent(url: String): Flow<List<Channel>>
@@ -199,6 +261,23 @@ interface ChannelDao {
     @Query("UPDATE channels SET tmdbRating = :rating, tmdbSynopsis = :synopsis, posterUrl = :posterUrl, bannerUrl = :bannerUrl, tmdbYear = :year, castMembers = :cast, trailerUrl = :trailer WHERE id = :channelId")
     suspend fun updateTmdbInfo(channelId: Int, rating: Double?, synopsis: String?, posterUrl: String?, bannerUrl: String?, year: String?, cast: String?, trailer: String?)
 
+    /**
+     * MIGRAÇÃO: limpa bannerUrls com resolução /w1280/ (formato antigo).
+     * Esses URLs não passam no filtro getFeaturedContent (LIKE '%/original/%'),
+     * causando capas do Xtream no lugar dos backdrops TMDB.
+     * Após limpar, o background enrichment re-busca com /original/.
+     */
+    @Query("UPDATE channels SET bannerUrl = NULL WHERE bannerUrl LIKE '%/t/p/w1280%'")
+    suspend fun clearStaleW1280Banners()
+
+    /**
+     * MIGRAÇÃO: limpa sinopses que são a string literal "null" (vindo de JSON malformado).
+     * Esses itens têm tmdbSynopsis = "null" que passa no isNullOrEmpty() mas exibe "null" na UI.
+     * Após limpar, o background enrichment re-busca a sinopse correta.
+     */
+    @Query("UPDATE channels SET tmdbSynopsis = NULL WHERE LOWER(TRIM(tmdbSynopsis)) = 'null'")
+    suspend fun clearNullStringSynopsis()
+
     @Query("""UPDATE channels SET
         tmdbRating = NULL,
         tmdbSynopsis = NULL,
@@ -241,6 +320,9 @@ interface ChannelDao {
 
     @Query("DELETE FROM channels WHERE playlistUrl = :url")
     suspend fun clearByPlaylist(url: String)
+
+    @Query("DELETE FROM channels WHERE category = :category AND playlistUrl = :url")
+    suspend fun clearByCategory(category: String, url: String)
 
     @Query("SELECT COUNT(*) FROM channels WHERE category = :type AND playlistUrl = :url")
     suspend fun countByType(type: String, url: String): Int

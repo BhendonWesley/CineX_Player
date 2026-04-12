@@ -2,13 +2,17 @@ package com.cinex.player.ui.screens
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.SearchOff
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.Icon
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -19,6 +23,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
@@ -49,6 +54,12 @@ import com.cinex.player.ui.components.CategoryItem
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
@@ -59,6 +70,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import kotlinx.coroutines.delay
 
 private val AccentGold = Color(0xFFD8A63A)
 private val AccentRed  = Color(0xFFE11D2E)
@@ -159,44 +171,113 @@ fun VodScreen(
         uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     }
 
-    // TV: usa cache em memória para troca instantânea de categoria
-    val tvChannelsRaw by (when {
-        isTv && channels == null && type == "MOVIE" -> viewModel.moviesByCategory
-        isTv && channels == null && type == "SERIES" -> viewModel.seriesByCategory
-        else -> kotlinx.coroutines.flow.MutableStateFlow(emptyList())
+    // HABILITADO PARA MOBILE TAMBÉM: usa cache em memória para troca instantânea de categoria
+    val tvChannelsRawPair by (when {
+        channels == null && type == "MOVIE" -> viewModel.moviesByCategory
+        channels == null && type == "SERIES" -> viewModel.seriesByCategory
+        else -> kotlinx.coroutines.flow.MutableStateFlow("Tudo" to emptyList<com.cinex.player.data.model.Channel>())
     }).collectAsState()
 
-    // Aplica ordenação na lista em memória (instantâneo, <1ms para 500 itens)
+    val loadedCategoryId = tvChannelsRawPair.first
+    val tvChannelsRaw = tvChannelsRawPair.second
+
+    // Aplica ordenação na lista em memória. As chaves de ordenação são pré-computadas
+    // numa única passada O(n) para evitar regex/lowercase dentro do comparador —
+    // crítico com catálogos grandes (16k+ itens) no thread de composição.
     val tvChannels = remember(tvChannelsRaw, currentSort) {
+        if (tvChannelsRaw.isEmpty()) return@remember tvChannelsRaw
+        val digitsOnly = Regex("[^0-9]")
         when (currentSort) {
-            "AZ"     -> tvChannelsRaw.sortedBy { it.name.lowercase() }
-            "ZA"     -> tvChannelsRaw.sortedByDescending { it.name.lowercase() }
+            "AZ" -> {
+                val keys = Array(tvChannelsRaw.size) { tvChannelsRaw[it].name.lowercase() }
+                val indices = (0 until tvChannelsRaw.size).sortedBy { keys[it] }
+                indices.map { tvChannelsRaw[it] }
+            }
+            "ZA" -> {
+                val keys = Array(tvChannelsRaw.size) { tvChannelsRaw[it].name.lowercase() }
+                val indices = (0 until tvChannelsRaw.size).sortedByDescending { keys[it] }
+                indices.map { tvChannelsRaw[it] }
+            }
             "RATING" -> tvChannelsRaw.sortedByDescending { it.tmdbRating ?: 0.0 }
-            "RECENT" -> tvChannelsRaw.sortedWith(compareByDescending<Channel> { it.syncedAt }
-                .thenByDescending { it.remoteId.replace(Regex("[^0-9]"), "").toIntOrNull() ?: 0 }
-                .thenByDescending { it.orderIndex })
-            else     -> tvChannelsRaw.sortedBy { it.orderIndex }
+            "RECENT" -> {
+                val syncedAt = LongArray(tvChannelsRaw.size) { tvChannelsRaw[it].syncedAt }
+                val remoteIdNum = IntArray(tvChannelsRaw.size) {
+                    tvChannelsRaw[it].remoteId.replace(digitsOnly, "").toIntOrNull() ?: 0
+                }
+                val orderIndex = IntArray(tvChannelsRaw.size) { tvChannelsRaw[it].orderIndex }
+                val indices = (0 until tvChannelsRaw.size).sortedWith(
+                    compareByDescending<Int> { syncedAt[it] }
+                        .thenByDescending { remoteIdNum[it] }
+                        .thenByDescending { orderIndex[it] }
+                )
+                indices.map { tvChannelsRaw[it] }
+            }
+            else -> tvChannelsRaw.sortedBy { it.orderIndex }
         }
     }
 
-    val useTvMemory = isTv && channels == null
+    val useTvMemory = channels == null
 
-    // Paging: sempre coletado (regra do Compose), mas só usado no mobile
-    val pagingFlow = remember(selectedCategory, type, currentSort) {
-        channels ?: if (type == "MOVIE") viewModel.getPagedMoviesByCategory(selectedCategory)
-        else viewModel.getPagedSeriesByCategory(selectedCategory)
+    // Paging 3: Agora só é ativado caso o caller passe um flow (ex: tela de Busca).
+    // OTIMIZAÇÃO GLOBAL MÁXIMA: O app agora usa a engenharia de RAM do Compose 
+    // com uma lista fixa no StateFlow tanto pra TV quanto para Mobile, garantindo
+    // tempo de resposta de ~10ms em invés de utilizar a engine pesada do Paging 3
+    // que apaga os dados a cada ping no banco de dados.
+    // OTIMIZAÇÃO: A key inclui apenas o necessário para não recriar o Pager sem necessidade
+    val pagingFlow = if (useTvMemory) {
+        null
+    } else {
+        remember(selectedCategory, type, currentSort) {
+            channels ?: if (type == "MOVIE") viewModel.getPagedMoviesByCategory(selectedCategory)
+            else viewModel.getPagedSeriesByCategory(selectedCategory)
+        }
     }
-    val pagingItems = pagingFlow.collectAsLazyPagingItems()
+    val pagingItems = (pagingFlow ?: flowOf(PagingData.empty())).collectAsLazyPagingItems()
 
     val itemCount = if (useTvMemory) tvChannels.size else pagingItems.itemCount
 
     val firstCategoryFocusRequester = remember { FocusRequester() }
+    val firstGridItemFocusRequester = remember { FocusRequester() }
+    val firstSortChipFocusRequester = remember { FocusRequester() }
+    val areSortChipsVisible = type != "SEARCH" && selectedCategory != "Continuar Assistindo"
 
-    // Request focus on the first category when screen becomes visible on TV
+    // CORREÇÃO: Scroll ao topo SOMENTE ao trocar de categoria ou ordenação
+    val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    LaunchedEffect(selectedCategory, currentSort) {
+        gridState.scrollToItem(0)
+    }
+
+    // Foco inicial ao entrar na tela (primeira categoria da sidebar).
     LaunchedEffect(isTv, isActive, categories) {
         if (isTv && isActive && categories.isNotEmpty()) {
-            kotlinx.coroutines.delay(200)
-            try { firstCategoryFocusRequester.requestFocus() } catch (_: Exception) {}
+            for (delayMs in listOf(150L, 250L, 400L)) {
+                kotlinx.coroutines.delay(delayMs)
+                try {
+                    firstCategoryFocusRequester.requestFocus()
+                    break
+                } catch (_: Exception) {}
+            }
+        }
+    }
+
+    // Foco ao voltar do overlay de detalhes: observa a transição não-nulo → nulo e
+    // força foco no primeiro item do grid (onde o usuário estava navegando antes).
+    // Observar diretamente o StateFlow é mais confiável do que depender de isActive.
+    val detailsChannel by viewModel.selectedChannelForDetails.collectAsState()
+    var prevDetailsOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(detailsChannel) {
+        val nowOpen = detailsChannel != null
+        val wasOpen = prevDetailsOpen
+        prevDetailsOpen = nowOpen
+        if (isTv && wasOpen && !nowOpen && isActive && itemCount > 0) {
+            // Detalhes acabou de fechar: restaura foco no primeiro item visível do grid.
+            for (delayMs in listOf(200L, 300L, 500L)) {
+                kotlinx.coroutines.delay(delayMs)
+                try {
+                    firstGridItemFocusRequester.requestFocus()
+                    break
+                } catch (_: Exception) {}
+            }
         }
     }
 
@@ -225,6 +306,15 @@ fun VodScreen(
         }
 
         // Gate de carregamento inicial — aguarda dados antes de exibir o grid
+        val isMoviesReady by viewModel.isMoviesReady.collectAsState()
+        val isSeriesReady by viewModel.isSeriesReady.collectAsState()
+        val isContentReady = when {
+            type == "SEARCH" -> true
+            useTvMemory && type == "MOVIE" -> isMoviesReady
+            useTvMemory && type == "SERIES" -> isSeriesReady
+            else -> true
+        }
+
         var initialLoadComplete by remember { mutableStateOf(false) }
         if (!initialLoadComplete) {
             if (type == "SEARCH") {
@@ -232,7 +322,7 @@ fun VodScreen(
                 if (refreshState is androidx.paging.LoadState.NotLoading) {
                     initialLoadComplete = true
                 }
-            } else if (categories.isNotEmpty() && itemCount > 0) {
+            } else if (categories.isNotEmpty() && isContentReady) {
                 initialLoadComplete = true
             }
         }
@@ -300,9 +390,10 @@ fun VodScreen(
                         borderWidth = 1.5.dp,
                         cornerRadius = 16.dp
                     )
+                    .padding(vertical = 16.dp)
                     .verticalScrollbar(sidebarScrollState)
                     .verticalScroll(sidebarScrollState)
-                    .padding(16.dp)
+                    .padding(horizontal = 16.dp)
             ) {
                 // Cabeçalho do sidebar
                 Text(
@@ -338,7 +429,10 @@ fun VodScreen(
                             onClick = {
                                 if (type == "MOVIE") viewModel.setMovieCategory("Continuar Assistindo")
                                 else viewModel.setSeriesCategory("Continuar Assistindo")
-                            }
+                            },
+                            modifier = if (isTv) {
+                                Modifier.focusProperties { right = firstGridItemFocusRequester }
+                            } else Modifier
                         )
                     }
                     Spacer(Modifier.height(6.dp))
@@ -371,7 +465,13 @@ fun VodScreen(
                                     else viewModel.setSeriesCategory(category.id)
                                 }
                             },
-                            modifier = if (index == 0 && isTv) Modifier.focusRequester(firstCategoryFocusRequester) else Modifier
+                            modifier = when {
+                                isTv && index == 0 -> Modifier
+                                    .focusRequester(firstCategoryFocusRequester)
+                                    .focusProperties { right = firstGridItemFocusRequester }
+                                isTv -> Modifier.focusProperties { right = firstGridItemFocusRequester }
+                                else -> Modifier
+                            }
                         )
                     }
                     Spacer(Modifier.height(6.dp))
@@ -382,7 +482,7 @@ fun VodScreen(
         // ── GRID DE CONTEÚDO ──────────────────────────────────────
         Column(modifier = Modifier.weight(1f)) {
             // Chips de ordenação (ocultos em busca e Continuar Assistindo)
-            if (type != "SEARCH" && selectedCategory != "Continuar Assistindo") {
+            if (areSortChipsVisible) {
                 val sortOptions = listOf(
                     "RECENT" to "Recentes",
                     "AZ"     to "A-Z",
@@ -396,23 +496,62 @@ fun VodScreen(
                     horizontalArrangement = Arrangement.End
                 ) {
                     items(sortOptions.size) { idx ->
-                        val (key, label) = sortOptions[idx]
-                        val isSelected = currentSort == key
+                        val (sortKey, label) = sortOptions[idx]
+                        val isSelected = currentSort == sortKey
+                        var isChipFocused by remember { mutableStateOf(false) }
                         if (idx > 0) Spacer(Modifier.width(6.dp))
                         androidx.compose.foundation.layout.Box(
                             modifier = Modifier
+                                .then(
+                                    if (isTv) {
+                                        Modifier
+                                            .then(if (idx == 0) Modifier.focusRequester(firstSortChipFocusRequester) else Modifier)
+                                            .focusProperties {
+                                                down = firstGridItemFocusRequester
+                                            }
+                                            .onFocusChanged { isChipFocused = it.isFocused }
+                                            .focusable(interactionSource = remember { MutableInteractionSource() })
+                                            .onKeyEvent { event ->
+                                                // OTIMIZADO: KeyDown ao invés de KeyUp para resposta instantânea
+                                                if (event.type == KeyEventType.KeyDown &&
+                                                    (event.key == Key.DirectionCenter || event.key == Key.Enter)
+                                                ) {
+                                                    if (type == "MOVIE") viewModel.setMovieSortOrder(sortKey)
+                                                    else viewModel.setSeriesSortOrder(sortKey)
+                                                    true
+                                                } else false
+                                            }
+                                    } else {
+                                        Modifier
+                                    }
+                                )
                                 .clip(RoundedCornerShape(20.dp))
-                                .background(if (isSelected) AccentGold else Color.White.copy(alpha = 0.08f))
+                                .then(
+                                    if (isChipFocused) {
+                                        Modifier.border(2.dp, Brush.linearGradient(listOf(AccentRed, AccentGold)), RoundedCornerShape(20.dp))
+                                    } else Modifier
+                                )
+                                .background(
+                                    when {
+                                        isSelected -> AccentGold
+                                        isChipFocused -> Color.White.copy(alpha = 0.12f)
+                                        else -> Color.White.copy(alpha = 0.08f)
+                                    }
+                                )
                                 .clickable {
-                                    if (type == "MOVIE") viewModel.setMovieSortOrder(key)
-                                    else viewModel.setSeriesSortOrder(key)
+                                    if (type == "MOVIE") viewModel.setMovieSortOrder(sortKey)
+                                    else viewModel.setSeriesSortOrder(sortKey)
                                 }
                                 .padding(horizontal = 10.dp, vertical = 4.dp),
                             contentAlignment = Alignment.Center
                         ) {
                             Text(
                                 text = label,
-                                color = if (isSelected) Color.Black else Color.White.copy(alpha = 0.7f),
+                                color = when {
+                                    isSelected -> Color.Black
+                                    isChipFocused -> Color.White
+                                    else -> Color.White.copy(alpha = 0.7f)
+                                },
                                 fontSize = 11.sp,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                             )
@@ -421,7 +560,34 @@ fun VodScreen(
                 }
             }
         Box(modifier = Modifier.weight(1f)) {
+            var focusedGridChannel by remember(type, selectedCategory) { mutableStateOf<Channel?>(null) }
+            var settledGridChannel by remember(type, selectedCategory) { mutableStateOf<Channel?>(null) }
+
+            LaunchedEffect(focusedGridChannel?.id, isTv, useTvMemory) {
+                if (!isTv || !useTvMemory) return@LaunchedEffect
+                val channel = focusedGridChannel ?: return@LaunchedEffect
+                // OTIMIZADO: delay reduzido de 220ms para 120ms para resposta mais rápida
+                delay(120)  // OTIMIZADO: 220ms → 120ms
+                if (focusedGridChannel?.id == channel.id) {
+                    settledGridChannel = channel
+                }
+            }
+
+            LaunchedEffect(settledGridChannel?.id, isTv, useTvMemory) {
+                if (!isTv || !useTvMemory) return@LaunchedEffect
+                settledGridChannel?.let { channel ->
+                    if (channel.posterUrl.isNullOrEmpty() && channel.tmdbSynopsis.isNullOrEmpty()) {
+                        viewModel.onChannelVisible(channel)
+                    }
+                }
+            }
+
+            // Paging 3 loading state (Apenas para mobile)
+            val isLoadingPaging = !useTvMemory && pagingItems.loadState.refresh is androidx.paging.LoadState.Loading
+
             val isReallyEmpty = if (useTvMemory) {
+                // Na TV, a transição entre as categorias nativas no SQLite é praticamente garantida quase instantaneamente (50ms).
+                // Ao invés de colocar uma segunda tela de load visual por 50ms, nós mostramos o grid.
                 tvChannels.isEmpty()
             } else {
                 itemCount == 0 && pagingItems.loadState.refresh is androidx.paging.LoadState.NotLoading
@@ -456,44 +622,38 @@ fun VodScreen(
                     }
                 }
             }
-            val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
-            LaunchedEffect(currentSort) {
-                gridState.scrollToItem(0)
-            }
 
-            // Viewport-aware enrichment: só enriquece itens visíveis na tela
-            // Evita OOM em TVs com 16k+ itens
-            LaunchedEffect(gridState, tvChannels, useTvMemory) {
+            // Viewport-aware enrichment: só enriquece itens visíveis na tela (TV only).
+            // CRÍTICO: tvChannels NÃO pode entrar na key do LaunchedEffect, senão cada
+            // emissão do DB (enrichment → write → re-emit) reinicia este collect e
+            // dispara onChannelVisible em rajada, criando um ciclo de feedback.
+            // Ao invés disso, usamos rememberUpdatedState para ler a lista mais recente
+            // sem reiniciar, e o snapshotFlow filtra por faixa visível (não por frame).
+            // OTIMIZAÇÃO: debounce reduzido de 350ms para 150ms para resposta mais rápida
+            val latestTvChannels by rememberUpdatedState(tvChannels)
+            LaunchedEffect(gridState, useTvMemory) {
                 if (!useTvMemory) return@LaunchedEffect
 
-                snapshotFlow { gridState.layoutInfo }
+                snapshotFlow {
+                    val info = gridState.layoutInfo
+                    val items = info.visibleItemsInfo
+                    if (items.isEmpty()) -1 to -1
+                    else items.first().index to items.last().index
+                }
+                    .debounce(150)  // OTIMIZADO: 350ms → 150ms
                     .distinctUntilChanged()
-                    .collect { layoutInfo ->
-                        val visibleItems = layoutInfo.visibleItemsInfo
-                        if (visibleItems.isEmpty()) return@collect
+                    .collect { (firstVisible, lastVisible) ->
+                        if (firstVisible < 0) return@collect
+                        val list = latestTvChannels
+                        if (list.isEmpty()) return@collect
 
-                        // Enriquece itens visíveis
-                        visibleItems.forEach { item ->
-                            val index = item.index
-                            if (index in tvChannels.indices) {
-                                val channel = tvChannels[index]
-                                // Enriquece apenas se ainda não tem dados TMDB
-                                if (channel.posterUrl.isNullOrEmpty() && channel.tmdbSynopsis.isNullOrEmpty()) {
-                                    viewModel.onChannelVisible(channel)
-                                }
-                            }
-                        }
-
-                        // Prefetch: enriquece próximos 8 itens (ainda não visíveis)
-                        val lastVisibleIndex = visibleItems.maxOfOrNull { it.index } ?: 0
-                        val prefetchCount = 8
-                        for (i in 1..prefetchCount) {
-                            val prefetchIndex = lastVisibleIndex + i
-                            if (prefetchIndex in tvChannels.indices) {
-                                val channel = tvChannels[prefetchIndex]
-                                if (channel.posterUrl.isNullOrEmpty() && channel.tmdbSynopsis.isNullOrEmpty()) {
-                                    viewModel.onChannelVisible(channel)
-                                }
+                        // OTIMIZAÇÃO: Enriquece itens visíveis + 4 de prefetch (reduzido de 8)
+                        // Menos prefetch = menos trabalho desnecessário durante navegação rápida
+                        val end = (lastVisible + 4).coerceAtMost(list.lastIndex)
+                        for (i in firstVisible..end) {
+                            val channel = list[i]
+                            if (channel.posterUrl.isNullOrEmpty() && channel.tmdbSynopsis.isNullOrEmpty()) {
+                                viewModel.onChannelVisible(channel)
                             }
                         }
                     }
@@ -510,17 +670,27 @@ fun VodScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (useTvMemory) {
-                    // TV: usa lista em memória para troca instantânea
-                    // REMOVIDO: LaunchedEffect por item (causava OOM)
-                    // Novo: enrichment controlado pelo snapshotFlow acima
+                    // UNIVERSAL: usa lista em memória para troca instantânea de ponta a ponta.
+                    // OTIMIZAÇÃO: contentType fixo permite reutilização máxima de composables
                     items(
                         count = tvChannels.size,
-                        key = { tvChannels[it].id }
+                        key = { index -> "vod_${tvChannels[index].id}" },
+                        contentType = { "vod_poster" }
                     ) { index ->
                         val channel = tvChannels[index]
                         VodPosterItem(
                             channel = channel,
+                            modifier = if (isTv) {
+                                Modifier
+                                    .then(if (index == 0) Modifier.focusRequester(firstGridItemFocusRequester) else Modifier)
+                                    .focusProperties {
+                                        if (areSortChipsVisible && index < 4) {
+                                            up = firstSortChipFocusRequester
+                                        }
+                                    }
+                            } else Modifier,
                             showProgress = selectedCategory == "Continuar Assistindo",
+                            onFocused = { focusedGridChannel = it },
                             onClick = {
                                 if (selectedCategory == "Continuar Assistindo") {
                                     onPlayDirect(channel)
@@ -532,20 +702,19 @@ fun VodScreen(
                     }
                 } else {
                     // Mobile: usa Paging
+                    // CORREÇÃO: NÃO faz enrichment on-viewport no mobile.
+                    // O enrichment já roda em background após o sync completo.
+                    // Fazer writes no DB durante a navegação invalida o PagingSource,
+                    // causando scroll automático e travamentos no grid.
                     items(
                         count = pagingItems.itemCount,
-                        key = pagingItems.itemKey { it.id }
+                        key = pagingItems.itemKey { it.id },
+                        contentType = { "vod_poster" }
                     ) { index ->
                         pagingItems[index]?.let { channel ->
-                            // Não enriquece durante busca para evitar writes no DB
-                            // que invalidariam o PagingSource e quebrariam o scroll
-                            if (type != "SEARCH") {
-                                LaunchedEffect(channel.id) {
-                                    viewModel.onChannelVisible(channel)
-                                }
-                            }
                             VodPosterItem(
                                 channel = channel,
+                                modifier = Modifier,
                                 showProgress = selectedCategory == "Continuar Assistindo",
                                 onClick = {
                                     if (selectedCategory == "Continuar Assistindo") {
