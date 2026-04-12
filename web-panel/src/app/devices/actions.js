@@ -65,13 +65,13 @@ export async function addDevice(formData) {
     if (playlistType === 'm3u') {
         const url = forceHttp(formData.get('m3u_url') || '')
         if (!isCineXUrl(url)) {
-            return { success: false, message: '⚠️ Somente servidores da CineX são aceitos na Central de Controle.' }
+            return { success: false, message: '⚠️ Somente servidores da CineX são aceitos na Central de Controle. ⚠️' }
         }
         playlistConfig = { url }
     } else {
         const dns = forceHttp(formData.get('xtream_dns') || '')
         if (!isCineXUrl(dns)) {
-            return { success: false, message: '⚠️ Somente servidores da CineX são aceitos na Central de Controle.' }
+            return { success: false, message: '⚠️ Somente servidores da CineX são aceitos na Central de Controle. ⚠️' }
         }
         playlistConfig = {
             dns,
@@ -142,13 +142,13 @@ export async function updateDevice(deviceId, formData) {
     if (playlistType === 'm3u') {
         const url = forceHttp(formData.get('m3u_url') || '')
         if (!isCineXUrl(url)) {
-            return { success: false, message: '⚠️ Somente servidores da CineX são aceitos na Central de Controle.' }
+            return { success: false, message: '⚠️ Somente servidores da CineX são aceitos na Central de Controle. ⚠️' }
         }
         playlistConfig = { url }
     } else {
         const dns = forceHttp(formData.get('xtream_dns') || '')
         if (!isCineXUrl(dns)) {
-            return { success: false, message: '⚠️ Somente servidores da CineX são aceitos na Central de Controle.' }
+            return { success: false, message: '⚠️ Somente servidores da CineX são aceitos na Central de Controle. ⚠️' }
         }
         playlistConfig = {
             dns,
