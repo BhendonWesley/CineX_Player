@@ -15,6 +15,20 @@ function forceHttp(url) {
     return url.replace(/^https:\/\//i, 'http://')
 }
 
+// DNS autorizados — apenas servidores CineX são aceitos
+const CINEX_ALLOWED_HOSTS = ['cdn.cinextv.com.br', 'iptv.cinextv.com.br']
+
+function isCineXUrl(url) {
+    if (!url) return false
+    try {
+        const normalized = url.startsWith('http') ? url : `http://${url}`
+        const host = new URL(normalized).hostname.toLowerCase()
+        return CINEX_ALLOWED_HOSTS.includes(host)
+    } catch {
+        return false
+    }
+}
+
 export async function getDevices() {
     const cookieStore = await cookies()
     const username = getUsername(cookieStore)
@@ -49,10 +63,18 @@ export async function addDevice(formData) {
     // Montar config da playlist (forçar http:// nas URLs)
     let playlistConfig = {}
     if (playlistType === 'm3u') {
-        playlistConfig = { url: forceHttp(formData.get('m3u_url') || '') }
+        const url = forceHttp(formData.get('m3u_url') || '')
+        if (!isCineXUrl(url)) {
+            return { success: false, message: '⚠️ Somente servidores da CineX são aceitos na Central de Controle.' }
+        }
+        playlistConfig = { url }
     } else {
+        const dns = forceHttp(formData.get('xtream_dns') || '')
+        if (!isCineXUrl(dns)) {
+            return { success: false, message: '⚠️ Somente servidores da CineX são aceitos na Central de Controle.' }
+        }
         playlistConfig = {
-            dns: forceHttp(formData.get('xtream_dns') || ''),
+            dns,
             user: formData.get('xtream_user') || '',
             pass: formData.get('xtream_pass') || '',
         }
@@ -118,10 +140,18 @@ export async function updateDevice(deviceId, formData) {
 
     let playlistConfig = {}
     if (playlistType === 'm3u') {
-        playlistConfig = { url: forceHttp(formData.get('m3u_url') || '') }
+        const url = forceHttp(formData.get('m3u_url') || '')
+        if (!isCineXUrl(url)) {
+            return { success: false, message: '⚠️ Somente servidores da CineX são aceitos na Central de Controle.' }
+        }
+        playlistConfig = { url }
     } else {
+        const dns = forceHttp(formData.get('xtream_dns') || '')
+        if (!isCineXUrl(dns)) {
+            return { success: false, message: '⚠️ Somente servidores da CineX são aceitos na Central de Controle.' }
+        }
         playlistConfig = {
-            dns: forceHttp(formData.get('xtream_dns') || ''),
+            dns,
             user: formData.get('xtream_user') || '',
             pass: formData.get('xtream_pass') || '',
         }

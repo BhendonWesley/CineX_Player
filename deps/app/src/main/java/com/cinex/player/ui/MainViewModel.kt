@@ -1011,12 +1011,6 @@ class MainViewModel @Inject constructor(
                             rotateJob.cancel()
                             return@launch
                         }
-                        if (!isCineXUrl(url)) {
-                            _errorMessage.value = "⚠️ Somente servidores CineX são aceitos no CineX Player"
-                            _isLoading.value = false
-                            rotateJob.cancel()
-                            return@launch
-                        }
                         repository.addPlaylist("CineX Panel", url)
                         val result = repository.syncPlaylist(url) { l, m, s, _ ->
                             _liveProgress.value = l
@@ -1042,12 +1036,6 @@ class MainViewModel @Inject constructor(
 
                         if (dns.isBlank() || user.isBlank() || pass.isBlank()) {
                             _errorMessage.value = "Credenciais Xtream não configuradas no painel."
-                            _isLoading.value = false
-                            rotateJob.cancel()
-                            return@launch
-                        }
-                        if (!isCineXUrl(dns)) {
-                            _errorMessage.value = "⚠️ Somente servidores CineX são aceitos no CineX Player"
                             _isLoading.value = false
                             rotateJob.cancel()
                             return@launch
@@ -1324,23 +1312,8 @@ class MainViewModel @Inject constructor(
     }
 
     fun addPlaylist(url: String) {
-        if (!isCineXUrl(url)) {
-            _errorMessage.value = "⚠️ Somente servidores CineX são aceitos no CineX Player"
-            return
-        }
         viewModelScope.launch {
             repository.addPlaylist("Servidor #${System.currentTimeMillis() % 1000}", url)
-        }
-    }
-
-    // Valida se a URL/DNS pertence exclusivamente aos servidores CineX autorizados.
-    // Apenas as DNS cinextv.com.br são aceitas neste aplicativo.
-    private fun isCineXUrl(url: String): Boolean {
-        return try {
-            val host = java.net.URI(url).host?.lowercase() ?: return false
-            host == "cdn.cinextv.com.br" || host == "iptv.cinextv.com.br"
-        } catch (_: Exception) {
-            false
         }
     }
 
