@@ -59,6 +59,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.flow.Flow
@@ -137,6 +138,7 @@ fun VodScreen(
     onVideoClick: (Channel) -> Unit,
     onPlayDirect: (Channel) -> Unit = onVideoClick,
     isActive: Boolean = true,
+    navDownTrigger: Int = 0,
     modifier: Modifier = Modifier
 ) {
     val categoriesFlow = when (type) {
@@ -171,6 +173,30 @@ fun VodScreen(
         uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     }
 
+    // Pré-carregamento de imagens: quando o foco pousa em uma categoria por ≥200ms,
+    // enfileira até 8 posters no Coil antes do usuário confirmar a seleção.
+    // Na TV, o limite de 3 requests simultâneos do Coil torna esse prefetch essencial
+    // para que as capas apareçam rapidamente ao trocar de categoria.
+    var prefocusedCategoryId by remember { mutableStateOf<String?>(null) }
+    val coilImageLoader = if (isTv) remember { coil.Coil.imageLoader(context) } else null
+    LaunchedEffect(prefocusedCategoryId) {
+        val catId = prefocusedCategoryId ?: return@LaunchedEffect
+        if (!isTv || coilImageLoader == null) return@LaunchedEffect
+        kotlinx.coroutines.delay(200L)
+        if (prefocusedCategoryId != catId) return@LaunchedEffect
+        val imageUrls = viewModel.getFirstImageUrlsForCategory(type, catId)
+        imageUrls.forEach { url ->
+            coilImageLoader.enqueue(
+                coil.request.ImageRequest.Builder(context)
+                    .data(url)
+                    .size(200, 300)
+                    .memoryCacheKey(url)
+                    .diskCacheKey(url)
+                    .build()
+            )
+        }
+    }
+
     // HABILITADO PARA MOBILE TAMBÉM: usa cache em memória para troca instantânea de categoria
     val tvChannelsRawPair by (when {
         channels == null && type == "MOVIE" -> viewModel.moviesByCategory
@@ -200,16 +226,8 @@ fun VodScreen(
             }
             "RATING" -> tvChannelsRaw.sortedByDescending { it.tmdbRating ?: 0.0 }
             "RECENT" -> {
-                val syncedAt = LongArray(tvChannelsRaw.size) { tvChannelsRaw[it].syncedAt }
-                val remoteIdNum = IntArray(tvChannelsRaw.size) {
-                    tvChannelsRaw[it].remoteId.replace(digitsOnly, "").toIntOrNull() ?: 0
-                }
                 val orderIndex = IntArray(tvChannelsRaw.size) { tvChannelsRaw[it].orderIndex }
-                val indices = (0 until tvChannelsRaw.size).sortedWith(
-                    compareByDescending<Int> { syncedAt[it] }
-                        .thenByDescending { remoteIdNum[it] }
-                        .thenByDescending { orderIndex[it] }
-                )
+                val indices = (0 until tvChannelsRaw.size).sortedBy { orderIndex[it] }
                 indices.map { tvChannelsRaw[it] }
             }
             else -> tvChannelsRaw.sortedBy { it.orderIndex }
@@ -237,6 +255,7 @@ fun VodScreen(
     val itemCount = if (useTvMemory) tvChannels.size else pagingItems.itemCount
 
     val firstCategoryFocusRequester = remember { FocusRequester() }
+    val selectedCatFocusRequester   = remember { FocusRequester() }
     val firstGridItemFocusRequester = remember { FocusRequester() }
     val firstSortChipFocusRequester = remember { FocusRequester() }
     val areSortChipsVisible = type != "SEARCH" && selectedCategory != "Continuar Assistindo"
@@ -247,16 +266,28 @@ fun VodScreen(
         gridState.scrollToItem(0)
     }
 
-    // Foco inicial ao entrar na tela (primeira categoria da sidebar).
-    LaunchedEffect(isTv, isActive, categories) {
+    // Restaura foco na categoria selecionada ao entrar na tela ou ao trocar de categoria.
+    // Igual ao padrão do LiveTvScreen: selectedCatFocusRequester segue a categoria ativa.
+    LaunchedEffect(isTv, isActive, selectedCategory, categories) {
         if (isTv && isActive && categories.isNotEmpty()) {
-            for (delayMs in listOf(150L, 250L, 400L)) {
+            for (delayMs in listOf(100L, 200L, 350L)) {
                 kotlinx.coroutines.delay(delayMs)
                 try {
-                    firstCategoryFocusRequester.requestFocus()
+                    selectedCatFocusRequester.requestFocus()
                     break
                 } catch (_: Exception) {}
             }
+        }
+    }
+
+    // Ao pressionar DOWN na TopNavigationBar, desce o foco para as categorias (ou grid se sem categorias)
+    LaunchedEffect(navDownTrigger) {
+        if (navDownTrigger > 0 && isTv && isActive) {
+            kotlinx.coroutines.delay(50L)
+            try {
+                if (categories.isNotEmpty()) firstCategoryFocusRequester.requestFocus()
+                else firstGridItemFocusRequester.requestFocus()
+            } catch (_: Exception) {}
         }
     }
 
@@ -270,8 +301,11 @@ fun VodScreen(
         val wasOpen = prevDetailsOpen
         prevDetailsOpen = nowOpen
         if (isTv && wasOpen && !nowOpen && isActive && itemCount > 0) {
-            // Detalhes acabou de fechar: restaura foco no primeiro item visível do grid.
-            for (delayMs in listOf(200L, 300L, 500L)) {
+            // Rola para o item 0 antes de pedir foco — se o usuário estava scrollado,
+            // o índice 0 não está na viewport e o FocusRequester não está attached,
+            // causando falha silenciosa em todas as tentativas.
+            gridState.scrollToItem(0)
+            for (delayMs in listOf(100L, 200L, 400L)) {
                 kotlinx.coroutines.delay(delayMs)
                 try {
                     firstGridItemFocusRequester.requestFocus()
@@ -382,6 +416,12 @@ fun VodScreen(
                     .width(260.dp)
                     .fillMaxHeight()
                     .focusProperties { left = FocusRequester.Cancel }
+                    .then(
+                        if (isTv) Modifier.onPreviewKeyEvent { event ->
+                            // Garante que LEFT nunca escapa do container de categorias na TV
+                            event.key == Key.DirectionLeft
+                        } else Modifier
+                    )
                     .padding(start = 16.dp, end = 8.dp, bottom = 16.dp)
                     .clip(RoundedCornerShape(16.dp))
                     .background(Color(0x0DFFFFFF))
@@ -431,7 +471,15 @@ fun VodScreen(
                                 else viewModel.setSeriesCategory("Continuar Assistindo")
                             },
                             modifier = if (isTv) {
-                                Modifier.focusProperties { right = firstGridItemFocusRequester }
+                                Modifier
+                                    .then(if (isContinueSelected) Modifier.focusRequester(selectedCatFocusRequester) else Modifier)
+                                    .onKeyEvent { event ->
+                                        if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
+                                            try { firstGridItemFocusRequester.requestFocus() } catch (_: Exception) {}
+                                            true
+                                        } else false
+                                    }
+                                    .onFocusChanged { if (it.isFocused) prefocusedCategoryId = "Continuar Assistindo" }
                             } else Modifier
                         )
                     }
@@ -466,10 +514,16 @@ fun VodScreen(
                                 }
                             },
                             modifier = when {
-                                isTv && index == 0 -> Modifier
-                                    .focusRequester(firstCategoryFocusRequester)
-                                    .focusProperties { right = firstGridItemFocusRequester }
-                                isTv -> Modifier.focusProperties { right = firstGridItemFocusRequester }
+                                isTv -> Modifier
+                                    .then(if (index == 0) Modifier.focusRequester(firstCategoryFocusRequester) else Modifier)
+                                    .then(if (isSelected) Modifier.focusRequester(selectedCatFocusRequester) else Modifier)
+                                    .onKeyEvent { event ->
+                                        if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
+                                            try { firstGridItemFocusRequester.requestFocus() } catch (_: Exception) {}
+                                            true
+                                        } else false
+                                    }
+                                    .onFocusChanged { if (it.isFocused) prefocusedCategoryId = category.id }
                                 else -> Modifier
                             }
                         )
@@ -506,8 +560,11 @@ fun VodScreen(
                                     if (isTv) {
                                         Modifier
                                             .then(if (idx == 0) Modifier.focusRequester(firstSortChipFocusRequester) else Modifier)
-                                            .focusProperties {
-                                                down = firstGridItemFocusRequester
+                                            .onKeyEvent { event ->
+                                                if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
+                                                    try { firstGridItemFocusRequester.requestFocus() } catch (_: Exception) {}
+                                                    true
+                                                } else false
                                             }
                                             .onFocusChanged { isChipFocused = it.isFocused }
                                             .focusable(interactionSource = remember { MutableInteractionSource() })
@@ -559,8 +616,28 @@ fun VodScreen(
                     }
                 }
             }
-        Box(modifier = Modifier.weight(1f)) {
-            var focusedGridChannel by remember(type, selectedCategory) { mutableStateOf<Channel?>(null) }
+        // focusedGridChannel é atualizado pelo VodPosterItem.onFocused → usado para detectar coluna 0
+        var focusedGridChannel by remember(type, selectedCategory) { mutableStateOf<Channel?>(null) }
+
+        Box(
+            modifier = Modifier
+                .weight(1f)
+                .then(
+                    if (isTv) Modifier.onPreviewKeyEvent { event ->
+                        // Intercepta LEFT apenas quando o foco está na coluna 0 do grid.
+                        // Para colunas 1-3, LEFT passa normalmente para navegação interna.
+                        if (event.key == Key.DirectionLeft) {
+                            val focusedIndex = tvChannels.indexOfFirst { it.id == focusedGridChannel?.id }
+                            val isLeftmostColumn = focusedIndex >= 0 && focusedIndex % 4 == 0
+                            if (isLeftmostColumn) {
+                                if (event.type == KeyEventType.KeyDown)
+                                    try { selectedCatFocusRequester.requestFocus() } catch (_: Exception) {}
+                                true
+                            } else false
+                        } else false
+                    } else Modifier
+                )
+        ) {
             var settledGridChannel by remember(type, selectedCategory) { mutableStateOf<Channel?>(null) }
 
             LaunchedEffect(focusedGridChannel?.id, isTv, useTvMemory) {
@@ -587,8 +664,8 @@ fun VodScreen(
 
             val isReallyEmpty = if (useTvMemory) {
                 // Na TV, a transição entre as categorias nativas no SQLite é praticamente garantida quase instantaneamente (50ms).
-                // Ao invés de colocar uma segunda tela de load visual por 50ms, nós mostramos o grid.
-                tvChannels.isEmpty()
+                // Ao invés de colocar uma segunda tela de load visual por 50ms, esperamos para validar se realmente está vazio
+                tvChannels.isEmpty() && selectedCategory == loadedCategoryId
             } else {
                 itemCount == 0 && pagingItems.loadState.refresh is androidx.paging.LoadState.NotLoading
             }
@@ -683,14 +760,38 @@ fun VodScreen(
                             modifier = if (isTv) {
                                 Modifier
                                     .then(if (index == 0) Modifier.focusRequester(firstGridItemFocusRequester) else Modifier)
-                                    .focusProperties {
-                                        if (areSortChipsVisible && index < 4) {
-                                            up = firstSortChipFocusRequester
+                                    .then(
+                                        // Navegação segura com try-catch — focusProperties sem try-catch
+                                        // causa FocusRequesterNotAttachedException durante recomposição da lista
+                                        when {
+                                            areSortChipsVisible && index < 4 && index % 4 == 0 -> Modifier.onKeyEvent { event ->
+                                                if (event.type == KeyEventType.KeyDown) when (event.key) {
+                                                    Key.DirectionUp -> { try { firstSortChipFocusRequester.requestFocus() } catch (_: Exception) {}; true }
+                                                    Key.DirectionLeft -> { try { selectedCatFocusRequester.requestFocus() } catch (_: Exception) {}; true }
+                                                    else -> false
+                                                } else false
+                                            }
+                                            areSortChipsVisible && index < 4 -> Modifier.onKeyEvent { event ->
+                                                if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
+                                                    try { firstSortChipFocusRequester.requestFocus() } catch (_: Exception) {}
+                                                    true
+                                                } else false
+                                            }
+                                            index % 4 == 0 -> Modifier.onKeyEvent { event ->
+                                                if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
+                                                    try { selectedCatFocusRequester.requestFocus() } catch (_: Exception) {}
+                                                    true
+                                                } else false
+                                            }
+                                            else -> Modifier
                                         }
-                                    }
+                                    )
                             } else Modifier,
                             showProgress = selectedCategory == "Continuar Assistindo",
                             onFocused = { focusedGridChannel = it },
+                            onPrefetch = if (isTv && type == "SERIES") {
+                                { viewModel.prefetchSeriesEpisodes(channel) }
+                            } else null,
                             onClick = {
                                 if (selectedCategory == "Continuar Assistindo") {
                                     onPlayDirect(channel)

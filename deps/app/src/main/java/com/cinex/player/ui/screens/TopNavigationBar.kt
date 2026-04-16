@@ -52,6 +52,7 @@ fun TopNavigationBar(
     onSearchChange: (String) -> Unit,
     @Suppress("UNUSED_PARAMETER") onMenuClick: () -> Unit = {},
     onSearchFocusChange: (Boolean) -> Unit = {},
+    onNavigateDown: () -> Unit = {},
     modifier: Modifier = Modifier,
     showLive: Boolean = true,
     showMovies: Boolean = true,
@@ -106,12 +107,18 @@ fun TopNavigationBar(
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
-                        .then(
-                            if (index == 0) Modifier.focusProperties { left = FocusRequester.Cancel }
-                            else Modifier
-                        )
+                        .focusProperties {
+                            if (index == 0) left = FocusRequester.Cancel
+                            if (index == visibleTabs.size - 1) right = FocusRequester.Cancel
+                        }
                         .onPreviewKeyEvent { event ->
-                            if (event.key == Key.DirectionUp) true else false
+                            when {
+                                event.key == Key.DirectionUp -> true
+                                event.key == Key.DirectionDown && event.type == KeyEventType.KeyDown -> {
+                                    onNavigateDown(); true
+                                }
+                                else -> false
+                            }
                         }
                         .onFocusChanged { isFocused = it.isFocused }
                         .focusable(interactionSource = remember { MutableInteractionSource() })
@@ -215,12 +222,17 @@ fun TopNavigationBar(
                             .onFocusChanged { isBoxFocused = it.isFocused }
                             .focusable()
                             .onKeyEvent { event ->
-                                if (event.type == KeyEventType.KeyUp &&
-                                    (event.key == Key.DirectionCenter || event.key == Key.Enter)
-                                ) {
-                                    try { searchFieldRequester.requestFocus() } catch (_: Exception) {}
-                                    true
-                                } else false
+                                when {
+                                    event.type == KeyEventType.KeyUp &&
+                                    (event.key == Key.DirectionCenter || event.key == Key.Enter) -> {
+                                        try { searchFieldRequester.requestFocus() } catch (_: Exception) {}
+                                        true
+                                    }
+                                    event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown -> {
+                                        onNavigateDown(); true
+                                    }
+                                    else -> false
+                                }
                             }
                             .focusProperties { right = FocusRequester.Cancel }
                     } else {

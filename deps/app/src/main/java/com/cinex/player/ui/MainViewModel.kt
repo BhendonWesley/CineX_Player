@@ -211,6 +211,9 @@ class MainViewModel @Inject constructor(
                     _currentPlaylist.value = lastUsed
                     repository.activatePlaylist(lastUsed.url)
                     fetchRealAccountInfo(lastUsed.url)
+                    // Sync silencioso na inicialização: detecta novos/removidos sem mostrar loading
+                    // Usa o mesmo cooldown de 15 min — se ON_RESUME já disparou, não roda duas vezes
+                    triggerSilentSync()
                 }
                 // Verifica com o painel se o dispositivo ainda tem acesso antes de liberar o app
                 validateDeviceAccess()
@@ -392,7 +395,7 @@ class MainViewModel @Inject constructor(
     // debounce coalesca rajadas de writes (enrichment, sync) em uma única emissão por 150ms,
     // evitando storms de recomposição no grid TV.
     private val _allLiveChannels = repository.observeAllLiveChannels()
-        .debounce(250)
+        .debounce(80)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -426,6 +429,9 @@ class MainViewModel @Inject constructor(
     fun setMovieCategory(id: String) { _selectedMovieCategory.value = id }
     fun setSeriesCategory(id: String) { _selectedSeriesCategory.value = id }
 
+    suspend fun getFirstImageUrlsForCategory(type: String, categoryId: String): List<String> =
+        repository.getFirstImageUrlsForCategory(type, categoryId, limit = 8)
+
     // Filtra filmes por categoria DIRETAMENTE no banco — nunca carrega 16k itens na memória.
     // Quando o usuário muda de categoria, o flatMapLatest cancela a query anterior e inicia nova.
     private val _allMoviesFlow = _selectedMovieCategory
@@ -456,8 +462,8 @@ class MainViewModel @Inject constructor(
             when (categoryId) {
                 "Favorito", "Favoritos" -> repository.observeSeriesByCategory("Tudo")
                     .map { list -> categoryId to list.filter { it.isFavorite } }
-                "Continuar Assistindo" -> repository.observeSeriesByCategory("Tudo")
-                    .map { list -> categoryId to list.filter { it.resumePosition > 0 } }
+                "Continuar Assistindo" -> repository.continueWatching
+                    .map { list -> categoryId to list.filter { it.category == "SERIES" } }
                 else -> repository.observeSeriesByCategory(categoryId)
                     .map { list -> categoryId to list }
             }
@@ -1103,23 +1109,28 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    private fun enrichChannelMetadata(channel: Channel, skipTmdb: Boolean = false) {
+    private fun enrichChannelMetadata(channel: Channel, skipTmdb: Boolean = false, showLoading: Boolean = true) {
         viewModelScope.launch {
             if (channel.category == "SERIES") {
                 val seriesName = channel.seriesName ?: channel.name
                 val seriesId = try { channel.remoteId.replace("series_", "").toInt() } catch (e: Exception) { -1 }
-                // Verifica se já tem episódios no banco
                 val hasEpisodes = repository.hasEpisodesForSeries(seriesName)
-                if (!hasEpisodes) {
-                    _isLoadingEpisodes.value = true
-                }
-                try {
-                    if (seriesId != -1) {
-                        repository.fetchAndStoreEpisodes(seriesId, seriesName)
+                if (hasEpisodes) {
+                    // Cache hit: abre imediatamente, revalida TTL em background sem bloquear a UI
+                    repository.refreshSeriesInBackground(seriesId, seriesName)
+                } else {
+                    // Sem cache: busca episódios — só mostra loading se chamado explicitamente pelo usuário
+                    if (showLoading) _isLoadingEpisodes.value = true
+                    try {
+                        if (seriesId != -1) {
+                            kotlinx.coroutines.withTimeout(50_000L) {
+                                repository.fetchAndStoreEpisodes(seriesId, seriesName)
+                            }
+                        }
+                    } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+                    } finally {
+                        if (showLoading) _isLoadingEpisodes.value = false
                     }
-                } finally {
-                    // Sempre libera o loading, inclusive se fetchAndStoreEpisodes retornou cedo (cache hit)
-                    _isLoadingEpisodes.value = false
                 }
                 // Em TV, pula o TMDB para não bloquear carregamento com chamadas de rede desnecessárias
                 if (!skipTmdb && shouldEnrichChannelMetadata(channel)) {
@@ -1130,6 +1141,20 @@ class MainViewModel @Inject constructor(
                     repository.enrichChannelWithTmdb(channel)
                 }
             }
+        }
+    }
+
+    /**
+     * Pré-busca episódios em background sem mostrar loading.
+     * Chamado ao focar um card de série na grade (TV) por 400ms.
+     */
+    fun prefetchSeriesEpisodes(series: Channel) {
+        if (series.category != "SERIES") return
+        val seriesName = series.seriesName ?: series.name
+        val seriesId = try { series.remoteId.replace("series_", "").toInt() } catch (_: Exception) { -1 }
+        if (seriesId == -1) return
+        viewModelScope.launch {
+            try { repository.fetchAndStoreEpisodes(seriesId, seriesName) } catch (_: Exception) {}
         }
     }
 
@@ -1147,7 +1172,15 @@ class MainViewModel @Inject constructor(
 
     fun ensureSeriesDetailsReady(series: Channel, skipTmdb: Boolean = false) {
         if (series.category == "SERIES") {
-            enrichChannelMetadata(series, skipTmdb)
+            // Pré-fetch silencioso: não mostra loading — usuário não clicou em nada ainda
+            enrichChannelMetadata(series, skipTmdb, showLoading = false)
+        }
+    }
+
+    fun loadSeriesEpisodesWithLoading(series: Channel, skipTmdb: Boolean = false) {
+        if (series.category == "SERIES") {
+            // Chamado pelo botão: mostra loading indicator
+            enrichChannelMetadata(series, skipTmdb, showLoading = true)
         }
     }
 
@@ -1361,6 +1394,36 @@ class MainViewModel @Inject constructor(
             rotateJob.cancel()
             _isLoading.value = false
             _isSyncing.value = false
+        }
+    }
+
+    // Timestamp do último sync silencioso — evita múltiplos syncs por sessão
+    private var lastSilentSyncAt = 0L
+    private val SILENT_SYNC_COOLDOWN_MS = 15 * 60 * 1000L // 15 minutos
+
+    /**
+     * Sync delta silencioso: roda em background sem mostrar tela de loading.
+     * Detecta canais adicionados/removidos no servidor e atualiza o banco local.
+     * Exibe snackbar discreta apenas se houver mudanças.
+     * Chamado automaticamente ao retornar ao app (ON_RESUME).
+     */
+    fun triggerSilentSync() {
+        val playlist = _currentPlaylist.value ?: return
+        // Não roda se já tem um sync completo em andamento
+        if (_isSyncing.value) return
+        // Cooldown: no máximo 1 vez a cada 15 minutos
+        val now = System.currentTimeMillis()
+        if (now - lastSilentSyncAt < SILENT_SYNC_COOLDOWN_MS) return
+        lastSilentSyncAt = now
+
+        viewModelScope.launch {
+            val result = repository.syncPlaylistDelta()
+            result.onSuccess { changed ->
+                if (changed > 0) {
+                    clearPagingCaches()
+                    _deltaSyncMessage.tryEmit("Lista atualizada")
+                }
+            }
         }
     }
 

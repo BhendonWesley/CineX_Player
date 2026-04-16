@@ -19,7 +19,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.material.icons.Icons
+import androidx.compose.foundation.focusGroup
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -50,7 +52,6 @@ import androidx.media3.ui.PlayerView
 import com.cinex.player.data.model.Channel
 import com.cinex.player.ui.MainViewModel
 import com.cinex.player.ui.components.CategoryItem
-import androidx.paging.compose.collectAsLazyPagingItems
 import androidx.paging.compose.itemKey
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -113,6 +114,7 @@ fun LiveTvScreen(
     viewModel: MainViewModel,
     onChannelExpand: (Channel) -> Unit, // reserved for future use
     isActive: Boolean = false,
+    navDownTrigger: Int = 0,
     modifier: Modifier = Modifier
 ) {
     // Detecta se está rodando em Android TV
@@ -138,6 +140,9 @@ fun LiveTvScreen(
     val selectedCategory by viewModel.liveCategoryId.collectAsState()
     val selectedCatFocusRequester = remember { FocusRequester() }
     val channelFocusRequester = remember { FocusRequester() }
+    // Foco de entrada via nav bar (DOWN): vai ao primeiro canal VISÍVEL, não ao selecionado
+    val navEntryChannelFocusRequester = remember { FocusRequester() }
+    var navEntryChannelIndex by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     val favFocusRequester = remember { FocusRequester() }
 
     // Na TV, restaura foco na categoria ao entrar na tela ou ao trocar de categoria.
@@ -153,14 +158,30 @@ fun LiveTvScreen(
             }
         }
     }
+
+    // Rastreia se o último foco estava nos canais (true) ou nas categorias (false)
+    var lastFocusWasInChannels by remember { mutableStateOf(false) }
+    // Trigger para navegar direto para os canais via navDownTrigger (quando lastFocusWasInChannels=true)
+    var navToChannelsTrigger by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+
+    // Ao pressionar DOWN na TopNavigationBar, volta para onde o usuário estava antes de subir
+    LaunchedEffect(navDownTrigger) {
+        if (navDownTrigger > 0 && isTv && isActive && categories.isNotEmpty()) {
+            delay(50L)
+            if (lastFocusWasInChannels) {
+                navToChannelsTrigger++
+            } else {
+                try { selectedCatFocusRequester.requestFocus() } catch (_: Exception) {}
+            }
+        }
+    }
     val adultUnlocked by viewModel.adultUnlocked.collectAsState()
     var showParentalDialog by remember { mutableStateOf(false) }
     var pendingAdultCategoryId by remember { mutableStateOf<String?>(null) }
     
     // Na TV: usa cache em memória (filtragem instantânea)
-    // No mobile: usa Paging (economia de memória)
+    // TV + Mobile: lista in-memory — troca de categoria instantânea sem Paging overhead
     val liveChannels by viewModel.liveTvChannels.collectAsState()
-    val pagingItems = if (!isTv) viewModel.liveTvPagingData.collectAsLazyPagingItems() else null
 
     // Canal selecionado vive no ViewModel para persistir entre fullscreen ↔ preview
     val selectedChannel by viewModel.selectedLiveChannel.collectAsState()
@@ -174,7 +195,7 @@ fun LiveTvScreen(
     val typeCounts by viewModel.typeCounts.collectAsState()
     val favoriteCounts by viewModel.favoriteCounts.collectAsState()
 
-    val channelCount = if (isTv) liveChannels.size else (pagingItems?.itemCount ?: 0)
+    val channelCount = liveChannels.size
     val preferredTurboCategory = remember(categories) {
         categories.firstOrNull { it.name.equals("CineX Turbo", ignoreCase = true) }
     }
@@ -203,12 +224,7 @@ fun LiveTvScreen(
         val turboCategoryId = preferredTurboCategory?.id
         if (turboCategoryId != null && selectedCategory != turboCategoryId) return@LaunchedEffect
 
-        if (isTv) {
-            liveChannels.firstOrNull()?.let { viewModel.updateSelectedChannel(it) }
-        } else {
-            delay(300)
-            pagingItems?.get(0)?.let { viewModel.updateSelectedChannel(it) }
-        }
+        liveChannels.firstOrNull()?.let { viewModel.updateSelectedChannel(it) }
     }
 
     // Toca o canal SOMENTE quando a aba Live TV está ativa
@@ -286,14 +302,33 @@ fun LiveTvScreen(
         // Conteúdo por cima do fundo — só visível quando dados estão prontos
     if (isDataReady) {
         Row(modifier = Modifier.fillMaxSize()) {
+        // Trigger para navegar para a coluna de canais com retry robusto
+        var enterChannelsTrigger by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+        // Trigger para voltar às categorias com retry robusto (LEFT nos canais)
+        var returnToCatTrigger by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+
         // 1. Coluna de Categorias
         val catListState = rememberLazyListState()
 
-        // Auto-scroll para a categoria selecionada
-        LaunchedEffect(selectedCategory, categories) {
+        // Scroll inicial: só posiciona na categoria selecionada ao entrar na tela pela primeira vez
+        // (não faz scroll a cada mudança de categoria — o LazyColumn mantém o foco visível nativamente)
+        LaunchedEffect(Unit) {
             val index = categories.indexOfFirst { it.id == selectedCategory }
-            if (index >= 0) {
-                catListState.animateScrollToItem(index)
+            if (index >= 0) catListState.scrollToItem(index)
+        }
+
+        // Ao pressionar LEFT nos canais: só rola se a categoria selecionada estiver fora da viewport
+        LaunchedEffect(returnToCatTrigger) {
+            if (returnToCatTrigger > 0) {
+                val index = categories.indexOfFirst { it.id == selectedCategory }
+                if (index >= 0) {
+                    val visibleIndices = catListState.layoutInfo.visibleItemsInfo.map { it.index }
+                    if (index !in visibleIndices) catListState.scrollToItem(index)
+                }
+                for (delayMs in listOf(50L, 100L, 200L)) {
+                    delay(delayMs)
+                    try { selectedCatFocusRequester.requestFocus(); break } catch (_: Exception) {}
+                }
             }
         }
 
@@ -304,7 +339,25 @@ fun LiveTvScreen(
                 .fillMaxHeight()
                 .background(Color(0xCC141414))
                 .lazyScrollbar(catListState)
-                .padding(8.dp),
+                .padding(8.dp)
+                .then(
+                    if (isTv) Modifier.onPreviewKeyEvent { event ->
+                        when (event.key) {
+                            // LEFT: não tem para onde ir — consome e pronto
+                            Key.DirectionLeft -> true
+                            // RIGHT: dispara trigger com retry em vez de requestFocus() direto
+                            // (evita falha quando channelFocusRequester ainda está desanexado durante recomposição)
+                            Key.DirectionRight -> {
+                                if (event.type == KeyEventType.KeyDown) {
+                                    enterChannelsTrigger++
+                                    lastFocusWasInChannels = true
+                                }
+                                true
+                            }
+                            else -> false
+                        }
+                    } else Modifier
+                ),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             itemsIndexed(categories) { index, category ->
@@ -381,18 +434,52 @@ fun LiveTvScreen(
             val selectedChannelScrollIndex = remember(liveChannels, selectedChannel) {
                 liveChannels.indexOfFirst { it.id == selectedChannel?.id }.takeIf { it >= 0 } ?: 0
             }
-            LaunchedEffect(selectedChannelScrollIndex) {
-                if (isTv && selectedChannelScrollIndex > 0) {
-                    channelListState.scrollToItem(selectedChannelScrollIndex)
+
+            // Quando o usuário pressiona RIGHT nas categorias, foca o canal selecionado.
+            // Só rola se o canal estiver fora da viewport — evita snap ao topo quando já está visível.
+            LaunchedEffect(enterChannelsTrigger) {
+                if (enterChannelsTrigger > 0) {
+                    val visibleIndices = channelListState.layoutInfo.visibleItemsInfo.map { it.index }
+                    if (selectedChannelScrollIndex !in visibleIndices) {
+                        channelListState.scrollToItem(selectedChannelScrollIndex)
+                    }
+                    for (delayMs in listOf(50L, 100L, 200L)) {
+                        delay(delayMs)
+                        try { channelFocusRequester.requestFocus(); break } catch (_: Exception) {}
+                    }
                 }
             }
-            val channelListScope = androidx.compose.runtime.rememberCoroutineScope()
+
+            // Ao pressionar DOWN na nav bar: foca o primeiro canal VISÍVEL no viewport (topo da lista),
+            // sem rolar — o usuário vê exatamente o que está na tela e navega de cima para baixo.
+            LaunchedEffect(navToChannelsTrigger) {
+                if (navToChannelsTrigger > 0) {
+                    navEntryChannelIndex = channelListState.firstVisibleItemIndex
+                    for (delayMs in listOf(50L, 100L, 200L)) {
+                        delay(delayMs)
+                        try { navEntryChannelFocusRequester.requestFocus(); break } catch (_: Exception) {}
+                    }
+                }
+            }
 
             LazyColumn(
                 state = channelListState,
                 modifier = Modifier
                     .fillMaxSize()
                     .lazyScrollbar(channelListState, thumbColor = Color(0xFFC62828))
+                    .padding(end = 8.dp)
+                    .then(
+                        if (isTv) Modifier.onPreviewKeyEvent { event ->
+                            // LEFT: vai para categorias via trigger (robusto mesmo se item estiver fora da viewport)
+                            if (event.key == Key.DirectionLeft) {
+                                if (event.type == KeyEventType.KeyDown) {
+                                    returnToCatTrigger++
+                                    lastFocusWasInChannels = false
+                                }
+                                true
+                            } else false
+                        } else Modifier
+                    )
             ) {
                 if (isTv) {
                     // TV: lista em memória — troca de categoria instantânea
@@ -406,20 +493,16 @@ fun LiveTvScreen(
                                     if (index == selectedChannelScrollIndex) Modifier.focusRequester(channelFocusRequester)
                                     else Modifier
                                 )
+                                .then(
+                                    if (index == navEntryChannelIndex) Modifier.focusRequester(navEntryChannelFocusRequester)
+                                    else Modifier
+                                )
                                 .focusProperties {
                                     left = selectedCatFocusRequester
                                     right = favFocusRequester
                                 }
                                 .onFocusChanged { focusState ->
                                     isFocused = focusState.isFocused
-                                    if (focusState.isFocused) {
-                                        val visible = channelListState.layoutInfo.visibleItemsInfo.map { it.index }
-                                        if (index !in visible) {
-                                            channelListScope.launch {
-                                                channelListState.scrollToItem(index)
-                                            }
-                                        }
-                                    }
                                 }
                                 .then(
                                     if (isFocused) Modifier.border(2.dp, Color(0xFFF59E0B), RoundedCornerShape(8.dp))
@@ -427,13 +510,20 @@ fun LiveTvScreen(
                                 )
                                 .focusable(interactionSource = remember { MutableInteractionSource() })
                                 .onKeyEvent { event ->
-                                    if (event.type == KeyEventType.KeyDown &&
-                                        (event.key == Key.DirectionCenter || event.key == Key.Enter)
-                                    ) {
-                                        if (isSelected) onChannelExpand(channel)
-                                        else viewModel.updateSelectedChannel(channel)
-                                        true
-                                    } else false
+                                    when {
+                                        // LEFT: fallback caso onPreviewKeyEvent não tenha consumido
+                                        event.key == Key.DirectionLeft -> {
+                                            if (event.type == KeyEventType.KeyDown) returnToCatTrigger++
+                                            true
+                                        }
+                                        event.type == KeyEventType.KeyDown &&
+                                        (event.key == Key.DirectionCenter || event.key == Key.Enter) -> {
+                                            if (isSelected) onChannelExpand(channel)
+                                            else viewModel.updateSelectedChannel(channel)
+                                            true
+                                        }
+                                        else -> false
+                                    }
                                 }
                                 .background(
                                     if (isSelected) Color(0xFFC62828).copy(alpha = 0.2f)
@@ -450,47 +540,31 @@ fun LiveTvScreen(
                         }
                     }
                 } else {
-                    // Mobile: usa Paging
-                    items(
-                        count = pagingItems?.itemCount ?: 0,
-                        key = pagingItems?.itemKey { it.id } ?: { it }
-                    ) { index ->
-                        val channel = pagingItems?.get(index)
-                        if (channel != null) {
-                            val isSelected = selectedChannel?.id == channel.id
-                            var isFocused by remember { mutableStateOf(false) }
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .onFocusChanged { isFocused = it.isFocused }
-                                    .then(
-                                        if (isFocused) Modifier.border(2.dp, Color(0xFFF59E0B), RoundedCornerShape(8.dp))
-                                        else Modifier
-                                    )
-                                    .focusable(interactionSource = remember { MutableInteractionSource() })
-                                    .onKeyEvent { event ->
-                                        // OTIMIZADO: KeyDown ao invés de KeyUp para resposta instantânea
-                                        if (event.type == KeyEventType.KeyDown &&
-                                            (event.key == Key.DirectionCenter || event.key == Key.Enter)
-                                        ) {
-                                            if (isSelected) onChannelExpand(channel)
-                                            else viewModel.updateSelectedChannel(channel)
-                                            true
-                                        } else false
-                                    }
-                                    .background(
-                                        if (isSelected) Color(0xFFC62828).copy(alpha = 0.2f)
-                                        else if (isFocused) Color.White.copy(alpha = 0.08f)
-                                        else Color.Transparent
-                                    )
-                                    .clickable {
-                                        if (isSelected) onChannelExpand(channel)
-                                        else viewModel.updateSelectedChannel(channel)
-                                    }
-                                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                            ) {
-                                ChannelListRow(index = index, channel = channel, isSelected = isSelected)
-                            }
+                    // Mobile: usa liveChannels in-memory (mesmo que TV — troca de categoria instantânea)
+                    itemsIndexed(liveChannels, key = { _, ch -> ch.id }) { index, channel ->
+                        val isSelected = selectedChannel?.id == channel.id
+                        var isFocused by remember { mutableStateOf(false) }
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .onFocusChanged { isFocused = it.isFocused }
+                                .then(
+                                    if (isFocused) Modifier.border(2.dp, Color(0xFFF59E0B), RoundedCornerShape(8.dp))
+                                    else Modifier
+                                )
+                                .focusable(interactionSource = remember { MutableInteractionSource() })
+                                .background(
+                                    if (isSelected) Color(0xFFC62828).copy(alpha = 0.2f)
+                                    else if (isFocused) Color.White.copy(alpha = 0.08f)
+                                    else Color.Transparent
+                                )
+                                .clickable {
+                                    if (isSelected) onChannelExpand(channel)
+                                    else viewModel.updateSelectedChannel(channel)
+                                }
+                                .padding(horizontal = 16.dp, vertical = 8.dp)
+                        ) {
+                            ChannelListRow(index = index, channel = channel, isSelected = isSelected)
                         }
                     }
                 }
@@ -617,6 +691,15 @@ fun LiveTvScreen(
                     mutableStateOf(selectedChannel?.isFavorite == true)
                 }
                 var isFavFocused by remember { mutableStateOf(false) }
+                var restoreFavFocusTrigger by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+                LaunchedEffect(restoreFavFocusTrigger) {
+                    if (restoreFavFocusTrigger > 0) {
+                        for (delayMs in listOf(50L, 100L, 200L)) {
+                            delay(delayMs)
+                            try { favFocusRequester.requestFocus(); break } catch (_: Exception) {}
+                        }
+                    }
+                }
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopEnd)
@@ -639,6 +722,7 @@ fun LiveTvScreen(
                                 selectedChannel?.let {
                                     isFavLocal = !isFavLocal
                                     viewModel.updateFavorite(it.id, isFavLocal)
+                                    restoreFavFocusTrigger++
                                 }
                                 true
                             } else false
@@ -647,6 +731,7 @@ fun LiveTvScreen(
                             selectedChannel?.let {
                                 isFavLocal = !isFavLocal
                                 viewModel.updateFavorite(it.id, isFavLocal)
+                                restoreFavFocusTrigger++
                             }
                         },
                     contentAlignment = Alignment.Center
@@ -978,7 +1063,7 @@ private fun ChannelListRow(index: Int, channel: Channel, isSelected: Boolean) {
         AsyncImage(
             model = coil.request.ImageRequest.Builder(androidx.compose.ui.platform.LocalContext.current)
                 .data(if (hasLogo) channel.logoUrl else com.cinex.player.R.drawable.logo_cinex)
-                .crossfade(true)
+                .crossfade(false)
                 .build(),
             contentDescription = null,
             modifier = Modifier

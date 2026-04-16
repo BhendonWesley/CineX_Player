@@ -117,6 +117,13 @@ interface ChannelDao {
     """)
     fun observeSeriesByCategory(url: String, categoryId: String): Flow<List<Channel>>
 
+    @Query("""
+        SELECT * FROM channels WHERE category = :type AND playlistUrl = :url
+        AND (:categoryId = 'Tudo' OR categoryId = :categoryId)
+        ORDER BY orderIndex ASC LIMIT :limit
+    """)
+    suspend fun getFirstChannelsByCategory(type: String, url: String, categoryId: String, limit: Int): List<Channel>
+
     @Query("SELECT COUNT(*) FROM channels WHERE category = 'SERIES' AND seasonNumber IS NOT NULL AND playlistUrl = :url")
     suspend fun countEpisodesOnly(url: String): Int
 

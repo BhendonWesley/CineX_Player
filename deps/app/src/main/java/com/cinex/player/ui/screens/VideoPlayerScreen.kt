@@ -377,12 +377,35 @@ fun VideoPlayerScreen(
 
     // 1. Foco Inicial: Quando os controles aparecem pela primeira vez
     LaunchedEffect(isControlsVisible) {
-        // CORREÇÃO: Se houver um pendingTopFocus (usuário apertou pra cima), ABORTA o auto-foco no centro
-        if (isTv && isControlsVisible && focusedTopControl == null && pendingTopFocus == null) {
-            delay(150)
-            // Double-check final para evitar roubo de foco se o usuário navegou direto pro topo em < 150ms
+        if (!isTv) return@LaunchedEffect
+        if (isControlsVisible) {
+            // Controles apareceram: foca o play/pause (a não ser que o usuário tenha pedido o topo)
             if (focusedTopControl == null && pendingTopFocus == null) {
-                try { playPauseFocusRequester.requestFocus() } catch (_: Exception) {}
+                delay(150)
+                if (focusedTopControl == null && pendingTopFocus == null) {
+                    try { playPauseFocusRequester.requestFocus() } catch (_: Exception) {}
+                }
+            }
+        } else {
+            // Controles sumiram: devolve foco ao Box principal para que futuras teclas
+            // sejam capturadas pelo onPreviewKeyEvent (sem isso, o controle remoto não responde)
+            delay(50)
+            try { playerFocusRequester.requestFocus() } catch (_: Exception) {
+                delay(200)
+                try { playerFocusRequester.requestFocus() } catch (_: Exception) {}
+            }
+        }
+    }
+
+    // Guardião de foco (TV/VOD): a cada 300ms verifica se o player perdeu foco enquanto os controles
+    // estão ocultos e nenhum overlay está ativo. Resolve o bug de "centro não abre controles no VOD na TV".
+    LaunchedEffect(isTv) {
+        if (!isTv) return@LaunchedEffect
+        while (true) {
+            delay(300)
+            val anyOverlay = showResumeDialog || showExitDialog || showPlaybackError || showNextEpisodeOverlay
+            if (!isControlsVisible && !anyOverlay) {
+                try { playerFocusRequester.requestFocus() } catch (_: Exception) {}
             }
         }
     }
@@ -435,9 +458,10 @@ fun VideoPlayerScreen(
                 // Qualquer tecla na TV reseta o timer e garante que a barra esteja visível se não estiver
                 if (isTv) interactionCount++
 
-                // Quando um dialog está visível, SEMPRE consumir o evento para não vazar para o grid ao fundo
-                if (showResumeDialog || showExitDialog || showPlaybackError || showNextEpisodeOverlay) return@onPreviewKeyEvent true
-                
+                // Todos os overlays/dialogs: deixa o evento chegar nos botões focados —
+                // cada overlay usa onKeyEvent + focusProperties para conter o foco internamente.
+                if (showPlaybackError || showNextEpisodeOverlay || showResumeDialog || showExitDialog) return@onPreviewKeyEvent false
+
                 when (event.key) {
                     Key.DirectionCenter, Key.Enter, Key.NumPadEnter, Key.Spacebar, Key.MediaPlayPause -> {
                         if (!isControlsVisible) {
@@ -458,16 +482,20 @@ fun VideoPlayerScreen(
                                 true
                             } else false
                         } else {
+                            val newPos = maxOf(0, exoPlayer.currentPosition - 10_000)
+                            exoPlayer.seekTo(newPos)
+                            currentPosition = newPos
                             isSeeking = true
-                            exoPlayer.seekTo(maxOf(0, exoPlayer.currentPosition - 10_000))
                             isControlsVisible = true
                             true
                         }
                     }
                     Key.DirectionRight -> {
                         if (!isLiveTv) {
+                            val newPos = minOf(exoPlayer.duration, exoPlayer.currentPosition + 10_000)
+                            exoPlayer.seekTo(newPos)
+                            currentPosition = newPos
                             isSeeking = true
-                            exoPlayer.seekTo(minOf(exoPlayer.duration, exoPlayer.currentPosition + 10_000))
                             isControlsVisible = true
                             true
                         } else false
@@ -490,10 +518,15 @@ fun VideoPlayerScreen(
                     }
                     Key.DirectionDown -> {
                         if (isTv && focusedTopControl != null) {
-                            // Se estiver no topo e apertar pra baixo, volta pro player
-                            focusedTopControl = null
-                            playPauseFocusRequester.requestFocus()
-                            true
+                            if (isLiveTv) {
+                                // Live TV não tem controles abaixo — consome o evento sem mover o foco
+                                true
+                            } else {
+                                // VOD: desce para o play/pause
+                                focusedTopControl = null
+                                try { playPauseFocusRequester.requestFocus() } catch (_: Exception) {}
+                                true
+                            }
                         } else if (!isLiveTv && !isControlsVisible) {
                             isControlsVisible = true
                             true
@@ -521,15 +554,13 @@ fun VideoPlayerScreen(
             }
             .focusRequester(playerFocusRequester)
             .focusable(interactionSource = remember { MutableInteractionSource() })
-            // Mobile: tap para mostrar/esconder controles
-            .then(
-                if (!isTv) Modifier.pointerInput(Unit) {
-                    detectTapGestures(onTap = {
-                        if (showResumeDialog || showExitDialog) return@detectTapGestures
-                        isControlsVisible = !isControlsVisible
-                    })
-                } else Modifier
-            )
+            // Permite tap para mostrar/esconder controles, útil também para controles Remotos TV Box modo "Air Mouse"
+            .pointerInput(Unit) {
+                detectTapGestures(onTap = {
+                    if (showResumeDialog || showExitDialog) return@detectTapGestures
+                    isControlsVisible = !isControlsVisible
+                })
+            }
     ) {
         val fullscreenPlayerViewRef = remember { mutableStateOf<PlayerView?>(null) }
 
@@ -596,8 +627,11 @@ fun VideoPlayerScreen(
                     }
 
                     var isBackFocused by remember { mutableStateOf(false) }
+                    val backInteractionSource = remember { MutableInteractionSource() }
+                    val isBackPressed by backInteractionSource.collectIsPressedAsState()
                     IconButton(
                         onClick = { if (isLiveTv) onBack() else showExitDialog = true },
+                        interactionSource = backInteractionSource,
                         modifier = Modifier
                             .focusRequester(backButtonFocusRequester)
                             .focusProperties {
@@ -635,7 +669,7 @@ fun VideoPlayerScreen(
                                 else Modifier
                             )
                     ) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = Color.White, modifier = Modifier.size(28.dp))
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Voltar", tint = if (isBackPressed) Color(0xFFE11D2E) else Color.White, modifier = Modifier.size(28.dp))
                     }
 
                     Row(
@@ -662,7 +696,7 @@ fun VideoPlayerScreen(
                             channel.name.contains("SD", ignoreCase = true) -> "SD"
                             else -> null
                         }
-                        if (isLiveTv && streamQuality != null) {
+                        if (isLiveTv && streamQuality != null && hasEpg) {
                             Box(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(4.dp))
@@ -717,8 +751,11 @@ fun VideoPlayerScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         var isInfoFocused by remember { mutableStateOf(false) }
+                        val infoInteractionSource = remember { MutableInteractionSource() }
+                        val isInfoPressed by infoInteractionSource.collectIsPressedAsState()
                         IconButton(
                             onClick = { showInfoPanel = !showInfoPanel },
+                            interactionSource = infoInteractionSource,
                             modifier = Modifier
                                 .focusRequester(infoButtonFocusRequester)
                                 .focusProperties {
@@ -763,16 +800,19 @@ fun VideoPlayerScreen(
                                     else Modifier
                                 )
                         ) {
-                            Icon(Icons.Default.Info, contentDescription = "Info", tint = Color.White, modifier = Modifier.size(24.dp))
+                            Icon(Icons.Default.Info, contentDescription = "Info", tint = if (isInfoPressed) Color(0xFFE11D2E) else Color.White, modifier = Modifier.size(24.dp))
                         }
                         
                         var isFav by remember { mutableStateOf(channel.isFavorite) }
                         var isFavoriteFocused by remember { mutableStateOf(false) }
+                        val favInteractionSource = remember { MutableInteractionSource() }
+                        val isFavPressed by favInteractionSource.collectIsPressedAsState()
                         IconButton(
                             onClick = {
                                 isFav = !isFav
                                 viewModel.updateFavorite(channel.id, isFav)
                             },
+                            interactionSource = favInteractionSource,
                             modifier = Modifier
                                 .focusRequester(favoriteButtonFocusRequester)
                                 .focusProperties {
@@ -820,18 +860,21 @@ fun VideoPlayerScreen(
                             Icon(
                                 imageVector = if (isFav) Icons.Default.Favorite else Icons.Default.FavoriteBorder,
                                 contentDescription = "Favoritar",
-                                tint = if (isFav) Color.Red else Color.White,
+                                tint = if (isFavPressed || isFav) Color(0xFFE11D2E) else Color.White,
                                 modifier = Modifier.size(24.dp)
                             )
                         }
                         
                         var isAspectFocused by remember { mutableStateOf(false) }
+                        val aspectInteractionSource = remember { MutableInteractionSource() }
+                        val isAspectPressed by aspectInteractionSource.collectIsPressedAsState()
                         IconButton(
                             onClick = {
                                 resizeMode = if (resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FILL)
                                     AspectRatioFrameLayout.RESIZE_MODE_FIT
                                 else AspectRatioFrameLayout.RESIZE_MODE_FILL
                             },
+                            interactionSource = aspectInteractionSource,
                             modifier = Modifier
                                 .focusRequester(aspectButtonFocusRequester)
                                 .focusProperties {
@@ -871,7 +914,7 @@ fun VideoPlayerScreen(
                         ) {
                             Icon(
                                 imageVector = if (resizeMode == AspectRatioFrameLayout.RESIZE_MODE_FILL) Icons.Default.FitScreen else Icons.Default.Fullscreen,
-                                contentDescription = "Tela Cheia", tint = Color.White, modifier = Modifier.size(24.dp)
+                                contentDescription = "Tela Cheia", tint = if (isAspectPressed) Color(0xFFE11D2E) else Color.White, modifier = Modifier.size(24.dp)
                             )
                         }
                     }
@@ -894,10 +937,19 @@ fun VideoPlayerScreen(
                             exoPlayer.seekBack()
                         }
 
+                        val interactionSource = remember { MutableInteractionSource() }
+                        val isPressed by interactionSource.collectIsPressedAsState()
+                        var isPlayFocused by remember { mutableStateOf(false) }
+                        val playScale by animateFloatAsState(
+                            targetValue = if (isPressed || (isTv && isPlayFocused)) 1.2f else 1f,
+                            animationSpec = tween(durationMillis = 100), label = "playScale"
+                        )
+
                         IconButton(
                             onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() },
                             modifier = Modifier
                                 .size(72.dp)
+                                .graphicsLayer(scaleX = playScale, scaleY = playScale)
                                 .focusRequester(playPauseFocusRequester)
                                 .focusProperties {
                                     up = backButtonFocusRequester
@@ -905,13 +957,21 @@ fun VideoPlayerScreen(
                                     left = seekBackFocusRequester 
                                     right = seekForwardFocusRequester
                                 }
-                                .onFocusChanged { /* visual feedback is already handled by icon scale if needed, but here we just need focus */ }
-                                .focusable()
+                                .onFocusChanged { isPlayFocused = it.isFocused }
+                                .focusable(interactionSource = interactionSource)
+                                .onKeyEvent { event ->
+                                    if (event.type == KeyEventType.KeyDown && 
+                                        (event.key == Key.DirectionCenter || event.key == Key.Enter)) {
+                                        if (isPlaying) exoPlayer.pause() else exoPlayer.play()
+                                        true
+                                    } else false
+                                },
+                            interactionSource = interactionSource
                         ) {
                             Icon(
                                 imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
                                 contentDescription = "Play/Pause",
-                                tint = Color.White,
+                                tint = if (isPressed || (isTv && isPlayFocused)) Color(0xFFE11D2E) else Color.White,
                                 modifier = Modifier.fillMaxSize()
                             )
                         }
@@ -1181,6 +1241,36 @@ fun VideoPlayerScreen(
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.ExtraBold
                                 )
+                                val bottomStreamQuality = when {
+                                    channel.name.contains("4K", ignoreCase = true) || channel.name.contains("UHD", ignoreCase = true) -> "4K"
+                                    channel.name.contains("FHD", ignoreCase = true) || channel.name.contains("1080", ignoreCase = true) -> "FHD"
+                                    channel.name.contains("HD", ignoreCase = true) || channel.name.contains("720", ignoreCase = true) -> "HD"
+                                    channel.name.contains("SD", ignoreCase = true) -> "SD"
+                                    else -> null
+                                }
+                                if (bottomStreamQuality != null) {
+                                    Spacer(Modifier.width(8.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(
+                                                when (bottomStreamQuality) {
+                                                    "4K" -> Color(0xFFF59E0B)
+                                                    "FHD" -> Color(0xFF10B981)
+                                                    "HD" -> Color(0xFF3B82F6)
+                                                    else -> Color.Gray
+                                                }
+                                            )
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = bottomStreamQuality,
+                                            color = Color.White,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.ExtraBold
+                                        )
+                                    }
+                                }
                                 Spacer(Modifier.width(12.dp))
                                 // Indicador AO VIVO
                                 Row(
@@ -1687,11 +1777,16 @@ fun PlaybackErrorOverlay(
         uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
     }
 
-    // Foco inicial no botão retry (apenas na TV)
-    LaunchedEffect(isTv) {
+    // Foco inicial no botão retry (apenas na TV) — retries pois o player pode segurar foco
+    LaunchedEffect(Unit) {
         if (isTv) {
-            kotlinx.coroutines.delay(100)
-            try { retryRequester.requestFocus() } catch (_: Exception) {}
+            for (delayMs in listOf(80L, 180L, 350L)) {
+                kotlinx.coroutines.delay(delayMs)
+                try {
+                    retryRequester.requestFocus()
+                    break
+                } catch (_: Exception) {}
+            }
         }
     }
 
@@ -2089,7 +2184,7 @@ private fun SeekButton(
         Icon(
             imageVector = icon, 
             contentDescription = description, 
-            tint = if (isTv && isFocused) Color(0xFFE11D2E) else Color.White, 
+            tint = if (isPressed || (isTv && isFocused)) Color(0xFFE11D2E) else Color.White,
             modifier = Modifier.fillMaxSize()
         )
     }

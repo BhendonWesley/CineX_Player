@@ -1,11 +1,6 @@
 package com.cinex.player.ui.components
 
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -42,7 +37,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
@@ -58,8 +52,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import coil.compose.SubcomposeAsyncImage
-import coil.compose.SubcomposeAsyncImageContent
 import android.content.res.Configuration as AndroidConfig
 import com.cinex.player.data.model.Channel
 import com.cinex.player.ui.theme.CineX_SecondaryBackground
@@ -75,11 +67,20 @@ fun VodPosterItem(
     modifier: Modifier = Modifier,
     showProgress: Boolean = false,
     onFocused: ((Channel) -> Unit)? = null,
+    onPrefetch: (() -> Unit)? = null,
     onClick: () -> Unit = {}
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val isPressed by interactionSource.collectIsPressedAsState()
     var isFocused by remember { mutableStateOf(false) }
+
+    // Prefetch ao focar por 400ms (TV): pré-carrega episódios antes do clique
+    LaunchedEffect(isFocused) {
+        if (isFocused && onPrefetch != null) {
+            kotlinx.coroutines.delay(400L)
+            if (isFocused) onPrefetch()
+        }
+    }
 
     val gradientBrush = remember { Brush.linearGradient(listOf(CardRed, CardGold)) }
     val overlayGradient = remember {
@@ -90,6 +91,15 @@ fun VodPosterItem(
         val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
         uiModeManager.currentModeType == AndroidConfig.UI_MODE_TYPE_TELEVISION
     }
+    val screenWidthDp = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp
+    val cellPx = remember(screenWidthDp, isTv) {
+        if (isTv) 200
+        else {
+            val cellDp = (screenWidthDp - 24 - 24) / 4
+            ((cellDp / 8 + 1) * 8)
+        }
+    }
+    val cellHeightPx = remember(cellPx) { (cellPx * 1.5f).toInt() }
 
     val focusScale by animateFloatAsState(
         targetValue = if (isFocused) 1.05f else 1f,
@@ -112,7 +122,7 @@ fun VodPosterItem(
                         onFocused?.invoke(channel)
                     }
                 }
-                .focusable(interactionSource = remember { MutableInteractionSource() })
+                .focusable(interactionSource = interactionSource)
                 .onKeyEvent { event ->
                     if (event.type == KeyEventType.KeyUp &&
                         (event.key == Key.DirectionCenter || event.key == Key.Enter)
@@ -163,93 +173,21 @@ fun VodPosterItem(
                     .crossfade(if (isTv) 0 else 300)
                     .memoryCacheKey(imageUrl)
                     .diskCacheKey(imageUrl)
-                    .size(if (isTv) 200 else 320, if (isTv) 300 else 480)
+                    .size(cellPx, cellHeightPx)
                     .build()
             }
-
-            if (isTv) {
-                AsyncImage(
-                    model = imageRequest,
-                    contentDescription = channel.name,
-                    contentScale = ContentScale.Crop,
-                    alignment = Alignment.TopCenter,
-                    modifier = Modifier.fillMaxSize(),
-                    placeholder = painterResource(id = com.cinex.player.R.drawable.logo_cinex),
-                    error = painterResource(id = com.cinex.player.R.drawable.logo_cinex),
-                    onError = {
-                        if (imageIndex < imageCandidates.lastIndex) {
-                            imageIndex++
-                        }
-                    }
-                )
-            } else {
-                SubcomposeAsyncImage(
+            AsyncImage(
                 model = imageRequest,
                 contentDescription = channel.name,
                 contentScale = ContentScale.Crop,
                 alignment = Alignment.TopCenter,
                 modifier = Modifier.fillMaxSize(),
-                success = {
-                    SubcomposeAsyncImageContent()
-                },
-                loading = {
-                    if (isTv) {
-                        // Na TV, placeholder estático para evitar sobrecarga de GPU
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(Color.White.copy(alpha = 0.08f))
-                        )
-                    } else {
-                        val transition = rememberInfiniteTransition(label = "shimmer")
-                        val translateAnim by transition.animateFloat(
-                            initialValue = 0f,
-                            targetValue = 1000f,
-                            animationSpec = infiniteRepeatable(
-                                animation = tween(1200, easing = LinearEasing),
-                                repeatMode = RepeatMode.Restart
-                            ),
-                            label = "shimmer_translate"
-                        )
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(
-                                    Brush.linearGradient(
-                                        colors = listOf(
-                                            Color.White.copy(alpha = 0.05f),
-                                            Color.White.copy(alpha = 0.15f),
-                                            Color.White.copy(alpha = 0.05f)
-                                        ),
-                                        start = Offset(translateAnim - 200f, 0f),
-                                        end = Offset(translateAnim, 0f)
-                                    )
-                                )
-                        )
-                    }
-                },
-                error = {
-                    if (imageIndex < imageCandidates.lastIndex) {
-                        LaunchedEffect(imageIndex, imageCandidates) {
-                            imageIndex++
-                        }
-                    } else {
-                        Box(
-                            modifier = Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Image(
-                                painter = painterResource(id = com.cinex.player.R.drawable.logo_cinex),
-                                contentDescription = null,
-                                modifier = Modifier.fillMaxWidth(0.55f),
-                                contentScale = ContentScale.Fit,
-                                alpha = 0.5f
-                            )
-                        }
-                    }
+                placeholder = painterResource(id = com.cinex.player.R.drawable.logo_cinex),
+                error = painterResource(id = com.cinex.player.R.drawable.logo_cinex),
+                onError = {
+                    if (imageIndex < imageCandidates.lastIndex) imageIndex++
                 }
             )
-            }
         } else {
             Box(
                 modifier = Modifier.fillMaxSize(),

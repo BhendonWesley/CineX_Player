@@ -67,6 +67,10 @@ class ChannelRepository @Inject constructor(
     private val deltaSyncAborted = AtomicBoolean(false)
     private val isFullSyncRunning = AtomicBoolean(false)
 
+    /** TTL em memória por sessão: série → timestamp da última busca de episódios */
+    private val seriesEpisodesFetchedAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    private val SERIES_EPISODES_TTL_MS = 12L * 60 * 60 * 1000 // 12 horas
+
     val liveTvChannels: Flow<PagingData<Channel>> = _activePlaylistUrl.flatMapLatest { url ->
         if (url == null) flowOf(PagingData.empty()) 
         else Pager(PagingConfig(pageSize = 50, enablePlaceholders = true)) {
@@ -220,6 +224,16 @@ class ChannelRepository @Inject constructor(
         }
     }
 
+    suspend fun getFirstImageUrlsForCategory(type: String, categoryId: String, limit: Int = 8): List<String> {
+        val url = _activePlaylistUrl.value ?: return emptyList()
+        return channelDao.getFirstChannelsByCategory(type, url, categoryId, limit)
+            .mapNotNull { ch ->
+                val poster = ch.posterUrl?.trim()?.takeIf { it.isNotBlank() && it != "null" }
+                val logo = ch.logoUrl?.trim()?.takeIf { it.isNotBlank() && it != "null" }
+                poster ?: logo
+            }
+    }
+
     fun observeAllSeries(): Flow<List<Channel>> {
         return _activePlaylistUrl.flatMapLatest { url ->
             if (url == null) {
@@ -258,6 +272,20 @@ class ChannelRepository @Inject constructor(
     suspend fun hasEpisodesForSeries(seriesName: String): Boolean {
         val url = _activePlaylistUrl.value ?: return false
         return channelDao.countEpisodesForSeries(seriesName, url) > 0
+    }
+
+    /**
+     * Revalida episódios em background se o TTL de 12h tiver expirado nesta sessão.
+     * Nunca bloqueia o caller — o usuário vê o cache imediatamente.
+     */
+    fun refreshSeriesInBackground(seriesId: Int, seriesName: String) {
+        if (seriesId == -1) return
+        repositoryScope.launch {
+            val lastFetched = seriesEpisodesFetchedAt[seriesName] ?: 0L
+            // Se já buscamos nesta sessão e ainda está dentro do TTL, não re-busca
+            if (lastFetched > 0L && System.currentTimeMillis() - lastFetched < SERIES_EPISODES_TTL_MS) return@launch
+            try { fetchAndStoreEpisodes(seriesId, seriesName, forceRefresh = true) } catch (_: Exception) {}
+        }
     }
 
     suspend fun hasEpisodesWithoutStill(seriesName: String): Boolean {
@@ -560,13 +588,6 @@ class ChannelRepository @Inject constructor(
                 // garantem que a Home mostre banners imediatamente após resync
                 val existingUserData = channelDao.getTmdbAndUserDataByPlaylist(url).associateBy { it.remoteId }
 
-                // Sincronização Incremental: NÃO limpamos o banco no início.
-                // Itens novos e atualizados serão tratados pelo conflito REPLACE.
-                // Futuramente podemos adicionar uma limpeza de órfãos ao final.
-                // onProgress(50, 50, 50, "Limpando dados antigos...")
-                // channelDao.clearByPlaylist(url)
-                // categoryDao.clearByPlaylist(url)
-
                 onProgress(55, 55, 55, "Processando categorias...")
                 val channelsByGroup = parsedChannels.groupBy { it.groupTitle }
                 val m3uCategories = channelsByGroup.entries.mapIndexed { index, (catName, channels) ->
@@ -580,7 +601,11 @@ class ChannelRepository @Inject constructor(
                         orderIndex = index
                     )
                 }
-                categoryDao.insertAll(m3uCategories)
+                // Reconstrói categorias do zero — remove órfãs que o servidor removeu
+                if (m3uCategories.isNotEmpty()) {
+                    categoryDao.clearByPlaylist(url)
+                    categoryDao.insertAll(m3uCategories)
+                }
 
                 if (epgUrl != null) {
                     val currentPlaylist = playlistDao.getPlaylistByUrl(url)
@@ -769,10 +794,11 @@ class ChannelRepository @Inject constructor(
 
             if (deltaSyncAborted.get()) return@withContext Result.success(0)
 
-            // Proteção: se o servidor retornou menos de 50% dos canais existentes,
-            // provavelmente foi uma resposta parcial/erro — NÃO deletar nada
+            // Proteção: só bloqueia deleção se o servidor retornou menos de 50 canais
+            // (resposta vazia/parcial por erro de rede). Se retornou 50+, é lista real
+            // e pode ter encolhido legitimamente — deletar os removidos é o comportamento correto.
             val removedIds = existingIds - newIds
-            val safeToDelete = removedIds.size < existingIds.size * 0.5
+            val safeToDelete = newChannels.size >= 50
             if (safeToDelete && removedIds.isNotEmpty()) {
                 removedIds.chunked(500).forEach { chunk ->
                     channelDao.deleteMultipleByRemoteId(url, chunk)
@@ -807,6 +833,7 @@ class ChannelRepository @Inject constructor(
 
             // Atualizar canais Live TV existentes que mudaram (nome, grupo — ex: "Jogos do Dia" muda todo dia)
             // Só Live TV porque filmes/séries raramente mudam nome e carregar 16k+ canais é pesado
+            var updatedCount = 0
             val liveChannelsToCheck = newChannels.filter { it.category == "LIVE_TV" && it.remoteId in existingIds }
             if (liveChannelsToCheck.isNotEmpty()) {
                 val existingLive = channelDao.getChannelsByCategoryList("LIVE_TV", url)
@@ -822,6 +849,7 @@ class ChannelRepository @Inject constructor(
                             streamUrl = fresh.streamUrl,
                             categoryId = fresh.categoryId
                         )
+                        updatedCount++
                     }
                 }
             }
@@ -829,7 +857,15 @@ class ChannelRepository @Inject constructor(
             // Atualizar timestamp do último sync
             playlistDao.updateLastSyncTime(url, System.currentTimeMillis())
 
-            Result.success(channelsToInsert.size)
+            // Reconstruir categorias a partir da lista atual do servidor:
+            // remove categorias órfãs (ex: "CineX Turbo" removida do servidor)
+            // e garante que categorias novas apareçam sem precisar de sync completo.
+            rebuildCategoriesFromChannels(url, newChannels)
+
+            // Retorna total de mudanças: novos + atualizados + removidos
+            // Isso garante que o cache de paging seja limpo sempre que houver qualquer alteração
+            val removedCount = if (safeToDelete) removedIds.size else 0
+            Result.success(channelsToInsert.size + updatedCount + removedCount)
         } catch (e: Exception) {
             e.printStackTrace()
             Result.failure(e)
@@ -1058,41 +1094,41 @@ class ChannelRepository @Inject constructor(
 
             // decodeUnicodeEscapes removido daqui, usando o top-level decodeUnicode
 
-            // Sincronização Incremental (Lazy): NÃO limpamos o banco aqui.
-            // A Home e as abas continuam com o conteúdo antigo enquanto o novo é baixado em background.
+            // Reconstrói categorias do zero: limpa as antigas e insere as atuais do servidor.
+            // Isso remove categorias órfãs (ex: "CineX Turbo" que o servidor removeu).
             withContext(Dispatchers.IO) {
-                // channelDao.clearByPlaylist(playlistUrl)
-                // categoryDao.clearByPlaylist(playlistUrl)
-
                 val allCats = mutableListOf<com.cinex.player.data.model.Category>()
-                allCats += liveCats.mapIndexed { index, cat -> 
+                allCats += liveCats.mapIndexed { index, cat ->
                     com.cinex.player.data.model.Category(
-                        "live_${cat.category_id}", 
-                        decodeUnicode(cat.category_name) ?: "Categoria", 
-                        "LIVE_TV", 
-                        playlistUrl, 
+                        "live_${cat.category_id}",
+                        decodeUnicode(cat.category_name) ?: "Categoria",
+                        "LIVE_TV",
+                        playlistUrl,
                         orderIndex = index
-                    ) 
+                    )
                 }
-                allCats += vodCats.mapIndexed { index, cat -> 
+                allCats += vodCats.mapIndexed { index, cat ->
                     com.cinex.player.data.model.Category(
-                        "vod_${cat.category_id}", 
-                        decodeUnicode(cat.category_name) ?: "Filmes", 
-                        "MOVIE", 
-                        playlistUrl, 
+                        "vod_${cat.category_id}",
+                        decodeUnicode(cat.category_name) ?: "Filmes",
+                        "MOVIE",
+                        playlistUrl,
                         orderIndex = index
-                    ) 
+                    )
                 }
-                allCats += seriesCats.mapIndexed { index, cat -> 
+                allCats += seriesCats.mapIndexed { index, cat ->
                     com.cinex.player.data.model.Category(
-                        "series_${cat.category_id}", 
-                        decodeUnicode(cat.category_name) ?: "Séries", 
-                        "SERIES", 
-                        playlistUrl, 
+                        "series_${cat.category_id}",
+                        decodeUnicode(cat.category_name) ?: "Séries",
+                        "SERIES",
+                        playlistUrl,
                         orderIndex = index
-                    ) 
+                    )
                 }
-                if (allCats.isNotEmpty()) categoryDao.insertAll(allCats)
+                if (allCats.isNotEmpty()) {
+                    categoryDao.clearByPlaylist(playlistUrl)
+                    categoryDao.insertAll(allCats)
+                }
             }
 
             // Limpa canais antigos — remove dados corrompidos de syncs anteriores.
@@ -2048,11 +2084,11 @@ class ChannelRepository @Inject constructor(
         )
     }
 
-    suspend fun fetchAndStoreEpisodes(seriesId: Int, seriesName: String) = withContext(Dispatchers.IO) {
+    suspend fun fetchAndStoreEpisodes(seriesId: Int, seriesName: String, forceRefresh: Boolean = false) = withContext(Dispatchers.IO) {
         val url = _activePlaylistUrl.value ?: return@withContext
 
-        // Se já tem episódios no banco, não re-busca (evita sobrescrever dados)
-        if (channelDao.countEpisodesForSeries(seriesName, url) > 1) return@withContext
+        // Se já tem episódios no banco e não é refresh forçado, retorna imediatamente
+        if (!forceRefresh && channelDao.countEpisodesForSeries(seriesName, url) > 1) return@withContext
 
         try {
             val uri = android.net.Uri.parse(url)
@@ -2092,9 +2128,14 @@ class ChannelRepository @Inject constructor(
                         }
                     )
                     .create()
+                // Cliente dedicado para busca de episódios: callTimeout garante tempo TOTAL máximo
+                // (readTimeout é por pacote e não resolve servidores que enviam dados lentamente)
+                val seriesClient = okHttpClient.newBuilder()
+                    .callTimeout(45, java.util.concurrent.TimeUnit.SECONDS)
+                    .build()
                 val api = Retrofit.Builder()
                     .baseUrl(baseUrl)
-                    .client(okHttpClient)
+                    .client(seriesClient)
                     .addConverterFactory(GsonConverterFactory.create(gson))
                     .build()
                     .create(XtreamCodesApi::class.java)
@@ -2105,13 +2146,17 @@ class ChannelRepository @Inject constructor(
                 val existingEpisodes = channelDao.getEpisodesForSeriesList(seriesName, url)
                     .associateBy { it.remoteId }
 
+                // Monta TODOS os episódios de TODAS as temporadas numa única lista
+                // e faz um único insertAll — o Room emite apenas UMA vez para o Flow,
+                // fazendo todas as temporadas aparecerem simultaneamente na UI.
+                val allChannels = mutableListOf<Channel>()
                 response.episodes?.forEach { (seasonNumStr, episodeList) ->
                     val seasonNum = seasonNumStr.toIntOrNull() ?: 1
-                    val channels = episodeList.map { ep ->
+                    episodeList.forEach { ep ->
                         val remoteId = "series_ep_${ep.id}"
                         val old = existingEpisodes[remoteId]
                         val apiImage = ep.info?.movie_image?.takeIf { it.isNotBlank() }
-                        Channel(
+                        allChannels.add(Channel(
                             name = ep.title,
                             logoUrl = apiImage ?: old?.logoUrl,
                             groupTitle = "Episódios",
@@ -2131,12 +2176,15 @@ class ChannelRepository @Inject constructor(
                             resumePosition = old?.resumePosition ?: 0L,
                             totalDuration = old?.totalDuration ?: 0L,
                             isFavorite = old?.isFavorite ?: false
-                        )
+                        ))
                     }
-
-                    // Inserir episódios (conflito REPLACE para atualizar metadados se já existirem)
-                    channelDao.insertAll(channels)
                 }
+                // Insert único: Room dispara o Flow uma só vez → todas as temporadas aparecem juntas
+                if (allChannels.isNotEmpty()) {
+                    channelDao.insertAllInTransaction(allChannels)
+                }
+                // Grava timestamp de sucesso para controle de TTL
+                seriesEpisodesFetchedAt[seriesName] = System.currentTimeMillis()
             }
         } catch (e: Exception) {
             e.printStackTrace()

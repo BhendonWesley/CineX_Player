@@ -55,6 +55,7 @@ fun MainScreen(
     viewModel: MainViewModel = hiltViewModel()
 ) {
     var selectedTab by remember { mutableStateOf(0) }
+    var navDownTrigger by remember { mutableStateOf(0) }
 
 
     val isLoading by viewModel.isLoading.collectAsState()
@@ -155,12 +156,14 @@ fun MainScreen(
             if (event == Lifecycle.Event.ON_PAUSE || event == Lifecycle.Event.ON_STOP) {
                 viewModel.stopLiveTv()
             }
-            if (
-                event == Lifecycle.Event.ON_RESUME &&
-                canResumeLiveTv &&
-                (selectedTab == 1 || (playingChannel != null && playingChannel?.category == "LIVE_TV"))
-            ) {
-                viewModel.resumeLiveTv()
+            if (event == Lifecycle.Event.ON_RESUME) {
+                if (canResumeLiveTv &&
+                    (selectedTab == 1 || (playingChannel != null && playingChannel?.category == "LIVE_TV"))
+                ) {
+                    viewModel.resumeLiveTv()
+                }
+                // Sync silencioso ao retornar ao app: detecta novos/removidos no servidor
+                viewModel.triggerSilentSync()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -249,6 +252,7 @@ fun MainScreen(
         }
 
         val isOverlayActive = playingChannel != null || selectedDetailsChannel != null
+        val isPlayerActive = playingChannel != null
 
         Box(modifier = modifier.fillMaxSize()) {
             Column(
@@ -256,8 +260,9 @@ fun MainScreen(
                     .fillMaxSize()
                     .background(DarkBackground)
                     .focusProperties { canFocus = !isOverlayActive } // Bloqueia foco no fundo quando o player está aberto
-                    // Segurança Adicional: Intercepta e mata as teclas antes que cheguem nos itens do grid
-                    .onPreviewKeyEvent { isOverlayActive } 
+                    // Bloqueia teclas no grid quando overlay está ativo, MAS não quando o player está rodando —
+                    // o VideoPlayerScreen (filho desta Column) precisa receber os eventos ele mesmo
+                    .onPreviewKeyEvent { isOverlayActive && !isPlayerActive }
             ) {
             if (selectedTab != 0 || searchQuery.isNotEmpty()) {
                 TopNavigationBar(
@@ -269,6 +274,7 @@ fun MainScreen(
                     searchQuery = searchQuery,
                     onSearchChange = { viewModel.updateSearchQuery(it) },
                     onMenuClick = { isSettingsOpen = true },
+                    onNavigateDown = { navDownTrigger++ },
                     showLive = !isLiveHidden,
                     showMovies = !isMoviesHidden,
                     showSeries = !isSeriesHidden
@@ -302,7 +308,8 @@ fun MainScreen(
                         LiveTvScreen(
                             viewModel = viewModel,
                             onChannelExpand = { playingChannel = it },
-                            isActive = selectedTab == 1
+                            isActive = selectedTab == 1,
+                            navDownTrigger = navDownTrigger
                         )
                     }
                     Box(modifier = Modifier.tabVisibility(2)) {
@@ -313,7 +320,8 @@ fun MainScreen(
                             continueWatching = continueWatching.filter { it.category == "MOVIE" },
                             onVideoClick = { viewModel.selectChannelForDetails(it) },
                             onPlayDirect = { playingChannel = it },
-                            isActive = selectedTab == 2
+                            isActive = selectedTab == 2,
+                            navDownTrigger = navDownTrigger
                         )
                     }
                     Box(modifier = Modifier.tabVisibility(3)) {
@@ -324,7 +332,8 @@ fun MainScreen(
                             continueWatching = continueWatching.filter { it.category == "SERIES" },
                             onVideoClick = { viewModel.selectChannelForDetails(it) },
                             onPlayDirect = { playingChannel = it },
-                            isActive = selectedTab == 3
+                            isActive = selectedTab == 3,
+                            navDownTrigger = navDownTrigger
                         )
                     }
                 }
