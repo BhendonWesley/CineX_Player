@@ -72,7 +72,9 @@ import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.*
 import androidx.compose.ui.ExperimentalComposeUiApi
 import com.cinex.player.data.model.Channel
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import com.cinex.player.ui.MainViewModel
 import com.cinex.player.ui.theme.DeepRed
 import kotlin.OptIn
@@ -199,9 +201,29 @@ fun VideoPlayerScreen(
     var isVideoEnded by remember(channel.id) { mutableStateOf(false) }
     var showNextEpisodeOverlay by remember(channel.id) { mutableStateOf(false) }
     var nextEpisode by remember(channel.id) { mutableStateOf<Channel?>(null) }
+    var vodRecoveryAttempts by remember(channel.id) { mutableIntStateOf(0) }
+    var vodAutoResumeAttempts by remember(channel.id) { mutableIntStateOf(0) }
+    var userPausedPlayback by remember(channel.id) { mutableStateOf(showResumeDialog) }
     val currentProgram by viewModel.currentProgram.collectAsState()
     val upcomingPrograms by viewModel.upcomingPrograms.collectAsState()
     val epgListings by viewModel.epgListings.collectAsState()
+
+    fun retryVodPlayback() {
+        if (isLiveTv) return
+
+        val resumeAt = exoPlayer.currentPosition.coerceAtLeast(0L)
+        val mediaItem = MediaItem.fromUri(Uri.parse(channel.streamUrl))
+
+        exoPlayer.stop()
+        exoPlayer.clearMediaItems()
+        exoPlayer.setMediaItem(mediaItem)
+        exoPlayer.prepare()
+        if (resumeAt > 0L) {
+            exoPlayer.seekTo(resumeAt)
+        }
+        exoPlayer.playWhenReady = true
+        exoPlayer.play()
+    }
 
     // Pré-busca o próximo episódio assim que o vídeo começa (para ter pronto)
     LaunchedEffect(channel.id) {
@@ -212,28 +234,103 @@ fun VideoPlayerScreen(
 
     // Detecta fim do vídeo e erros de reprodução
     DisposableEffect(exoPlayer) {
+        val recoveryScope = kotlinx.coroutines.MainScope()
+        var vodStallRecoveryJob: kotlinx.coroutines.Job? = null
+
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 isPlaying = exoPlayer.isPlaying
                 if (playbackState == Player.STATE_ENDED && !isLiveTv) {
+                    vodStallRecoveryJob?.cancel()
                     isVideoEnded = true
                     showNextEpisodeOverlay = true
+                    vodRecoveryAttempts = 0
+                } else if (!isLiveTv) {
+                    when (playbackState) {
+                        Player.STATE_READY -> {
+                            vodStallRecoveryJob?.cancel()
+                            if (exoPlayer.isPlaying) {
+                                vodRecoveryAttempts = 0
+                                vodAutoResumeAttempts = 0
+                            } else if (!isTv && !userPausedPlayback && !showResumeDialog && vodAutoResumeAttempts < 3) {
+                                vodStallRecoveryJob = recoveryScope.launch {
+                                    delay(1200)
+                                    val stillReadyButPaused =
+                                        exoPlayer.playbackState == Player.STATE_READY &&
+                                        !exoPlayer.isPlaying &&
+                                        exoPlayer.duration > 0
+                                    if (stillReadyButPaused && !userPausedPlayback) {
+                                        vodAutoResumeAttempts++
+                                        exoPlayer.playWhenReady = true
+                                        exoPlayer.play()
+                                    }
+                                }
+                            }
+                        }
+                        Player.STATE_BUFFERING -> {
+                            vodStallRecoveryJob?.cancel()
+                            if (!userPausedPlayback && !showResumeDialog) {
+                                vodStallRecoveryJob = recoveryScope.launch {
+                                    delay(6_000)
+                                    val stalled = exoPlayer.playbackState == Player.STATE_BUFFERING
+                                    if (stalled && exoPlayer.playWhenReady && vodRecoveryAttempts < 2) {
+                                        vodRecoveryAttempts++
+                                        retryVodPlayback()
+                                    }
+                                }
+                            }
+                        }
+                        else -> vodStallRecoveryJob?.cancel()
+                    }
                 }
             }
 
             override fun onIsPlayingChanged(isPlayingNow: Boolean) {
                 isPlaying = isPlayingNow
+                if (!isLiveTv && isPlayingNow) {
+                    vodRecoveryAttempts = 0
+                    vodAutoResumeAttempts = 0
+                }
+            }
+
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                if (isLiveTv || isTv) return
+                if (!playWhenReady && !userPausedPlayback && !showResumeDialog && exoPlayer.currentPosition > 0L) {
+                    recoveryScope.launch {
+                        delay(700)
+                        val shouldResume =
+                            !exoPlayer.playWhenReady &&
+                            !exoPlayer.isPlaying &&
+                            !userPausedPlayback &&
+                            vodAutoResumeAttempts < 3
+                        if (shouldResume) {
+                            vodAutoResumeAttempts++
+                            exoPlayer.playWhenReady = true
+                            exoPlayer.play()
+                        }
+                    }
+                }
             }
 
             override fun onPlayerError(error: PlaybackException) {
                 if (!isLiveTv) {
-                    showPlaybackError = true
+                    vodStallRecoveryJob?.cancel()
+                    if (!userPausedPlayback && vodRecoveryAttempts < 2) {
+                        vodRecoveryAttempts++
+                        retryVodPlayback()
+                    } else {
+                        showPlaybackError = true
+                    }
                 }
             }
         }
         isPlaying = exoPlayer.isPlaying
         exoPlayer.addListener(listener)
-        onDispose { exoPlayer.removeListener(listener) }
+        onDispose {
+            vodStallRecoveryJob?.cancel()
+            recoveryScope.cancel()
+            exoPlayer.removeListener(listener)
+        }
     }
 
     // Detecção de créditos: mostra overlay quando faltam ~90s ou 95% do vídeo
@@ -265,10 +362,12 @@ fun VideoPlayerScreen(
 
             if (showResumeDialog) {
                 // Pausa ANTES de preparar para não auto-tocar atrás do dialog
+                userPausedPlayback = true
                 exoPlayer.playWhenReady = false
                 exoPlayer.prepare()
                 exoPlayer.seekTo(channel.resumePosition)
             } else {
+                userPausedPlayback = false
                 exoPlayer.playWhenReady = true
                 exoPlayer.prepare()
             }
@@ -946,7 +1045,16 @@ fun VideoPlayerScreen(
                         )
 
                         IconButton(
-                            onClick = { if (isPlaying) exoPlayer.pause() else exoPlayer.play() },
+                            onClick = {
+                                if (isPlaying) {
+                                    userPausedPlayback = true
+                                    exoPlayer.pause()
+                                } else {
+                                    userPausedPlayback = false
+                                    exoPlayer.playWhenReady = true
+                                    exoPlayer.play()
+                                }
+                            },
                             modifier = Modifier
                                 .size(72.dp)
                                 .graphicsLayer(scaleX = playScale, scaleY = playScale)
@@ -962,7 +1070,14 @@ fun VideoPlayerScreen(
                                 .onKeyEvent { event ->
                                     if (event.type == KeyEventType.KeyDown && 
                                         (event.key == Key.DirectionCenter || event.key == Key.Enter)) {
-                                        if (isPlaying) exoPlayer.pause() else exoPlayer.play()
+                                        if (isPlaying) {
+                                            userPausedPlayback = true
+                                            exoPlayer.pause()
+                                        } else {
+                                            userPausedPlayback = false
+                                            exoPlayer.playWhenReady = true
+                                            exoPlayer.play()
+                                        }
                                         true
                                     } else false
                                 },
@@ -1522,13 +1637,17 @@ fun VideoPlayerScreen(
                 description = "Deseja retomar a reprodução de onde parou?",
                 onConfirm = {
                     showResumeDialog = false
+                    userPausedPlayback = false
                     exoPlayer.playWhenReady = true
+                    exoPlayer.play()
                     try { playerFocusRequester.requestFocus() } catch (_: Exception) {}
                 },
                 onCancel = {
                     showResumeDialog = false
                     exoPlayer.seekTo(0)
+                    userPausedPlayback = false
                     exoPlayer.playWhenReady = true
+                    exoPlayer.play()
                     try { playerFocusRequester.requestFocus() } catch (_: Exception) {}
                 }
             )
@@ -1551,12 +1670,9 @@ fun VideoPlayerScreen(
                 onExit = { onBack() },
                 onRetry = {
                     showPlaybackError = false
-                    exoPlayer.stop()
-                    exoPlayer.clearMediaItems()
-                    val mediaItem = MediaItem.fromUri(Uri.parse(channel.streamUrl))
-                    exoPlayer.setMediaItem(mediaItem)
-                    exoPlayer.prepare()
-                    exoPlayer.play()
+                    userPausedPlayback = false
+                    vodRecoveryAttempts = 0
+                    retryVodPlayback()
                 },
                 onPlayNext = if (nextEpisode != null) {
                     {

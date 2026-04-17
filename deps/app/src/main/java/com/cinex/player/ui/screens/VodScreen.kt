@@ -259,11 +259,36 @@ fun VodScreen(
     val firstGridItemFocusRequester = remember { FocusRequester() }
     val firstSortChipFocusRequester = remember { FocusRequester() }
     val areSortChipsVisible = type != "SEARCH" && selectedCategory != "Continuar Assistindo"
+    val focusScope = rememberCoroutineScope()
 
     // CORREÇÃO: Scroll ao topo SOMENTE ao trocar de categoria ou ordenação
     val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
     LaunchedEffect(selectedCategory, currentSort) {
         gridState.scrollToItem(0)
+    }
+
+    fun requestGridFocus() {
+        focusScope.launch {
+            for (delayMs in listOf(0L, 50L, 120L)) {
+                if (delayMs > 0) delay(delayMs)
+                try {
+                    firstGridItemFocusRequester.requestFocus()
+                    return@launch
+                } catch (_: Exception) {}
+            }
+
+            if (gridState.firstVisibleItemIndex != 0) {
+                try { gridState.scrollToItem(0) } catch (_: Exception) {}
+            }
+
+            for (delayMs in listOf(80L, 160L, 260L)) {
+                delay(delayMs)
+                try {
+                    firstGridItemFocusRequester.requestFocus()
+                    return@launch
+                } catch (_: Exception) {}
+            }
+        }
     }
 
     // Restaura foco na categoria selecionada ao entrar na tela ou ao trocar de categoria.
@@ -286,7 +311,7 @@ fun VodScreen(
             kotlinx.coroutines.delay(50L)
             try {
                 if (categories.isNotEmpty()) firstCategoryFocusRequester.requestFocus()
-                else firstGridItemFocusRequester.requestFocus()
+                else requestGridFocus()
             } catch (_: Exception) {}
         }
     }
@@ -327,9 +352,11 @@ fun VodScreen(
             Image(
                 painter = painterResource(id = com.cinex.player.R.drawable.bg_loading),
                 contentDescription = null,
-                modifier = Modifier.fillMaxSize().blur(4.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .then(if (isTv) Modifier.blur(4.dp) else Modifier),
                 contentScale = ContentScale.Crop,
-                alpha = 0.55f
+                alpha = if (isTv) 0.55f else 0.18f
             )
             // Overlay escuro para garantir legibilidade
             Box(
@@ -403,7 +430,7 @@ fun VodScreen(
 
             // Auto-scroll para a categoria selecionada
             LaunchedEffect(selectedCategory, selectedItemOffset) {
-                if (selectedItemOffset > 0) {
+                if (isTv && selectedItemOffset > 0) {
                     val viewportHeight = sidebarScrollState.viewportSize
                     // Centraliza o item selecionado no viewport
                     val targetScroll = (selectedItemOffset - viewportHeight / 3).coerceAtLeast(0)
@@ -425,13 +452,17 @@ fun VodScreen(
                     .padding(start = 16.dp, end = 8.dp, bottom = 16.dp)
                     .clip(RoundedCornerShape(16.dp))
                     .background(Color(0x0DFFFFFF))
-                    .gradientBorder(
-                        brush = Brush.linearGradient(listOf(AccentRed, AccentGold)),
-                        borderWidth = 1.5.dp,
-                        cornerRadius = 16.dp
+                    .then(
+                        if (isTv) {
+                            Modifier.gradientBorder(
+                                brush = Brush.linearGradient(listOf(AccentRed, AccentGold)),
+                                borderWidth = 1.5.dp,
+                                cornerRadius = 16.dp
+                            )
+                        } else Modifier
                     )
                     .padding(vertical = 16.dp)
-                    .verticalScrollbar(sidebarScrollState)
+                    .then(if (isTv) Modifier.verticalScrollbar(sidebarScrollState) else Modifier)
                     .verticalScroll(sidebarScrollState)
                     .padding(horizontal = 16.dp)
             ) {
@@ -456,11 +487,13 @@ fun VodScreen(
                 if (continueWatching.isNotEmpty()) {
                     val isContinueSelected = selectedCategory == "Continuar Assistindo"
                     Box(
-                        modifier = Modifier.onGloballyPositioned { coords ->
-                            if (isContinueSelected) {
-                                selectedItemOffset = coords.positionInParent().y.toInt()
+                        modifier = if (isTv) {
+                            Modifier.onGloballyPositioned { coords ->
+                                if (isContinueSelected) {
+                                    selectedItemOffset = coords.positionInParent().y.toInt()
+                                }
                             }
-                        }
+                        } else Modifier
                     ) {
                         CategoryItem(
                             name = "Continue Assistindo",
@@ -475,7 +508,7 @@ fun VodScreen(
                                     .then(if (isContinueSelected) Modifier.focusRequester(selectedCatFocusRequester) else Modifier)
                                     .onKeyEvent { event ->
                                         if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
-                                            try { firstGridItemFocusRequester.requestFocus() } catch (_: Exception) {}
+                                            requestGridFocus()
                                             true
                                         } else false
                                     }
@@ -494,11 +527,13 @@ fun VodScreen(
                         else       -> counts[category.id] ?: 0
                     }
                     Box(
-                        modifier = Modifier.onGloballyPositioned { coords ->
-                            if (isSelected) {
-                                selectedItemOffset = coords.positionInParent().y.toInt()
+                        modifier = if (isTv) {
+                            Modifier.onGloballyPositioned { coords ->
+                                if (isSelected) {
+                                    selectedItemOffset = coords.positionInParent().y.toInt()
+                                }
                             }
-                        }
+                        } else Modifier
                     ) {
                         CategoryItem(
                             name = category.name,
@@ -519,7 +554,7 @@ fun VodScreen(
                                     .then(if (isSelected) Modifier.focusRequester(selectedCatFocusRequester) else Modifier)
                                     .onKeyEvent { event ->
                                         if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionRight) {
-                                            try { firstGridItemFocusRequester.requestFocus() } catch (_: Exception) {}
+                                            requestGridFocus()
                                             true
                                         } else false
                                     }
@@ -562,7 +597,7 @@ fun VodScreen(
                                             .then(if (idx == 0) Modifier.focusRequester(firstSortChipFocusRequester) else Modifier)
                                             .onKeyEvent { event ->
                                                 if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown) {
-                                                    try { firstGridItemFocusRequester.requestFocus() } catch (_: Exception) {}
+                                                    requestGridFocus()
                                                     true
                                                 } else false
                                             }
@@ -708,8 +743,8 @@ fun VodScreen(
             // sem reiniciar, e o snapshotFlow filtra por faixa visível (não por frame).
             // OTIMIZAÇÃO: debounce reduzido de 350ms para 150ms para resposta mais rápida
             val latestTvChannels by rememberUpdatedState(tvChannels)
-            LaunchedEffect(gridState, useTvMemory) {
-                if (!useTvMemory) return@LaunchedEffect
+            LaunchedEffect(gridState, useTvMemory, isTv) {
+                if (!useTvMemory || !isTv) return@LaunchedEffect
 
                 snapshotFlow {
                     val info = gridState.layoutInfo

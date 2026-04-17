@@ -152,14 +152,15 @@ object AppModule {
     @Named("vod")
     fun provideVodPlayer(app: Application): ExoPlayer {
         val loadControl = DefaultLoadControl.Builder()
-            .setBufferDurationsMs(15_000, 50_000, 2_000, 5_000)
+            .setBufferDurationsMs(20_000, 90_000, 1_500, 4_000)
             .setPrioritizeTimeOverSizeThresholds(true)
             .build()
 
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setConnectTimeoutMs(20_000)
-            .setReadTimeoutMs(20_000)
+            .setReadTimeoutMs(30_000)
             .setAllowCrossProtocolRedirects(true)
+            .setKeepPostFor302Redirects(true)
             .setUserAgent("CineXPlayer/1.0")
 
         val mediaSourceFactory = DefaultMediaSourceFactory(httpDataSourceFactory)

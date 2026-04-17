@@ -170,7 +170,7 @@ fun VodPosterItem(
             val imageRequest = remember(imageUrl, isTv) {
                 coil.request.ImageRequest.Builder(context)
                     .data(imageUrl)
-                    .crossfade(if (isTv) 0 else 300)
+                    .crossfade(if (isTv) 0 else 120)
                     .memoryCacheKey(imageUrl)
                     .diskCacheKey(imageUrl)
                     .size(cellPx, cellHeightPx)

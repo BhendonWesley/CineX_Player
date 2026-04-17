@@ -2098,96 +2098,222 @@ class ChannelRepository @Inject constructor(
             val scheme = uri.scheme
             val port = uri.port
 
-            if (username != null && password != null && host != null) {
-                val baseUrl = "$scheme://$host${if (port != -1) ":$port" else ""}/"
-                val gson = com.google.gson.GsonBuilder()
-                    .setLenient()
-                    .registerTypeAdapter(
-                        EpisodeExtraInfo::class.java,
-                        com.google.gson.JsonDeserializer<EpisodeExtraInfo?> { json, _, _ ->
-                            // Xtream APIs frequentemente retornam info como "" ao invés de objeto
-                            if (json == null || json.isJsonNull || !json.isJsonObject) {
-                                null
-                            } else {
-                                val obj = json.asJsonObject
-                                fun readString(key: String): String? {
-                                    val value = obj.get(key) ?: return null
-                                    if (value.isJsonNull || !value.isJsonPrimitive) return null
-                                    val text = value.asString ?: return null
-                                    return text.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
-                                }
+            if (username == null || password == null || host == null) return@withContext
 
-                                EpisodeExtraInfo(
-                                    movie_image = readString("movie_image"),
-                                    plot = readString("plot"),
-                                    duration = readString("duration"),
-                                    release_date = readString("release_date"),
-                                    rating = readString("rating")
-                                )
-                            }
+            val baseUrl = "$scheme://$host${if (port != -1) ":$port" else ""}/"
+            val fetchUrl = "${baseUrl}player_api.php?username=$username&password=$password&action=get_series_info&series_id=$seriesId"
+
+            // Cliente dedicado: callTimeout garante tempo TOTAL máximo (readTimeout é só por pacote)
+            val seriesClient = okHttpClient.newBuilder()
+                .callTimeout(45, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            val request = Request.Builder().url(fetchUrl).build()
+
+            // Preservar progresso/imagens existentes antes de inserir
+            val existingEpisodes = channelDao.getEpisodesForSeriesList(seriesName, url)
+                .associateBy { it.remoteId }
+
+            seriesClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext
+                val body = response.body ?: return@withContext
+
+                // Streaming parser: processa o JSON conforme os bytes chegam, insere cada
+                // temporada no banco assim que terminar de lê-la. O Room emite no Flow e
+                // a UI mostra a primeira temporada em poucos segundos — não precisa esperar
+                // o JSON inteiro (AHS tem ~12 temporadas / 150+ episódios).
+                val reader = com.google.gson.stream.JsonReader(body.charStream().buffered())
+                reader.isLenient = true
+
+                try {
+                    if (reader.peek() != com.google.gson.stream.JsonToken.BEGIN_OBJECT) return@withContext
+                    reader.beginObject()
+
+                    while (reader.hasNext()) {
+                        val name = try { reader.nextName() } catch (_: Exception) {
+                            try { reader.skipValue() } catch (_: Exception) {}
+                            continue
                         }
-                    )
-                    .create()
-                // Cliente dedicado para busca de episódios: callTimeout garante tempo TOTAL máximo
-                // (readTimeout é por pacote e não resolve servidores que enviam dados lentamente)
-                val seriesClient = okHttpClient.newBuilder()
-                    .callTimeout(45, java.util.concurrent.TimeUnit.SECONDS)
-                    .build()
-                val api = Retrofit.Builder()
-                    .baseUrl(baseUrl)
-                    .client(seriesClient)
-                    .addConverterFactory(GsonConverterFactory.create(gson))
-                    .build()
-                    .create(XtreamCodesApi::class.java)
-
-                val response = api.getSeriesInfo(username, password, seriesId)
-
-                // Preservar dados do usuário (progresso) e imagens existentes
-                val existingEpisodes = channelDao.getEpisodesForSeriesList(seriesName, url)
-                    .associateBy { it.remoteId }
-
-                // Monta TODOS os episódios de TODAS as temporadas numa única lista
-                // e faz um único insertAll — o Room emite apenas UMA vez para o Flow,
-                // fazendo todas as temporadas aparecerem simultaneamente na UI.
-                val allChannels = mutableListOf<Channel>()
-                response.episodes?.forEach { (seasonNumStr, episodeList) ->
-                    val seasonNum = seasonNumStr.toIntOrNull() ?: 1
-                    episodeList.forEach { ep ->
-                        val remoteId = "series_ep_${ep.id}"
-                        val old = existingEpisodes[remoteId]
-                        val apiImage = ep.info?.movie_image?.takeIf { it.isNotBlank() }
-                        allChannels.add(Channel(
-                            name = ep.title,
-                            logoUrl = apiImage ?: old?.logoUrl,
-                            groupTitle = "Episódios",
-                            categoryId = "series_$seriesId",
-                            streamUrl = "${baseUrl}series/$username/$password/${ep.id}.${ep.container_extension ?: "mp4"}",
-                            category = "SERIES",
-                            seriesName = seriesName,
-                            seasonNumber = seasonNum,
-                            episodeNumber = ep.episode_num,
-                            playlistUrl = url,
-                            remoteId = remoteId,
-                            tmdbSynopsis = ep.info?.plot ?: old?.tmdbSynopsis,
-                            tmdbRating = ep.info?.rating?.toDoubleOrNull() ?: old?.tmdbRating,
-                            tmdbYear = ep.info?.release_date?.take(4) ?: old?.tmdbYear,
-                            posterUrl = old?.posterUrl,
-                            bannerUrl = old?.bannerUrl,
-                            resumePosition = old?.resumePosition ?: 0L,
-                            totalDuration = old?.totalDuration ?: 0L,
-                            isFavorite = old?.isFavorite ?: false
-                        ))
+                        if (name == "episodes" && reader.peek() == com.google.gson.stream.JsonToken.BEGIN_OBJECT) {
+                            reader.beginObject()
+                            while (reader.hasNext()) {
+                                val seasonKey = try { reader.nextName() } catch (_: Exception) {
+                                    try { reader.skipValue() } catch (_: Exception) {}
+                                    continue
+                                }
+                                val seasonNum = seasonKey.toIntOrNull() ?: 1
+                                if (reader.peek() != com.google.gson.stream.JsonToken.BEGIN_ARRAY) {
+                                    try { reader.skipValue() } catch (_: Exception) {}
+                                    continue
+                                }
+                                reader.beginArray()
+                                val seasonChannels = ArrayList<Channel>()
+                                while (reader.hasNext()) {
+                                    val ch = parseEpisodeToChannel(
+                                        reader = reader,
+                                        seriesId = seriesId,
+                                        seriesName = seriesName,
+                                        seasonNum = seasonNum,
+                                        baseUrl = baseUrl,
+                                        username = username,
+                                        password = password,
+                                        playlistUrl = url,
+                                        existingEpisodes = existingEpisodes
+                                    )
+                                    if (ch != null) seasonChannels.add(ch)
+                                }
+                                try { reader.endArray() } catch (_: Exception) {}
+                                // Insert por temporada → Flow emite imediatamente → UI aparece
+                                if (seasonChannels.isNotEmpty()) {
+                                    channelDao.insertAll(seasonChannels)
+                                }
+                            }
+                            try { reader.endObject() } catch (_: Exception) {}
+                        } else {
+                            try { reader.skipValue() } catch (_: Exception) {}
+                        }
                     }
+                    try { reader.endObject() } catch (_: Exception) {}
+                } finally {
+                    try { reader.close() } catch (_: Exception) {}
                 }
-                // Insert único: Room dispara o Flow uma só vez → todas as temporadas aparecem juntas
-                if (allChannels.isNotEmpty()) {
-                    channelDao.insertAllInTransaction(allChannels)
-                }
+
                 // Grava timestamp de sucesso para controle de TTL
                 seriesEpisodesFetchedAt[seriesName] = System.currentTimeMillis()
             }
         } catch (e: Exception) {
             e.printStackTrace()
+        }
+    }
+
+    /**
+     * Lê UM objeto-episódio do JsonReader (streaming) e mapeia para Channel.
+     * Tolera campos ausentes/malformados — pula o que não entende.
+     */
+    private fun parseEpisodeToChannel(
+        reader: com.google.gson.stream.JsonReader,
+        seriesId: Int,
+        seriesName: String,
+        seasonNum: Int,
+        baseUrl: String,
+        username: String,
+        password: String,
+        playlistUrl: String,
+        existingEpisodes: Map<String, Channel>
+    ): Channel? {
+        if (reader.peek() != com.google.gson.stream.JsonToken.BEGIN_OBJECT) {
+            try { reader.skipValue() } catch (_: Exception) {}
+            return null
+        }
+        var id: String? = null
+        var title: String = ""
+        var episodeNum: Int = 0
+        var containerExt: String? = "mp4"
+        var movieImage: String? = null
+        var plot: String? = null
+        var rating: String? = null
+        var releaseDate: String? = null
+
+        try {
+            reader.beginObject()
+            while (reader.hasNext()) {
+                val field = try { reader.nextName() } catch (_: Exception) {
+                    try { reader.skipValue() } catch (_: Exception) {}
+                    continue
+                }
+                try {
+                    when (field) {
+                        "id" -> id = readStringLoose(reader)
+                        "title" -> title = readStringLoose(reader) ?: ""
+                        "episode_num" -> episodeNum = readIntLoose(reader)
+                        "container_extension" -> containerExt = readStringLoose(reader) ?: "mp4"
+                        "info" -> {
+                            if (reader.peek() == com.google.gson.stream.JsonToken.BEGIN_OBJECT) {
+                                reader.beginObject()
+                                while (reader.hasNext()) {
+                                    val infoField = try { reader.nextName() } catch (_: Exception) {
+                                        try { reader.skipValue() } catch (_: Exception) {}
+                                        continue
+                                    }
+                                    when (infoField) {
+                                        "movie_image" -> movieImage = readStringLoose(reader)
+                                        "plot" -> plot = readStringLoose(reader)
+                                        "rating" -> rating = readStringLoose(reader)
+                                        "release_date" -> releaseDate = readStringLoose(reader)
+                                        else -> try { reader.skipValue() } catch (_: Exception) {}
+                                    }
+                                }
+                                try { reader.endObject() } catch (_: Exception) {}
+                            } else {
+                                try { reader.skipValue() } catch (_: Exception) {}
+                            }
+                        }
+                        else -> try { reader.skipValue() } catch (_: Exception) {}
+                    }
+                } catch (_: Exception) {
+                    try { reader.skipValue() } catch (_: Exception) {}
+                }
+            }
+            try { reader.endObject() } catch (_: Exception) {}
+        } catch (_: Exception) {
+            return null
+        }
+
+        val epId = id ?: return null
+        val remoteId = "series_ep_$epId"
+        val old = existingEpisodes[remoteId]
+        val apiImage = movieImage?.takeIf { it.isNotBlank() }
+        return Channel(
+            name = title,
+            logoUrl = apiImage ?: old?.logoUrl,
+            groupTitle = "Episódios",
+            categoryId = "series_$seriesId",
+            streamUrl = "${baseUrl}series/$username/$password/$epId.${containerExt ?: "mp4"}",
+            category = "SERIES",
+            seriesName = seriesName,
+            seasonNumber = seasonNum,
+            episodeNumber = episodeNum,
+            playlistUrl = playlistUrl,
+            remoteId = remoteId,
+            tmdbSynopsis = plot ?: old?.tmdbSynopsis,
+            tmdbRating = rating?.toDoubleOrNull() ?: old?.tmdbRating,
+            tmdbYear = releaseDate?.take(4) ?: old?.tmdbYear,
+            posterUrl = old?.posterUrl,
+            bannerUrl = old?.bannerUrl,
+            resumePosition = old?.resumePosition ?: 0L,
+            totalDuration = old?.totalDuration ?: 0L,
+            isFavorite = old?.isFavorite ?: false
+        )
+    }
+
+    private fun readStringLoose(reader: com.google.gson.stream.JsonReader): String? {
+        return try {
+            when (reader.peek()) {
+                com.google.gson.stream.JsonToken.STRING -> {
+                    val s = reader.nextString()
+                    s.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+                }
+                com.google.gson.stream.JsonToken.NUMBER -> reader.nextString()
+                com.google.gson.stream.JsonToken.BOOLEAN -> reader.nextBoolean().toString()
+                com.google.gson.stream.JsonToken.NULL -> { reader.nextNull(); null }
+                else -> { reader.skipValue(); null }
+            }
+        } catch (_: Exception) {
+            try { reader.skipValue() } catch (_: Exception) {}
+            null
+        }
+    }
+
+    private fun readIntLoose(reader: com.google.gson.stream.JsonReader): Int {
+        return try {
+            when (reader.peek()) {
+                com.google.gson.stream.JsonToken.NUMBER -> reader.nextInt()
+                com.google.gson.stream.JsonToken.STRING -> reader.nextString().toIntOrNull() ?: 0
+                com.google.gson.stream.JsonToken.NULL -> { reader.nextNull(); 0 }
+                else -> { reader.skipValue(); 0 }
+            }
+        } catch (_: Exception) {
+            try { reader.skipValue() } catch (_: Exception) {}
+            0
         }
     }
 

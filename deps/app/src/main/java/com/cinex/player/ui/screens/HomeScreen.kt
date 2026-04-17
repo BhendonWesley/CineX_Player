@@ -65,6 +65,10 @@ fun HomeScreen(
     var isFirstBannerReady by remember { mutableStateOf(isHomeReady) }
     var showAccountDialog by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val isTv = remember {
+        val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
+        uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    }
 
     // Prioriza filmes/séries com banner TMDB de alta qualidade (/original/) + sinopse
     // Cai para posterUrl do Xtream SOMENTE se a lista de qualidade for menor que 3
@@ -221,10 +225,6 @@ fun HomeScreen(
                 )
 
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    val isTv = remember {
-                        val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
-                        uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
-                    }
                     val initialFocusRequester = remember { FocusRequester() }
 
                     LaunchedEffect(isTv, isActive) {
@@ -259,6 +259,12 @@ private fun HeroBackdrop(
     isActive: Boolean = true,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val isTv = remember {
+        val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
+        uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    }
+
     Box(modifier = modifier) {
         if (movies.isEmpty()) {
             Box(
@@ -282,9 +288,9 @@ private fun HeroBackdrop(
 
             // Ken Burns: fora do AnimatedContent para não resetar/jankar ao trocar de item
             val scale = remember { Animatable(1f) }
-            val panX = remember { Animatable(-20f) }
-            LaunchedEffect(isActive) {
-                if (isActive) {
+            val panX = remember { Animatable(0f) }
+            LaunchedEffect(isActive, isTv) {
+                if (isActive && isTv) {
                     launch {
                         try {
                             while (true) {
@@ -328,12 +334,12 @@ private fun HeroBackdrop(
                 }
 
                 AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current)
+                    model = ImageRequest.Builder(context)
                         .data(imageUrl)
-                        .size(1920, 1080)  // Full HD real para backdrops landscape
+                        .size(if (isTv) 1920 else 960, if (isTv) 1080 else 540)
                         .diskCacheKey(imageUrl)
                         .memoryCacheKey(imageUrl)
-                        .crossfade(800)
+                        .crossfade(if (isTv) 800 else 250)
                         .build(),
                     contentDescription = null,
                     modifier = Modifier

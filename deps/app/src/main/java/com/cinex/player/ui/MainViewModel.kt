@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -1119,8 +1120,21 @@ class MainViewModel @Inject constructor(
                     // Cache hit: abre imediatamente, revalida TTL em background sem bloquear a UI
                     repository.refreshSeriesInBackground(seriesId, seriesName)
                 } else {
-                    // Sem cache: busca episódios — só mostra loading se chamado explicitamente pelo usuário
+                    // Sem cache: busca episódios — só mostra loading se chamado explicitamente pelo usuário.
+                    // Como o fetch agora insere por temporada (streaming), libera o loading assim que
+                    // a primeira temporada estiver no banco — usuário já pode navegar.
                     if (showLoading) _isLoadingEpisodes.value = true
+                    val releaser = if (showLoading) {
+                        launch {
+                            while (isActive) {
+                                kotlinx.coroutines.delay(200L)
+                                if (repository.hasEpisodesForSeries(seriesName)) {
+                                    _isLoadingEpisodes.value = false
+                                    break
+                                }
+                            }
+                        }
+                    } else null
                     try {
                         if (seriesId != -1) {
                             kotlinx.coroutines.withTimeout(50_000L) {
@@ -1129,6 +1143,7 @@ class MainViewModel @Inject constructor(
                         }
                     } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
                     } finally {
+                        releaser?.cancel()
                         if (showLoading) _isLoadingEpisodes.value = false
                     }
                 }

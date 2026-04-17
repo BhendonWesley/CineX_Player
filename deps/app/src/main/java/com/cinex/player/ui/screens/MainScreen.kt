@@ -31,6 +31,7 @@ import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -54,6 +55,12 @@ fun MainScreen(
     modifier: Modifier = Modifier,
     viewModel: MainViewModel = hiltViewModel()
 ) {
+    val context = LocalContext.current
+    val isTv = remember {
+        val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
+        uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    }
+
     var selectedTab by remember { mutableStateOf(0) }
     var navDownTrigger by remember { mutableStateOf(0) }
 
@@ -291,7 +298,7 @@ fun MainScreen(
                     .then(if (selectedTab != tabIndex || searchQuery.isNotEmpty()) Modifier.size(0.dp) else Modifier.fillMaxSize())
 
                 Box(modifier = Modifier.fillMaxSize()) {
-                    Box(modifier = Modifier.tabVisibility(0)) {
+                    if (isTv || selectedTab == 0) Box(modifier = if (isTv) Modifier.tabVisibility(0) else Modifier.fillMaxSize()) {
                         HomeScreen(
                             featuredMovies = featuredMovies,
                             isHomeReady = isHomeReady,
@@ -304,7 +311,7 @@ fun MainScreen(
                             isActive = selectedTab == 0
                         )
                     }
-                    Box(modifier = Modifier.tabVisibility(1)) {
+                    if (isTv || selectedTab == 1) Box(modifier = if (isTv) Modifier.tabVisibility(1) else Modifier.fillMaxSize()) {
                         LiveTvScreen(
                             viewModel = viewModel,
                             onChannelExpand = { playingChannel = it },
@@ -312,7 +319,7 @@ fun MainScreen(
                             navDownTrigger = navDownTrigger
                         )
                     }
-                    Box(modifier = Modifier.tabVisibility(2)) {
+                    if (isTv || selectedTab == 2) Box(modifier = if (isTv) Modifier.tabVisibility(2) else Modifier.fillMaxSize()) {
                         VodScreen(
                             type = "MOVIE",
                             viewModel = viewModel,
@@ -324,7 +331,7 @@ fun MainScreen(
                             navDownTrigger = navDownTrigger
                         )
                     }
-                    Box(modifier = Modifier.tabVisibility(3)) {
+                    if (isTv || selectedTab == 3) Box(modifier = if (isTv) Modifier.tabVisibility(3) else Modifier.fillMaxSize()) {
                         VodScreen(
                             type = "SERIES",
                             viewModel = viewModel,
@@ -452,8 +459,6 @@ fun MainScreen(
         )
         } // fim Box
     } // fim else
-
-    val context = androidx.compose.ui.platform.LocalContext.current
 
     if (showExitDialog) {
         PlayerDialog(
