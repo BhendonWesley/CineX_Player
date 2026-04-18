@@ -3,6 +3,44 @@ param(
     [string]$Message
 )
 
+$ErrorActionPreference = "Stop"
+
+function Get-PreferredJavaHome {
+    $candidates = @()
+
+    if ($env:JAVA_HOME) {
+        $candidates += $env:JAVA_HOME
+    }
+
+    $candidates += @(
+        "C:\Program Files\Android\Android Studio1\jbr",
+        "C:\Program Files\Android\Android Studio\jbr"
+    )
+
+    foreach ($candidate in $candidates) {
+        if (-not $candidate) {
+            continue
+        }
+
+        $javaExe = Join-Path $candidate "bin\java.exe"
+        if (Test-Path $javaExe) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
+function Assert-LastExitCode {
+    param(
+        [string]$StepName
+    )
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "$StepName falhou com codigo $LASTEXITCODE."
+    }
+}
+
 if (-not $Version) {
     Write-Host ""
     Write-Host "========================================="
@@ -43,8 +81,24 @@ Write-Host "  versionCode: $versionCode"
 Write-Host "========================================="
 Write-Host ""
 
+$javaHome = Get-PreferredJavaHome
+if ($javaHome) {
+    $env:JAVA_HOME = $javaHome
+    $env:PATH = "$javaHome\bin;$env:PATH"
+    Write-Host "[env] JAVA_HOME configurado para: $javaHome"
+} else {
+    Write-Host "[env] JAVA_HOME nao encontrado automaticamente. Usando o Java atual do sistema."
+}
+
+$env:GRADLE_USER_HOME = Join-Path $PSScriptRoot "deps\.gradle-user"
+if (-not (Test-Path $env:GRADLE_USER_HOME)) {
+    New-Item -ItemType Directory -Path $env:GRADLE_USER_HOME | Out-Null
+}
+Write-Host "[env] GRADLE_USER_HOME: $env:GRADLE_USER_HOME"
+Write-Host ""
+
 # 1. Atualiza versao no build.gradle.kts
-Write-Host "[1/7] Atualizando versao no build.gradle.kts..."
+Write-Host "[1/8] Atualizando versao no build.gradle.kts..."
 $gradlePath = "deps\app\build.gradle.kts"
 $content = Get-Content $gradlePath -Raw
 $content = $content -replace 'versionCode = \d+', "versionCode = $versionCode"
@@ -55,42 +109,65 @@ Write-Host "  versionCode = $versionCode"
 Write-Host ""
 
 # 2. Salva as notas de release no arquivo
-Write-Host "[2/7] Salvando notas de release..."
+Write-Host "[2/8] Salvando notas de release..."
 $releaseNotes = $Message -replace ";", "`n"
 Set-Content "RELEASE_NOTES.txt" $releaseNotes -NoNewline
 Write-Host "  Notas: $Message"
 Write-Host ""
 
-# 3. Mostra o que mudou
-Write-Host "[3/7] Verificando alteracoes..."
+# 3. Valida o build antes de commitar e criar tag
+Write-Host "[3/8] Validando build local..."
+Push-Location "deps"
+& ".\gradlew.bat" "app:assembleDebug" "--no-daemon"
+$buildExitCode = $LASTEXITCODE
+Pop-Location
+
+if ($buildExitCode -ne 0) {
+    Write-Host ""
+    Write-Host "Build falhou. Release cancelado antes de commitar, criar tag ou enviar para o GitHub."
+    exit $buildExitCode
+}
+
+Write-Host "  Build OK."
+Write-Host ""
+
+# 4. Mostra o que mudou
+Write-Host "[4/8] Verificando alteracoes..."
 git status --short
 Write-Host ""
 
-# 4. Confirma
+# 5. Confirma
 $confirm = Read-Host "Deseja continuar com o release v$Version? (s/n)"
 if ($confirm -ne "s") {
     Write-Host "Release cancelado."
     exit 0
 }
 
-# 5. Adiciona e commita
+# 6. Adiciona e commita
 Write-Host ""
-Write-Host "[4/7] Commitando alteracoes..."
+Write-Host "[5/8] Commitando alteracoes..."
 git add -A
+Assert-LastExitCode "git add"
 git commit -m "release: v$Version"
+Assert-LastExitCode "git commit"
 
-# 6. Cria a tag
+# 7. Cria a tag
 Write-Host ""
-Write-Host "[5/7] Criando tag v$Version..."
+Write-Host "[6/8] Criando tag v$Version..."
+if (git rev-parse "v$Version" 2>$null) {
+    throw "A tag v$Version ja existe. Apague a tag antiga antes de continuar."
+}
 git tag "v$Version"
+Assert-LastExitCode "git tag"
 
-# 7. Push
+# 8. Push
 Write-Host ""
-Write-Host "[6/7] Enviando para o GitHub..."
+Write-Host "[7/8] Enviando para o GitHub..."
 git push origin main --tags
+Assert-LastExitCode "git push"
 
 Write-Host ""
-Write-Host "[7/7] Pronto!"
+Write-Host "[8/8] Pronto!"
 Write-Host ""
 Write-Host "========================================="
 Write-Host "  Release v$Version enviado!"

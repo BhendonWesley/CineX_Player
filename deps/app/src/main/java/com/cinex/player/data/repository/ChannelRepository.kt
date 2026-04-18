@@ -2,6 +2,7 @@ package com.cinex.player.data.repository
 
 import com.cinex.player.data.local.ChannelDao
 import com.cinex.player.data.model.Channel
+import com.cinex.player.data.model.ChannelTmdbMetadata
 import com.cinex.player.data.network.TmdbApi
 import com.cinex.player.data.parser.M3UParser
 import kotlinx.coroutines.CoroutineScope
@@ -42,6 +43,7 @@ import javax.inject.Singleton
 @Singleton
 class ChannelRepository @Inject constructor(
     private val channelDao: ChannelDao,
+    private val channelTmdbDao: com.cinex.player.data.local.ChannelTmdbDao,
     private val playlistDao: com.cinex.player.data.local.PlaylistDao,
     private val categoryDao: com.cinex.player.data.local.CategoryDao,
     private val parser: M3UParser,
@@ -192,8 +194,20 @@ class ChannelRepository @Inject constructor(
 
     fun activatePlaylist(url: String) {
         _activePlaylistUrl.value = url
-        // Enriquecimento lazy: feito por demanda via onChannelVisible no ViewModel
-        // O enriquecimento em massa acontece apenas durante syncPlaylist (primeiro uso)
+        // Aplica TMDB staging → channels em background, uma única vez ao ativar a playlist.
+        // Isso garante que o usuário veja dados enriquecidos sem writes durante navegação.
+        repositoryScope.launch {
+            applyTmdbMetadataToChannels(url)
+        }
+    }
+
+    suspend fun applyTmdbMetadataToChannels(url: String) = withContext(Dispatchers.IO) {
+        val count = channelTmdbDao.countForPlaylist(url)
+        if (count > 0) {
+            android.util.Log.d("CineX-TMDB", "Aplicando $count metadados TMDB → channels (batch)")
+            channelTmdbDao.applyToChannels(url)
+            android.util.Log.d("CineX-TMDB", "Batch TMDB apply concluído")
+        }
     }
 
     fun observeAllLiveChannels(): Flow<List<Channel>> {
@@ -442,6 +456,44 @@ class ChannelRepository @Inject constructor(
     }
 
     /**
+     * Enriquecimento battery-friendly: chamado pelo WorkManager com bateria alta.
+     * Sem delay artificial (WorkManager já garante que roda com bateria OK).
+     */
+    suspend fun runBatteryFriendlyEnrichment(url: String) = withContext(Dispatchers.IO) {
+        if (isTv) {
+            applyTmdbMetadataToChannels(url)
+            return@withContext
+        }
+        val moviesToEnrich = channelDao.getMoviesToEnrich(url).take(300)
+        val seriesToEnrich = channelDao.getSeriesToEnrich(url).take(200)
+        (moviesToEnrich + seriesToEnrich).forEach { channel ->
+            enrichChannelWithTmdb(channel)
+        }
+        flushTmdbCacheQueue()
+        applyTmdbMetadataToChannels(url)
+    }
+
+    fun scheduleEnrichmentWork(context: android.content.Context, playlistUrl: String) {
+        val constraints = androidx.work.Constraints.Builder()
+            .setRequiresBatteryNotLow(true)
+            .setRequiredNetworkType(androidx.work.NetworkType.CONNECTED)
+            .build()
+        val request = androidx.work.OneTimeWorkRequestBuilder<com.cinex.player.data.worker.TmdbEnrichWorker>()
+            .setInputData(
+                androidx.work.workDataOf("playlist_url" to playlistUrl)
+            )
+            .setConstraints(constraints)
+            .addTag(com.cinex.player.data.worker.TmdbEnrichWorker.TAG)
+            .build()
+        androidx.work.WorkManager.getInstance(context)
+            .enqueueUniqueWork(
+                "tmdb_enrich_$playlistUrl",
+                androidx.work.ExistingWorkPolicy.KEEP,
+                request
+            )
+    }
+
+    /**
      * OTIMIZAÇÃO: Garante que a Home tenha pelo menos minFeatured banners antes de retornar.
      * Agora AGUARDA o enriquecimento completar antes de verificar o resultado.
      * Antes: lançava corrotinas e verificava imediatamente (sempre via 0 itens).
@@ -475,6 +527,9 @@ class ChannelRepository @Inject constructor(
                     launch { enrichChannelWithTmdb(channel) }
                 }
             }
+
+            // Aplica dados da staging table para channels antes de verificar featured content
+            applyTmdbMetadataToChannels(url)
 
             // Agora sim verifica - os dados TMDB já estão no banco
             featuredCount = channelDao.getFeaturedContent(url).first().size
@@ -688,6 +743,12 @@ class ChannelRepository @Inject constructor(
         url: String,
         onProgress: (livePct: Int, moviePct: Int, seriesPct: Int, status: String) -> Unit
     ) {
+        // TV não faz enriquecimento TMDB — CPU/RAM limitada, IBO não usa TMDB.
+        // Dados do servidor já bastam. Aplica apenas metadados já em cache (staging table).
+        if (isTv) {
+            repositoryScope.launch { applyTmdbMetadataToChannels(url) }
+            return
+        }
         repositoryScope.launch {
             // === PRIORIDADE 1: Seed rápido da Home (3-5 filmes com TMDB) ===
             // Isso faz os banners aparecerem na Home poucos segundos após o app abrir
@@ -759,6 +820,9 @@ class ChannelRepository @Inject constructor(
             }
 
             flushTmdbCacheQueue()
+            // Aplica todos os metadados coletados em batch para channels — uma única write grande
+            // em vez de N writes individuais durante o enriquecimento
+            applyTmdbMetadataToChannels(url)
         }
     }
 
@@ -1596,38 +1660,19 @@ class ChannelRepository @Inject constructor(
             }
             if (cached != null && (cached.posterUrl != null || cached.synopsis != null)) {
                 android.util.Log.d("CineX-Cache", "[HIT] '$cacheKey' → poster=${cached.posterUrl != null}")
-                if (channel.category == "SERIES" && channel.seriesName != null) {
-                    channelDao.updateTmdbInfo(
-                        channel.id,
-                        cached.rating,
-                        cached.synopsis,
-                        cached.posterUrl,
-                        cached.bannerUrl,
-                        cached.year,
-                        cached.castMembers,
-                        cached.trailerUrl
+                channelTmdbDao.upsert(
+                    ChannelTmdbMetadata(
+                        remoteId = channel.remoteId,
+                        playlistUrl = channel.playlistUrl,
+                        tmdbRating = cached.rating,
+                        tmdbSynopsis = cached.synopsis,
+                        posterUrl = cached.posterUrl,
+                        bannerUrl = cached.bannerUrl,
+                        tmdbYear = cached.year,
+                        castMembers = cached.castMembers,
+                        trailerUrl = cached.trailerUrl
                     )
-                    channelDao.propagateSeriesBackdrop(
-                        channel.seriesName!!,
-                        channel.playlistUrl,
-                        cached.rating,
-                        cached.posterUrl,
-                        cached.bannerUrl,
-                        cached.year,
-                        cached.castMembers
-                    )
-                } else {
-                    channelDao.updateTmdbInfo(
-                        channel.id,
-                        cached.rating,
-                        cached.synopsis,
-                        cached.posterUrl,
-                        cached.bannerUrl,
-                        cached.year,
-                        cached.castMembers,
-                        cached.trailerUrl
-                    )
-                }
+                )
                 return@withContext
             }
             // === END CACHE CHECK ===
@@ -1747,46 +1792,22 @@ class ChannelRepository @Inject constructor(
                 }
                 val trailerUrl = pickBestTrailer(allVideos)
 
-                if (channel.category == "SERIES" && channel.seriesName != null) {
-                    // Atualiza o canal representativo da série
-                    channelDao.updateTmdbInfo(
-                        channel.id,
-                        tmdbResult.vote_average,
-                        details.overview,
-                        posterUrl,
-                        backdropUrl,
-                        year,
-                        cast,
-                        trailerUrl
+                // Escreve na tabela de staging — não invalida o PagingSource de channels.
+                // Os dados são aplicados em batch para channels via applyTmdbMetadataToChannels()
+                // chamado em activatePlaylist, não durante a navegação.
+                channelTmdbDao.upsert(
+                    ChannelTmdbMetadata(
+                        remoteId = channel.remoteId,
+                        playlistUrl = channel.playlistUrl,
+                        tmdbRating = tmdbResult.vote_average,
+                        tmdbSynopsis = details.overview,
+                        posterUrl = posterUrl,
+                        bannerUrl = backdropUrl,
+                        tmdbYear = year,
+                        castMembers = cast,
+                        trailerUrl = trailerUrl
                     )
-                    // Propaga backdrop e poster para TODOS os episódios da série
-                    // (garante que getFeaturedContent sempre encontre /original/ em qualquer linha do grupo)
-                    channelDao.propagateSeriesBackdrop(
-                        channel.seriesName!!,
-                        channel.playlistUrl,
-                        tmdbResult.vote_average,
-                        posterUrl,
-                        backdropUrl,
-                        year,
-                        cast
-                    )
-
-                    // NOTA: thumbnails/sinopses por episódio são carregados lazy em
-                    // enrichSeriesSeasonWithTmdb() quando o usuário abre uma temporada.
-                    // Manter o loop aqui gerava 1 write por episódio (centenas por série),
-                    // disparando re-emissões de observeAllSeries() e travando a TV.
-                } else {
-                    channelDao.updateTmdbInfo(
-                        channel.id,
-                        tmdbResult.vote_average,
-                        details.overview,
-                        posterUrl,
-                        backdropUrl,
-                        year,
-                        cast,
-                        trailerUrl
-                    )
-                }
+                )
 
                 // === SALVAR NO CACHE SUPABASE ===
                 val cacheEntry = TmdbCacheEntry(
@@ -1885,25 +1906,18 @@ class ChannelRepository @Inject constructor(
             }
             val trailerUrl = pickBestTrailer(allVideos)
 
-            channelDao.updateTmdbInfo(
-                channel.id,
-                tmdbResult.vote_average,
-                details.overview,
-                posterUrl,
-                backdropUrl,
-                year,
-                cast,
-                trailerUrl
-            )
-
-            channelDao.propagateSeriesBackdrop(
-                channel.seriesName!!,
-                channel.playlistUrl,
-                tmdbResult.vote_average,
-                posterUrl,
-                backdropUrl,
-                year,
-                cast
+            channelTmdbDao.upsert(
+                ChannelTmdbMetadata(
+                    remoteId = channel.remoteId,
+                    playlistUrl = channel.playlistUrl,
+                    tmdbRating = tmdbResult.vote_average,
+                    tmdbSynopsis = details.overview,
+                    posterUrl = posterUrl,
+                    bannerUrl = backdropUrl,
+                    tmdbYear = year,
+                    castMembers = cast,
+                    trailerUrl = trailerUrl
+                )
             )
         } catch (e: Exception) {
             android.util.Log.e("CineX-TMDB", "Series metadata enrich FAILED for '${channel.name}': ${e.message}")

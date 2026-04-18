@@ -52,6 +52,11 @@ class MainViewModel @Inject constructor(
     private val updateManager: UpdateManager
 ) : ViewModel() {
 
+    val isTv: Boolean by lazy {
+        val uiModeManager = app.getSystemService(android.content.Context.UI_MODE_SERVICE) as? android.app.UiModeManager
+        uiModeManager?.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    }
+
     private val _currentPlaylist = MutableStateFlow<com.cinex.player.data.model.Playlist?>(null)
     val currentPlaylist = _currentPlaylist.asStateFlow()
 
@@ -417,10 +422,6 @@ class MainViewModel @Inject constructor(
     fun getPagedChannelsByCategory(group: String): Flow<PagingData<Channel>> = 
         repository.getPagedChannelsByCategory(group).cachedIn(viewModelScope)
 
-    private val movieFlowCache = LinkedHashMap<String, Flow<PagingData<Channel>>>()
-    private val seriesFlowCache = LinkedHashMap<String, Flow<PagingData<Channel>>>()
-    private val MAX_CACHE_SIZE = 50
-
     private val _selectedMovieCategory = MutableStateFlow("Tudo")
     val selectedMovieCategory = _selectedMovieCategory.asStateFlow()
 
@@ -537,8 +538,6 @@ class MainViewModel @Inject constructor(
     }
 
     fun clearPagingCaches() {
-        movieFlowCache.clear()
-        seriesFlowCache.clear()
         enrichingIds.clear()
         enrichingSeriesSeasons.clear()
     }
@@ -579,6 +578,7 @@ class MainViewModel @Inject constructor(
     }
 
     fun onChannelVisible(channel: Channel) {
+        if (isTv) return // TV não faz enrichment em tempo real — CPU/RAM limitada
         if (shouldEnrichChannelVisualFallback(channel) && enrichingIds.add(channel.id)) {
             viewModelScope.launch {
                 // Limita a no máximo 3 enriquecimentos simultâneos para não travar a UI

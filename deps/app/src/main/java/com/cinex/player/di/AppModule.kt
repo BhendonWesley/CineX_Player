@@ -39,7 +39,7 @@ object AppModule {
             app,
             AppDatabase::class.java,
             "cinex_database"
-        ).addMigrations(MIGRATION_11_12, AppDatabase.MIGRATION_12_13)
+        ).addMigrations(MIGRATION_11_12, AppDatabase.MIGRATION_12_13, AppDatabase.MIGRATION_13_14)
          .fallbackToDestructiveMigration()
          .build()
     }
@@ -70,26 +70,32 @@ object AppModule {
 
     @Provides
     @Singleton
+    fun provideChannelTmdbDao(db: AppDatabase): com.cinex.player.data.local.ChannelTmdbDao {
+        return db.channelTmdbDao()
+    }
+
+    @Provides
+    @Singleton
     fun provideOkHttpClient(): OkHttpClient {
         val builder = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .connectionPool(okhttp3.ConnectionPool(10, 5, TimeUnit.MINUTES))
 
-        // Em debug, aceita qualquer certificado SSL (resolve emuladores com certs desatualizados)
-        if (com.cinex.player.BuildConfig.DEBUG) {
-            val trustAllCerts = arrayOf<javax.net.ssl.TrustManager>(
-                object : javax.net.ssl.X509TrustManager {
-                    override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
-                    override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
-                    override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
-                }
-            )
-            val sslContext = javax.net.ssl.SSLContext.getInstance("TLS")
-            sslContext.init(null, trustAllCerts, java.security.SecureRandom())
-            builder.sslSocketFactory(sslContext.socketFactory, trustAllCerts[0] as javax.net.ssl.X509TrustManager)
-            builder.hostnameVerifier { _, _ -> true }
-        }
+        // Aceita certificados self-signed em todos os builds — servidores IPTV frequentemente
+        // usam SSL ruim ou expirado. Igual ao UnsafeOkHttpClient do IBO Player.
+        // Não é risco de segurança neste contexto: o app se conecta a servidores do próprio usuário.
+        val trustAllCerts = arrayOf<javax.net.ssl.TrustManager>(
+            object : javax.net.ssl.X509TrustManager {
+                override fun checkClientTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
+                override fun checkServerTrusted(chain: Array<java.security.cert.X509Certificate>, authType: String) {}
+                override fun getAcceptedIssuers(): Array<java.security.cert.X509Certificate> = arrayOf()
+            }
+        )
+        val sslContext = javax.net.ssl.SSLContext.getInstance("TLS")
+        sslContext.init(null, trustAllCerts, java.security.SecureRandom())
+        builder.sslSocketFactory(sslContext.socketFactory, trustAllCerts[0] as javax.net.ssl.X509TrustManager)
+        builder.hostnameVerifier { _, _ -> true }
 
         return builder.build()
     }

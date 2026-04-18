@@ -1,7 +1,5 @@
 package com.cinex.player.ui.components
 
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -91,21 +89,12 @@ fun VodPosterItem(
         val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
         uiModeManager.currentModeType == AndroidConfig.UI_MODE_TYPE_TELEVISION
     }
-    val screenWidthDp = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp
-    val cellPx = remember(screenWidthDp, isTv) {
-        if (isTv) 200
-        else {
-            val cellDp = (screenWidthDp - 24 - 24) / 4
-            ((cellDp / 8 + 1) * 8)
-        }
-    }
-    val cellHeightPx = remember(cellPx) { (cellPx * 1.5f).toInt() }
+    // Tamanho fixo igual ao IBO (override(300,450)) — bitmap decodificado pequeno antes de entrar na RAM
+    val posterWidth = 300
+    val posterHeight = 450
 
-    val focusScale by animateFloatAsState(
-        targetValue = if (isFocused) 1.05f else 1f,
-        animationSpec = tween(durationMillis = 150),
-        label = "vodFocusScale"
-    )
+    // Scale direto sem animação — animateFloatAsState rodava em cada item visível a cada frame
+    val focusScale = if (isFocused) 1.05f else 1f
 
     Box(
         modifier = modifier
@@ -173,7 +162,7 @@ fun VodPosterItem(
                     .crossfade(if (isTv) 0 else 120)
                     .memoryCacheKey(imageUrl)
                     .diskCacheKey(imageUrl)
-                    .size(cellPx, cellHeightPx)
+                    .size(posterWidth, posterHeight)
                     .build()
             }
             AsyncImage(

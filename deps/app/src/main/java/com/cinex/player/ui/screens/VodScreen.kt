@@ -72,6 +72,11 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.recyclerview.widget.GridLayoutManager
+import com.cinex.player.ui.components.TvVodGridAdapter
+import com.cinex.player.ui.components.GridSpacingItemDecoration
 
 private val AccentGold = Color(0xFFD8A63A)
 private val AccentRed  = Color(0xFFE11D2E)
@@ -263,30 +268,33 @@ fun VodScreen(
 
     // CORREÇÃO: Scroll ao topo SOMENTE ao trocar de categoria ou ordenação
     val gridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState()
+    val recyclerRef = remember { mutableStateOf<androidx.recyclerview.widget.RecyclerView?>(null) }
     LaunchedEffect(selectedCategory, currentSort) {
-        gridState.scrollToItem(0)
+        if (isTv && useTvMemory) recyclerRef.value?.scrollToPosition(0)
+        else gridState.scrollToItem(0)
     }
 
     fun requestGridFocus() {
         focusScope.launch {
-            for (delayMs in listOf(0L, 50L, 120L)) {
-                if (delayMs > 0) delay(delayMs)
-                try {
-                    firstGridItemFocusRequester.requestFocus()
-                    return@launch
-                } catch (_: Exception) {}
-            }
-
-            if (gridState.firstVisibleItemIndex != 0) {
-                try { gridState.scrollToItem(0) } catch (_: Exception) {}
-            }
-
-            for (delayMs in listOf(80L, 160L, 260L)) {
-                delay(delayMs)
-                try {
-                    firstGridItemFocusRequester.requestFocus()
-                    return@launch
-                } catch (_: Exception) {}
+            if (isTv && useTvMemory) {
+                val rv = recyclerRef.value ?: return@launch
+                for (delayMs in listOf(0L, 60L, 150L, 300L)) {
+                    if (delayMs > 0L) delay(delayMs)
+                    val v = rv.layoutManager?.findViewByPosition(0)
+                    if (v != null) { v.requestFocus(); return@launch }
+                }
+            } else {
+                for (delayMs in listOf(0L, 50L, 120L)) {
+                    if (delayMs > 0L) delay(delayMs)
+                    try { firstGridItemFocusRequester.requestFocus(); return@launch } catch (_: Exception) {}
+                }
+                if (gridState.firstVisibleItemIndex != 0) {
+                    try { gridState.scrollToItem(0) } catch (_: Exception) {}
+                }
+                for (delayMs in listOf(80L, 160L, 260L)) {
+                    delay(delayMs)
+                    try { firstGridItemFocusRequester.requestFocus(); return@launch } catch (_: Exception) {}
+                }
             }
         }
     }
@@ -326,16 +334,19 @@ fun VodScreen(
         val wasOpen = prevDetailsOpen
         prevDetailsOpen = nowOpen
         if (isTv && wasOpen && !nowOpen && isActive && itemCount > 0) {
-            // Rola para o item 0 antes de pedir foco — se o usuário estava scrollado,
-            // o índice 0 não está na viewport e o FocusRequester não está attached,
-            // causando falha silenciosa em todas as tentativas.
-            gridState.scrollToItem(0)
-            for (delayMs in listOf(100L, 200L, 400L)) {
-                kotlinx.coroutines.delay(delayMs)
-                try {
-                    firstGridItemFocusRequester.requestFocus()
-                    break
-                } catch (_: Exception) {}
+            if (useTvMemory) {
+                recyclerRef.value?.scrollToPosition(0)
+                for (delayMs in listOf(100L, 200L, 400L)) {
+                    kotlinx.coroutines.delay(delayMs)
+                    val v = recyclerRef.value?.layoutManager?.findViewByPosition(0)
+                    if (v != null) { v.requestFocus(); break }
+                }
+            } else {
+                gridState.scrollToItem(0)
+                for (delayMs in listOf(100L, 200L, 400L)) {
+                    kotlinx.coroutines.delay(delayMs)
+                    try { firstGridItemFocusRequester.requestFocus(); break } catch (_: Exception) {}
+                }
             }
         }
     }
@@ -452,17 +463,13 @@ fun VodScreen(
                     .padding(start = 16.dp, end = 8.dp, bottom = 16.dp)
                     .clip(RoundedCornerShape(16.dp))
                     .background(Color(0x0DFFFFFF))
-                    .then(
-                        if (isTv) {
-                            Modifier.gradientBorder(
-                                brush = Brush.linearGradient(listOf(AccentRed, AccentGold)),
-                                borderWidth = 1.5.dp,
-                                cornerRadius = 16.dp
-                            )
-                        } else Modifier
+                    .gradientBorder(
+                        brush = Brush.linearGradient(listOf(AccentRed, AccentGold)),
+                        borderWidth = 1.5.dp,
+                        cornerRadius = 16.dp
                     )
                     .padding(vertical = 16.dp)
-                    .then(if (isTv) Modifier.verticalScrollbar(sidebarScrollState) else Modifier)
+                    .verticalScrollbar(sidebarScrollState)
                     .verticalScroll(sidebarScrollState)
                     .padding(horizontal = 16.dp)
             ) {
@@ -658,9 +665,8 @@ fun VodScreen(
             modifier = Modifier
                 .weight(1f)
                 .then(
-                    if (isTv) Modifier.onPreviewKeyEvent { event ->
-                        // Intercepta LEFT apenas quando o foco está na coluna 0 do grid.
-                        // Para colunas 1-3, LEFT passa normalmente para navegação interna.
+                    // Compose LEFT-intercept só para TV+search (RecyclerView cuida do useTvMemory)
+                    if (isTv && !useTvMemory) Modifier.onPreviewKeyEvent { event ->
                         if (event.key == Key.DirectionLeft) {
                             val focusedIndex = tvChannels.indexOfFirst { it.id == focusedGridChannel?.id }
                             val isLeftmostColumn = focusedIndex >= 0 && focusedIndex % 4 == 0
@@ -735,131 +741,91 @@ fun VodScreen(
                 }
             }
 
-            // Viewport-aware enrichment: só enriquece itens visíveis na tela (TV only).
-            // CRÍTICO: tvChannels NÃO pode entrar na key do LaunchedEffect, senão cada
-            // emissão do DB (enrichment → write → re-emit) reinicia este collect e
-            // dispara onChannelVisible em rajada, criando um ciclo de feedback.
-            // Ao invés disso, usamos rememberUpdatedState para ler a lista mais recente
-            // sem reiniciar, e o snapshotFlow filtra por faixa visível (não por frame).
-            // OTIMIZAÇÃO: debounce reduzido de 350ms para 150ms para resposta mais rápida
-            val latestTvChannels by rememberUpdatedState(tvChannels)
-            LaunchedEffect(gridState, useTvMemory, isTv) {
-                if (!useTvMemory || !isTv) return@LaunchedEffect
-
-                snapshotFlow {
-                    val info = gridState.layoutInfo
-                    val items = info.visibleItemsInfo
-                    if (items.isEmpty()) -1 to -1
-                    else items.first().index to items.last().index
-                }
-                    .debounce(150)  // OTIMIZADO: 350ms → 150ms
-                    .distinctUntilChanged()
-                    .collect { (firstVisible, lastVisible) ->
-                        if (firstVisible < 0) return@collect
-                        val list = latestTvChannels
-                        if (list.isEmpty()) return@collect
-
-                        // OTIMIZAÇÃO: Enriquece itens visíveis + 4 de prefetch (reduzido de 8)
-                        // Menos prefetch = menos trabalho desnecessário durante navegação rápida
-                        val end = (lastVisible + 4).coerceAtMost(list.lastIndex)
-                        for (i in firstVisible..end) {
-                            val channel = list[i]
-                            if (channel.posterUrl.isNullOrEmpty() && channel.tmdbSynopsis.isNullOrEmpty()) {
-                                viewModel.onChannelVisible(channel)
+            if (isTv && useTvMemory) {
+                // ── TV: RecyclerView nativo (GridLayoutManager) ──────────
+                // Evita o overhead do Compose por item — igual ao IBO Player
+                AndroidView(
+                    modifier = Modifier.fillMaxSize(),
+                    factory = { ctx ->
+                        val spacing = (8 * ctx.resources.displayMetrics.density).toInt()
+                        val hPad   = (12 * ctx.resources.displayMetrics.density).toInt()
+                        val bPad   = (32 * ctx.resources.displayMetrics.density).toInt()
+                        androidx.recyclerview.widget.RecyclerView(ctx).apply {
+                            layoutManager = GridLayoutManager(ctx, 4).apply {
+                                recycleChildrenOnDetach = true
                             }
+                            adapter = TvVodGridAdapter()
+                            addItemDecoration(GridSpacingItemDecoration(4, spacing))
+                            setPadding(hPad, 0, hPad, bPad)
+                            clipToPadding = false
+                            setHasFixedSize(false)
+                            recyclerRef.value = this
                         }
+                    },
+                    update = { rv ->
+                        val adapter = rv.adapter as? TvVodGridAdapter ?: return@AndroidView
+                        adapter.onItemClick = { channel ->
+                            if (selectedCategory == "Continuar Assistindo") onPlayDirect(channel)
+                            else onVideoClick(channel)
+                        }
+                        adapter.onNavigateLeft = {
+                            try { selectedCatFocusRequester.requestFocus() } catch (_: Exception) {}
+                        }
+                        adapter.onNavigateUp = {
+                            try { firstSortChipFocusRequester.requestFocus() } catch (_: Exception) {}
+                        }
+                        adapter.showProgress = selectedCategory == "Continuar Assistindo"
+                        adapter.areSortChipsVisible = areSortChipsVisible
+                        adapter.items = tvChannels
                     }
-            }
-
-            LazyVerticalGrid(
-                state = gridState,
-                columns = GridCells.Fixed(4),
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(horizontal = 12.dp, vertical = 0.dp),
-                contentPadding = PaddingValues(bottom = 32.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                if (useTvMemory) {
-                    // UNIVERSAL: usa lista em memória para troca instantânea de ponta a ponta.
-                    // OTIMIZAÇÃO: contentType fixo permite reutilização máxima de composables
-                    items(
-                        count = tvChannels.size,
-                        key = { index -> "vod_${tvChannels[index].id}" },
-                        contentType = { "vod_poster" }
-                    ) { index ->
-                        val channel = tvChannels[index]
-                        VodPosterItem(
-                            channel = channel,
-                            modifier = if (isTv) {
-                                Modifier
-                                    .then(if (index == 0) Modifier.focusRequester(firstGridItemFocusRequester) else Modifier)
-                                    .then(
-                                        // Navegação segura com try-catch — focusProperties sem try-catch
-                                        // causa FocusRequesterNotAttachedException durante recomposição da lista
-                                        when {
-                                            areSortChipsVisible && index < 4 && index % 4 == 0 -> Modifier.onKeyEvent { event ->
-                                                if (event.type == KeyEventType.KeyDown) when (event.key) {
-                                                    Key.DirectionUp -> { try { firstSortChipFocusRequester.requestFocus() } catch (_: Exception) {}; true }
-                                                    Key.DirectionLeft -> { try { selectedCatFocusRequester.requestFocus() } catch (_: Exception) {}; true }
-                                                    else -> false
-                                                } else false
-                                            }
-                                            areSortChipsVisible && index < 4 -> Modifier.onKeyEvent { event ->
-                                                if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionUp) {
-                                                    try { firstSortChipFocusRequester.requestFocus() } catch (_: Exception) {}
-                                                    true
-                                                } else false
-                                            }
-                                            index % 4 == 0 -> Modifier.onKeyEvent { event ->
-                                                if (event.type == KeyEventType.KeyDown && event.key == Key.DirectionLeft) {
-                                                    try { selectedCatFocusRequester.requestFocus() } catch (_: Exception) {}
-                                                    true
-                                                } else false
-                                            }
-                                            else -> Modifier
-                                        }
-                                    )
-                            } else Modifier,
-                            showProgress = selectedCategory == "Continuar Assistindo",
-                            onFocused = { focusedGridChannel = it },
-                            onPrefetch = if (isTv && type == "SERIES") {
-                                { viewModel.prefetchSeriesEpisodes(channel) }
-                            } else null,
-                            onClick = {
-                                if (selectedCategory == "Continuar Assistindo") {
-                                    onPlayDirect(channel)
-                                } else {
-                                    onVideoClick(channel)
-                                }
-                            }
-                        )
-                    }
-                } else {
-                    // Mobile: usa Paging
-                    // CORREÇÃO: NÃO faz enrichment on-viewport no mobile.
-                    // O enrichment já roda em background após o sync completo.
-                    // Fazer writes no DB durante a navegação invalida o PagingSource,
-                    // causando scroll automático e travamentos no grid.
-                    items(
-                        count = pagingItems.itemCount,
-                        key = pagingItems.itemKey { it.id },
-                        contentType = { "vod_poster" }
-                    ) { index ->
-                        pagingItems[index]?.let { channel ->
+                )
+            } else {
+                // ── Mobile / Search: LazyVerticalGrid Compose ────────────
+                LazyVerticalGrid(
+                    state = gridState,
+                    columns = GridCells.Fixed(4),
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 12.dp, vertical = 0.dp),
+                    contentPadding = PaddingValues(bottom = 32.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (useTvMemory) {
+                        items(
+                            count = tvChannels.size,
+                            key = { index -> "vod_${tvChannels[index].id}" },
+                            contentType = { "vod_poster" }
+                        ) { index ->
+                            val channel = tvChannels[index]
                             VodPosterItem(
                                 channel = channel,
                                 modifier = Modifier,
                                 showProgress = selectedCategory == "Continuar Assistindo",
+                                onFocused = { focusedGridChannel = it },
                                 onClick = {
-                                    if (selectedCategory == "Continuar Assistindo") {
-                                        onPlayDirect(channel)
-                                    } else {
-                                        onVideoClick(channel)
-                                    }
+                                    if (selectedCategory == "Continuar Assistindo") onPlayDirect(channel)
+                                    else onVideoClick(channel)
                                 }
                             )
+                        }
+                    } else {
+                        items(
+                            count = pagingItems.itemCount,
+                            key = pagingItems.itemKey { it.id },
+                            contentType = { "vod_poster" }
+                        ) { index ->
+                            pagingItems[index]?.let { channel ->
+                                VodPosterItem(
+                                    channel = channel,
+                                    modifier = Modifier,
+                                    showProgress = selectedCategory == "Continuar Assistindo",
+                                    onClick = {
+                                        if (selectedCategory == "Continuar Assistindo") onPlayDirect(channel)
+                                        else onVideoClick(channel)
+                                    }
+                                )
+                            }
                         }
                     }
                 }

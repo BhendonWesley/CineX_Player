@@ -6,6 +6,13 @@ plugins {
 }
 
 android {
+    val hasReleaseSigning = listOf(
+        "SIGNING_STORE_FILE",
+        "SIGNING_STORE_PASSWORD",
+        "SIGNING_KEY_ALIAS",
+        "SIGNING_KEY_PASSWORD"
+    ).all { !System.getenv(it).isNullOrBlank() }
+
     namespace = "com.cinex.player"
     compileSdk = 34
 
@@ -13,8 +20,8 @@ android {
         applicationId = "com.cinex.player"
         minSdk = 24
         targetSdk = 34
-        versionCode = 20600
-        versionName = "2.6"
+        versionCode = 20700
+        versionName = "2.7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -23,10 +30,9 @@ android {
     }
 
     signingConfigs {
-        create("release") {
-            val storeFilePath = System.getenv("SIGNING_STORE_FILE")
-            if (storeFilePath != null) {
-                storeFile = file(storeFilePath)
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(System.getenv("SIGNING_STORE_FILE"))
                 storePassword = System.getenv("SIGNING_STORE_PASSWORD")
                 keyAlias = System.getenv("SIGNING_KEY_ALIAS")
                 keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
@@ -38,7 +44,9 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("release")
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -93,6 +101,7 @@ dependencies {
     val pagingVersion = "3.2.1"
     implementation("androidx.paging:paging-runtime-ktx:$pagingVersion")
     implementation("androidx.paging:paging-compose:3.2.1")
+    implementation("androidx.recyclerview:recyclerview:1.3.2")
 
     // Hilt / Dependency Injection
     implementation("com.google.dagger:hilt-android:2.50")

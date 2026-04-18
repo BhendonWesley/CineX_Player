@@ -1,8 +1,10 @@
 package com.cinex.player.data.model
 
+import androidx.compose.runtime.Immutable
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
+@Immutable
 @Entity(
     tableName = "channels",
     indices = [

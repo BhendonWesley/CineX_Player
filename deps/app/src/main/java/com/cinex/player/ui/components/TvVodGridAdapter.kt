@@ -1,0 +1,216 @@
+package com.cinex.player.ui.components
+
+import android.content.Context
+import android.graphics.*
+import android.util.TypedValue
+import android.view.*
+import android.widget.*
+import androidx.recyclerview.widget.RecyclerView
+import coil.load
+import com.cinex.player.R
+import com.cinex.player.data.model.Channel
+
+internal class TvVodGridAdapter : RecyclerView.Adapter<TvVodGridAdapter.VH>() {
+
+    var onItemClick: (Channel) -> Unit = {}
+    var onNavigateLeft: () -> Unit = {}
+    var onNavigateUp: () -> Unit = {}
+    var showProgress: Boolean = false
+    var areSortChipsVisible: Boolean = true
+    private val columnCount = 4
+
+    var items: List<Channel> = emptyList()
+        set(value) {
+            field = value
+            notifyDataSetChanged()
+        }
+
+    inner class VH(
+        val card: TvPosterCard,
+        val image: ImageView,
+        val name: TextView,
+        val progressView: View
+    ) : RecyclerView.ViewHolder(card)
+
+    override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
+        val ctx = parent.context
+        fun dp(v: Int) = (v * ctx.resources.displayMetrics.density + 0.5f).toInt()
+
+        val card = TvPosterCard(ctx).apply {
+            layoutParams = RecyclerView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            isFocusable = true
+            isClickable = true
+        }
+
+        val image = ImageView(ctx).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+            scaleType = ImageView.ScaleType.CENTER_CROP
+        }
+
+        val gradientOverlay = object : View(ctx) {
+            private val gPaint = Paint()
+            override fun onDraw(c: Canvas) {
+                gPaint.shader = LinearGradient(
+                    0f, 0f, 0f, height.toFloat(),
+                    intArrayOf(Color.TRANSPARENT, 0xCC000000.toInt()),
+                    null, Shader.TileMode.CLAMP
+                )
+                c.drawRect(0f, 0f, width.toFloat(), height.toFloat(), gPaint)
+            }
+        }.apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(64)
+            ).also { it.gravity = Gravity.BOTTOM }
+        }
+
+        val nameView = TextView(ctx).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also { it.gravity = Gravity.BOTTOM }
+            setPadding(dp(6), dp(2), dp(6), dp(6))
+            setTextColor(Color.WHITE)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f)
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+
+        val progressView = View(ctx).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(4)
+            ).also { it.gravity = Gravity.BOTTOM }
+            setBackgroundColor(0xFFE11D2E.toInt())
+            visibility = View.GONE
+            pivotX = 0f
+        }
+
+        card.addView(image)
+        card.addView(gradientOverlay)
+        card.addView(nameView)
+        card.addView(progressView)
+
+        return VH(card, image, nameView, progressView)
+    }
+
+    override fun onBindViewHolder(holder: VH, position: Int) {
+        val channel = items[position]
+
+        val imageUrl = listOfNotNull(channel.logoUrl, channel.posterUrl)
+            .firstOrNull { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+
+        if (imageUrl != null) {
+            holder.image.load(imageUrl) {
+                size(300, 450)
+                memoryCacheKey(imageUrl)
+                diskCacheKey(imageUrl)
+                placeholder(R.drawable.logo_cinex)
+                error(R.drawable.logo_cinex)
+                crossfade(false)
+            }
+        } else {
+            holder.image.setImageResource(R.drawable.logo_cinex)
+        }
+
+        holder.name.text = channel.name
+
+        if (showProgress && channel.resumePosition > 0 && channel.totalDuration > 0) {
+            val progress = (channel.resumePosition.toFloat() / channel.totalDuration).coerceIn(0f, 1f)
+            holder.progressView.visibility = View.VISIBLE
+            holder.progressView.scaleX = progress
+        } else {
+            holder.progressView.visibility = View.GONE
+        }
+
+        holder.card.setOnClickListener { onItemClick(channel) }
+
+        holder.card.setOnKeyListener { _, keyCode, event ->
+            if (event.action == KeyEvent.ACTION_DOWN) {
+                val pos = holder.absoluteAdapterPosition
+                when (keyCode) {
+                    KeyEvent.KEYCODE_DPAD_LEFT -> {
+                        if (pos % columnCount == 0) { onNavigateLeft(); true } else false
+                    }
+                    KeyEvent.KEYCODE_DPAD_UP -> {
+                        if (pos < columnCount && areSortChipsVisible) { onNavigateUp(); true } else false
+                    }
+                    KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> {
+                        onItemClick(channel); true
+                    }
+                    else -> false
+                }
+            } else false
+        }
+
+        holder.card.setOnFocusChangeListener { _, hasFocus ->
+            holder.card.setFocused(hasFocus)
+        }
+    }
+
+    override fun getItemCount() = items.size
+}
+
+internal class TvPosterCard(context: Context) : FrameLayout(context) {
+    private val focusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 4f * context.resources.displayMetrics.density
+    }
+    private var isFocusHighlighted = false
+
+    fun setFocused(focused: Boolean) {
+        isFocusHighlighted = focused
+        scaleX = if (focused) 1.05f else 1.0f
+        scaleY = if (focused) 1.05f else 1.0f
+        invalidate()
+    }
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val width = MeasureSpec.getSize(widthMeasureSpec)
+        val height = (width * 1.5f).toInt()
+        super.onMeasure(widthMeasureSpec, MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY))
+    }
+
+    override fun dispatchDraw(canvas: Canvas) {
+        val radius = 12f * resources.displayMetrics.density
+        val path = Path().apply {
+            addRoundRect(RectF(0f, 0f, width.toFloat(), height.toFloat()), radius, radius, Path.Direction.CW)
+        }
+        canvas.save()
+        canvas.clipPath(path)
+        super.dispatchDraw(canvas)
+        canvas.restore()
+
+        if (isFocusHighlighted) {
+            val strokeW = focusPaint.strokeWidth / 2f
+            val rect = RectF(strokeW, strokeW, width - strokeW, height - strokeW)
+            focusPaint.shader = LinearGradient(
+                0f, 0f, width.toFloat(), height.toFloat(),
+                intArrayOf(0xFFE11D2E.toInt(), 0xFFD8A63A.toInt()),
+                null, Shader.TileMode.CLAMP
+            )
+            canvas.drawRoundRect(rect, radius, radius, focusPaint)
+        }
+    }
+}
+
+internal class GridSpacingItemDecoration(
+    private val spanCount: Int,
+    private val spacing: Int
+) : RecyclerView.ItemDecoration() {
+    override fun getItemOffsets(
+        outRect: Rect, view: View,
+        parent: RecyclerView, state: RecyclerView.State
+    ) {
+        val position = parent.getChildAdapterPosition(view)
+        val column = position % spanCount
+        outRect.left = spacing * column / spanCount
+        outRect.right = spacing * (spanCount - 1 - column) / spanCount
+        if (position >= spanCount) outRect.top = spacing
+        outRect.bottom = 0
+    }
+}

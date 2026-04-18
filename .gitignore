@@ -2,12 +2,16 @@
 **/build/
 *.iml
 .gradle
+deps/.gradle-user/
 local.properties
 .idea
 .DS_Store
 
 # JetPack Compose
 **/generated/
+
+# Reference code (third-party, not to be committed)
+ibo-reference/
 
 # Binaries
 *.apk
