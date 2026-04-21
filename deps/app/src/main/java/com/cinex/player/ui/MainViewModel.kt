@@ -400,8 +400,14 @@ class MainViewModel @Inject constructor(
     // Cache em memória de todos os canais ao vivo — filtragem por categoria é instantânea
     // debounce coalesca rajadas de writes (enrichment, sync) em uma única emissão por 150ms,
     // evitando storms de recomposição no grid TV.
-    private val _allLiveChannels = repository.observeAllLiveChannels()
+    private val _allLiveChannelsFlow = repository.observeAllLiveChannels()
         .debounce(80)
+
+    val isLiveReady: StateFlow<Boolean> = _allLiveChannelsFlow
+        .map { true }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    private val _allLiveChannels = _allLiveChannelsFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     @OptIn(ExperimentalCoroutinesApi::class)
@@ -429,7 +435,12 @@ class MainViewModel @Inject constructor(
     val selectedSeriesCategory = _selectedSeriesCategory.asStateFlow()
 
     fun setMovieCategory(id: String) { _selectedMovieCategory.value = id }
-    fun setSeriesCategory(id: String) { _selectedSeriesCategory.value = id }
+    fun setSeriesCategory(id: String) {
+        _selectedSeriesCategory.value = id
+        if (id == "Continuar Assistindo") {
+            viewModelScope.launch { repository.fixEpisodePostersRetroactively() }
+        }
+    }
 
     suspend fun getFirstImageUrlsForCategory(type: String, categoryId: String): List<String> =
         repository.getFirstImageUrlsForCategory(type, categoryId, limit = 8)

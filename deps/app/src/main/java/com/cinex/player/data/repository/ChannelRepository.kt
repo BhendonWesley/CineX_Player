@@ -618,6 +618,7 @@ class ChannelRepository @Inject constructor(
                             }
                             enrichRandomForHome(url, 20)
                             triggerBackgroundEnrichment(url)
+                            channelDao.fixEpisodePostersRetroactively()
                         } catch (e: Exception) {
                             android.util.Log.e("CineX-Sync", "Enrichment background falhou: ${e.message}")
                         }
@@ -1192,6 +1193,11 @@ class ChannelRepository @Inject constructor(
                 if (allCats.isNotEmpty()) {
                     categoryDao.clearByPlaylist(playlistUrl)
                     categoryDao.insertAll(allCats)
+                    // Corrige groupTitle legado ("VOD", "Live", "SÉRIES") dos canais já no banco
+                    // usando UPDATE simples por categoryId — sem subquery cross-table
+                    allCats.forEach { cat ->
+                        channelDao.fixGroupTitleForCategory(playlistUrl, cat.id, cat.name)
+                    }
                 }
             }
 
@@ -1624,6 +1630,10 @@ class ChannelRepository @Inject constructor(
             cast = channel.castMembers,
             trailer = channel.trailerUrl
         )
+    }
+
+    suspend fun fixEpisodePostersRetroactively() = withContext(Dispatchers.IO) {
+        channelDao.fixEpisodePostersRetroactively()
     }
 
     private fun pickBestTrailer(videos: List<com.cinex.player.data.network.TmdbVideo>): String? {

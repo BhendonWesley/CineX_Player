@@ -278,19 +278,29 @@ fun VodScreen(
         focusScope.launch {
             if (isTv && useTvMemory) {
                 val rv = recyclerRef.value ?: return@launch
-                for (delayMs in listOf(0L, 60L, 150L, 300L)) {
+                for (delayMs in listOf(0L, 50L, 120L, 250L, 400L)) {
                     if (delayMs > 0L) delay(delayMs)
-                    val v = rv.layoutManager?.findViewByPosition(0)
-                    if (v != null) { v.requestFocus(); return@launch }
+                    if (rv.childCount > 0) {
+                        try {
+                            // Tenta focar no primeiro item visível na tela, e não apenas no índice 0
+                            val layoutManager = rv.layoutManager as? androidx.recyclerview.widget.GridLayoutManager
+                            val targetPos = layoutManager?.findFirstVisibleItemPosition()?.takeIf { it >= 0 } ?: 0
+                            val v = layoutManager?.findViewByPosition(targetPos) ?: rv.getChildAt(0)
+                            if (v != null && v.requestFocus()) return@launch
+                        } catch (_: Exception) {}
+                    }
+                    if (rv.requestFocus()) return@launch
                 }
             } else {
                 for (delayMs in listOf(0L, 50L, 120L)) {
                     if (delayMs > 0L) delay(delayMs)
                     try { firstGridItemFocusRequester.requestFocus(); return@launch } catch (_: Exception) {}
                 }
-                if (gridState.firstVisibleItemIndex != 0) {
-                    try { gridState.scrollToItem(0) } catch (_: Exception) {}
-                }
+                try {
+                    if (gridState.firstVisibleItemIndex != 0) {
+                        gridState.scrollToItem(0)
+                    }
+                } catch (_: Exception) {}
                 for (delayMs in listOf(80L, 160L, 260L)) {
                     delay(delayMs)
                     try { firstGridItemFocusRequester.requestFocus(); return@launch } catch (_: Exception) {}
@@ -313,9 +323,14 @@ fun VodScreen(
         }
     }
 
+    // Captura o valor inicial para não disparar foco na primeira composição (ex: VodScreen de busca
+    // criado enquanto navDownTrigger > 0 — causava o teclado fechar ao digitar a 1ª letra na TV).
+    val initialNavDownTrigger = remember { navDownTrigger }
+
     // Ao pressionar DOWN na TopNavigationBar, desce o foco para as categorias (ou grid se sem categorias)
     LaunchedEffect(navDownTrigger) {
-        if (navDownTrigger > 0 && isTv && isActive) {
+        if (navDownTrigger <= initialNavDownTrigger) return@LaunchedEffect
+        if (isTv && isActive) {
             kotlinx.coroutines.delay(50L)
             try {
                 if (categories.isNotEmpty()) firstCategoryFocusRequester.requestFocus()
@@ -787,7 +802,7 @@ fun VodScreen(
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(horizontal = 12.dp, vertical = 0.dp),
-                    contentPadding = PaddingValues(bottom = 32.dp),
+                    contentPadding = PaddingValues(top = 8.dp, bottom = 32.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -818,7 +833,7 @@ fun VodScreen(
                             pagingItems[index]?.let { channel ->
                                 VodPosterItem(
                                     channel = channel,
-                                    modifier = Modifier,
+                                    modifier = if (isTv && index == 0) Modifier.focusRequester(firstGridItemFocusRequester) else Modifier,
                                     showProgress = selectedCategory == "Continuar Assistindo",
                                     onClick = {
                                         if (selectedCategory == "Continuar Assistindo") onPlayDirect(channel)

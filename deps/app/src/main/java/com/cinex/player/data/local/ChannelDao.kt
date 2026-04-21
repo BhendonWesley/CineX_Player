@@ -228,7 +228,7 @@ interface ChannelDao {
     fun searchChannels(query: String, url: String): PagingSource<Int, Channel>
 
     // ---- Funções Premium (XC / IBO) ---- //
-    @Query("SELECT posterUrl FROM channels WHERE category = 'SERIES' AND seriesName = :seriesName AND playlistUrl = :url AND posterUrl IS NOT NULL AND posterUrl != '' LIMIT 1")
+    @Query("SELECT CASE WHEN posterUrl IS NOT NULL AND posterUrl != '' THEN posterUrl ELSE logoUrl END FROM channels WHERE category = 'SERIES' AND seriesName = :seriesName AND playlistUrl = :url AND (posterUrl IS NOT NULL OR logoUrl IS NOT NULL) LIMIT 1")
     suspend fun getSeriesPosterUrl(seriesName: String, url: String): String?
 
     @Query("SELECT * FROM channels WHERE id = :channelId LIMIT 1")
@@ -248,6 +248,18 @@ interface ChannelDao {
 
     @Query("SELECT * FROM channels WHERE resumePosition > 0 AND category IN ('MOVIE', 'SERIES') AND (category = 'MOVIE' OR seasonNumber IS NOT NULL) AND playlistUrl = :url ORDER BY id DESC LIMIT 20")
     fun getContinueWatching(url: String): Flow<List<Channel>>
+
+    @Query("""
+        UPDATE channels 
+        SET posterUrl = (
+            SELECT CASE WHEN p.posterUrl IS NOT NULL AND p.posterUrl != '' THEN p.posterUrl ELSE p.logoUrl END
+            FROM channels p 
+            WHERE p.category = 'SERIES' AND p.seasonNumber IS NULL AND p.seriesName = channels.seriesName AND p.playlistUrl = channels.playlistUrl 
+            LIMIT 1
+        )
+        WHERE category = 'SERIES' AND seasonNumber IS NOT NULL AND resumePosition > 0 AND (posterUrl IS NULL OR posterUrl = '')
+    """)
+    suspend fun fixEpisodePostersRetroactively()
 
     @Query("SELECT * FROM channels WHERE resumePosition > 0 AND category = :category AND (:category != 'SERIES' OR seasonNumber IS NOT NULL) AND playlistUrl = :url ORDER BY id DESC")
     fun getContinueWatchingPaged(category: String, url: String): PagingSource<Int, Channel>
@@ -376,6 +388,9 @@ interface ChannelDao {
         WHERE playlistUrl = :url
     """)
     suspend fun normalizeLegacyCategoryIds(url: String)
+
+    @Query("UPDATE channels SET groupTitle = :name WHERE playlistUrl = :url AND categoryId = :categoryId AND (groupTitle = 'VOD' OR groupTitle = 'Live' OR groupTitle = 'SÉRIES')")
+    suspend fun fixGroupTitleForCategory(url: String, categoryId: String, name: String)
 
     @Query("SELECT remoteId, tmdbRating, tmdbSynopsis, posterUrl, bannerUrl, tmdbYear, castMembers, trailerUrl, resumePosition, totalDuration, isFavorite FROM channels WHERE playlistUrl = :url")
     suspend fun getTmdbAndUserDataByPlaylist(url: String): List<ChannelPreserveData>

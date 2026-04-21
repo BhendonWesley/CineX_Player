@@ -315,8 +315,8 @@ fun MainScreen(
                         LiveTvScreen(
                             viewModel = viewModel,
                             onChannelExpand = { playingChannel = it },
-                            isActive = selectedTab == 1,
-                            navDownTrigger = navDownTrigger
+                            isActive = selectedTab == 1 && searchQuery.isEmpty(),
+                            navDownTrigger = if (searchQuery.isEmpty()) navDownTrigger else 0
                         )
                     }
                     if (isTv || selectedTab == 2) Box(modifier = if (isTv) Modifier.tabVisibility(2) else Modifier.fillMaxSize()) {
@@ -327,8 +327,8 @@ fun MainScreen(
                             continueWatching = continueWatching.filter { it.category == "MOVIE" },
                             onVideoClick = { viewModel.selectChannelForDetails(it) },
                             onPlayDirect = { playingChannel = it },
-                            isActive = selectedTab == 2,
-                            navDownTrigger = navDownTrigger
+                            isActive = selectedTab == 2 && searchQuery.isEmpty(),
+                            navDownTrigger = if (searchQuery.isEmpty()) navDownTrigger else 0
                         )
                     }
                     if (isTv || selectedTab == 3) Box(modifier = if (isTv) Modifier.tabVisibility(3) else Modifier.fillMaxSize()) {
@@ -339,8 +339,8 @@ fun MainScreen(
                             continueWatching = continueWatching.filter { it.category == "SERIES" },
                             onVideoClick = { viewModel.selectChannelForDetails(it) },
                             onPlayDirect = { playingChannel = it },
-                            isActive = selectedTab == 3,
-                            navDownTrigger = navDownTrigger
+                            isActive = selectedTab == 3 && searchQuery.isEmpty(),
+                            navDownTrigger = if (searchQuery.isEmpty()) navDownTrigger else 0
                         )
                     }
                 }
@@ -353,6 +353,8 @@ fun MainScreen(
                         viewModel = viewModel,
                         title = "RESULTADOS PARA: ${searchQuery.uppercase()}",
                         continueWatching = emptyList(),
+                        isActive = true,
+                        navDownTrigger = navDownTrigger,
                         onVideoClick = { channel ->
                             if (channel.category == "LIVE_TV") {
                                 if (channel.categoryId.isNotEmpty()) {

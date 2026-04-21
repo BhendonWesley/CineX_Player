@@ -246,12 +246,7 @@ fun LiveTvScreen(
         }
     }
 
-    // Gate de carregamento inicial — só aparece uma vez até os dados carregarem pela primeira vez
-    var initialLoadComplete by remember { mutableStateOf(false) }
-    if (!initialLoadComplete && categories.isNotEmpty() && channelCount > 0) {
-        initialLoadComplete = true
-    }
-    val isDataReady = initialLoadComplete
+    val isDataReady by viewModel.isLiveReady.collectAsState()
 
     Box(modifier = modifier.fillMaxSize()) {
         // Imagem de fundo com blur

@@ -21,15 +21,18 @@ internal class TvVodGridAdapter : RecyclerView.Adapter<TvVodGridAdapter.VH>() {
 
     var items: List<Channel> = emptyList()
         set(value) {
-            field = value
-            notifyDataSetChanged()
+            if (field != value) {
+                field = value
+                notifyDataSetChanged()
+            }
         }
 
     inner class VH(
         val card: TvPosterCard,
         val image: ImageView,
         val name: TextView,
-        val progressView: View
+        val progressView: View,
+        val episodeBadge: TextView
     ) : RecyclerView.ViewHolder(card)
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
@@ -90,19 +93,43 @@ internal class TvVodGridAdapter : RecyclerView.Adapter<TvVodGridAdapter.VH>() {
             pivotX = 0f
         }
 
+        val episodeBadge = TextView(ctx).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).also {
+                it.gravity = Gravity.TOP or Gravity.START
+                it.setMargins(dp(5), dp(5), 0, 0)
+            }
+            setPadding(dp(4), dp(2), dp(4), dp(2))
+            setTextColor(0xFFF59E0B.toInt())
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 9f)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xCC000000.toInt())
+                cornerRadius = dp(3).toFloat()
+            }
+            visibility = View.GONE
+        }
+
         card.addView(image)
         card.addView(gradientOverlay)
         card.addView(nameView)
         card.addView(progressView)
+        card.addView(episodeBadge)
 
-        return VH(card, image, nameView, progressView)
+        return VH(card, image, nameView, progressView, episodeBadge)
     }
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val channel = items[position]
 
-        val imageUrl = listOfNotNull(channel.logoUrl, channel.posterUrl)
-            .firstOrNull { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+        // Prioriza posterUrl (capa da série) para episódios em "Continuar Assistindo"
+        val imageUrl = if (showProgress && channel.category == "SERIES" && channel.seasonNumber != null) {
+            listOfNotNull(channel.posterUrl, channel.logoUrl)
+        } else {
+            listOfNotNull(channel.logoUrl, channel.posterUrl)
+        }.firstOrNull { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
 
         if (imageUrl != null) {
             holder.image.load(imageUrl) {
@@ -117,7 +144,24 @@ internal class TvVodGridAdapter : RecyclerView.Adapter<TvVodGridAdapter.VH>() {
             holder.image.setImageResource(R.drawable.logo_cinex)
         }
 
-        holder.name.text = channel.name
+        val displayName = if (channel.category == "SERIES" && channel.seasonNumber != null && !channel.seriesName.isNullOrBlank()) {
+            val s = channel.seasonNumber.toString().padStart(2, '0')
+            val e = (channel.episodeNumber ?: 0).toString().padStart(2, '0')
+            val cleanSeries = channel.seriesName.replace(Regex("(?i)\\s*\\(\\d{4}\\)\\s*"), "").trim()
+            "S${s}E${e} - $cleanSeries"
+        } else {
+            channel.name
+        }
+        holder.name.text = displayName
+
+        if (showProgress && channel.seasonNumber != null && channel.episodeNumber != null) {
+            val s = channel.seasonNumber.toString().padStart(2, '0')
+            val e = channel.episodeNumber.toString().padStart(2, '0')
+            holder.episodeBadge.text = "S$s E$e"
+            holder.episodeBadge.visibility = View.VISIBLE
+        } else {
+            holder.episodeBadge.visibility = View.GONE
+        }
 
         if (showProgress && channel.resumePosition > 0 && channel.totalDuration > 0) {
             val progress = (channel.resumePosition.toFloat() / channel.totalDuration).coerceIn(0f, 1f)

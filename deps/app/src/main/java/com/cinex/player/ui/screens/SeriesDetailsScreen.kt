@@ -642,20 +642,25 @@ fun SeriesDetailsScreen(
                         modifier = Modifier
                             .width(200.dp)
                             .fillMaxHeight()
-                            .padding(top = 16.dp)
+                            .padding(bottom = 16.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(Color(0x0DFFFFFF))
+                            .border(1.5.dp, Brush.linearGradient(listOf(Color(0xFFE11D2E), Color(0xFFF59E0B))), RoundedCornerShape(16.dp))
+                            .padding(vertical = 16.dp)
                     ) {
                         Text(
                             text = "TEMPORADAS",
                             color = Color.Gray,
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(bottom = 16.dp, start = 8.dp)
+                            modifier = Modifier.padding(bottom = 16.dp, start = 20.dp)
                         )
 
                         Column(
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .padding(horizontal = 12.dp)
                                 .verticalScroll(rememberScrollState())
                         ) {
                             sortedSeasons.forEachIndexed { seasonIndex, seasonNum ->
@@ -682,6 +687,7 @@ fun SeriesDetailsScreen(
                                                     Key.DirectionLeft -> true
                                                     // Primeira temporada: sobe para a seta de voltar
                                                     Key.DirectionUp -> if (isFirst) { focusBackArrowRequest++; true } else false
+                                                    Key.DirectionDown -> if (seasonIndex == sortedSeasons.lastIndex) true else false
                                                     else -> false
                                                 }
                                                 KeyEventType.KeyUp -> when (event.key) {
@@ -810,6 +816,7 @@ fun SeriesDetailsScreen(
                                                 focusSeasonRequest++
                                             },
                                             blockUp = index == 0,
+                                            blockDown = index == episodesList.lastIndex,
                                             onClick = { onPlayEpisode(episode) }
                                         )
                                     }
@@ -825,7 +832,7 @@ fun SeriesDetailsScreen(
 
 
 @Composable
-fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: String?, seriesName: String? = null, modifier: Modifier = Modifier, onKeyLeft: (() -> Unit)? = null, blockUp: Boolean = false, onClick: () -> Unit) {
+fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: String?, seriesName: String? = null, modifier: Modifier = Modifier, onKeyLeft: (() -> Unit)? = null, blockUp: Boolean = false, blockDown: Boolean = false, onClick: () -> Unit) {
     val genericSeriesBackdrop = episode.bannerUrl?.contains("/original/") == true
     val imageModel = when {
         !episode.bannerUrl.isNullOrBlank() && !genericSeriesBackdrop -> episode.bannerUrl
@@ -847,6 +854,7 @@ fun EpisodeItem(episode: com.cinex.player.data.model.Channel, seriesPoster: Stri
                         Key.DirectionRight -> false
                         // Primeiro episódio: bloqueia UP (não pode vazar para fora)
                         Key.DirectionUp -> if (blockUp) true else false
+                        Key.DirectionDown -> if (blockDown) true else false
                         else -> false
                     }
                     KeyEventType.KeyUp -> when (event.key) {

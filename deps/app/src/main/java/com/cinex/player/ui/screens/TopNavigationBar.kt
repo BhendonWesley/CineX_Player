@@ -18,8 +18,10 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.Text
+import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -75,6 +77,13 @@ fun TopNavigationBar(
         }
     }
 
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val isTv = remember {
+        val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
+        uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
+    }
+    val searchBoxRequester = remember { androidx.compose.ui.focus.FocusRequester() }
+
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -108,8 +117,10 @@ fun TopNavigationBar(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier
                         .focusProperties {
-                            if (index == 0) left = FocusRequester.Cancel
-                            if (index == visibleTabs.size - 1) right = FocusRequester.Cancel
+                            if (index == 0) left = androidx.compose.ui.focus.FocusRequester.Cancel
+                            if (index == visibleTabs.size - 1) {
+                                right = if (isTv) searchBoxRequester else androidx.compose.ui.focus.FocusRequester.Default
+                            }
                         }
                         .onPreviewKeyEvent { event ->
                             when {
@@ -189,13 +200,7 @@ fun TopNavigationBar(
 
         // ── DIREITA: Barra de busca ──────────────────────────────
         // Na TV, o teclado só abre após pressionar Enter (evita abrir ao receber foco acidental)
-        val context = androidx.compose.ui.platform.LocalContext.current
-        val isTv = remember {
-            val uiModeManager = context.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
-            uiModeManager.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION
-        }
-        val searchFieldRequester = remember { FocusRequester() }
-        val searchBoxRequester = remember { FocusRequester() }
+        val searchFieldRequester = remember { androidx.compose.ui.focus.FocusRequester() }
         var isBoxFocused by remember { mutableStateOf(false) }
         var isTextFieldFocused by remember { mutableStateOf(false) }
         val isSearchHighlighted = isBoxFocused || isTextFieldFocused
@@ -203,6 +208,21 @@ fun TopNavigationBar(
         var localQuery by remember { mutableStateOf(searchQuery) }
         // Sincroniza quando o valor externo muda (ex: limpar busca ao trocar de aba)
         LaunchedEffect(searchQuery) { if (!isTextFieldFocused) localQuery = searchQuery }
+
+        // BackHandler: intercepta o botão VOLTAR do controle remoto enquanto o teclado está aberto.
+        // onPreviewKeyEvent NÃO é confiável para Key.Back na TV — o sistema processa o Back antes
+        // do Compose, fechando a Activity. BackHandler é a API correta para este cenário.
+        val scope = rememberCoroutineScope()
+        if (isTv) {
+            BackHandler(enabled = isTextFieldFocused) {
+                scope.launch {
+                    try { searchBoxRequester.requestFocus() } catch (_: Exception) {}
+                    // Aguarda o teclado recolher (animação ~300ms) antes de mover foco pro grid
+                    delay(350L)
+                    onNavigateDown()
+                }
+            }
+        }
 
         Box(
             modifier = Modifier
@@ -277,10 +297,21 @@ fun TopNavigationBar(
                         ),
                         cursorBrush = SolidColor(NavWhite),
                         singleLine = true,
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-                        keyboardActions = KeyboardActions(onSearch = {
-                            keyboardController?.hide()
-                            if (isTv) try { searchBoxRequester.requestFocus() } catch (_: Exception) {}
+                        // Mudamos para Done para adotar o comportamento "Pro" de busca em tempo real.
+                        // Ao terminar de digitar e dar Enter, evitamos usar o keyboardController?.hide() na TV
+                        // pois ele causa crash em algumas BoxTv ao tentar limpar o proxy. 
+                        // Mover o foco de volta para a Box já esconde o teclado nativamente.
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onDone = {
+                            if (isTv) {
+                                scope.launch {
+                                    try { searchBoxRequester.requestFocus() } catch (_: Exception) {}
+                                    delay(350L)
+                                    onNavigateDown()
+                                }
+                            } else {
+                                keyboardController?.hide()
+                            }
                         }),
                         modifier = Modifier
                             .fillMaxWidth()
@@ -291,9 +322,8 @@ fun TopNavigationBar(
                             }
                             .then(
                                 if (isTv) Modifier.onPreviewKeyEvent { event ->
-                                    if (event.type == KeyEventType.KeyDown && event.key == Key.Back) {
-                                        keyboardController?.hide()
-                                        try { searchBoxRequester.requestFocus() } catch (_: Exception) {}
+                                    if (event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown && event.key == androidx.compose.ui.input.key.Key.DirectionDown) {
+                                        onNavigateDown()
                                         true
                                     } else false
                                 } else Modifier

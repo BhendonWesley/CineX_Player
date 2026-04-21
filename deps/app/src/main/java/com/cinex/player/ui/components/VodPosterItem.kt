@@ -125,13 +125,12 @@ fun VodPosterItem(
                 .graphicsLayer {
                     scaleX = focusScale
                     scaleY = focusScale
-                    shape = RoundedCornerShape(12.dp)
-                    clip = true
                 }
                 .then(
                     if (isFocused) Modifier.border(2.dp, gradientBrush, RoundedCornerShape(12.dp))
                     else Modifier
                 )
+                .clip(RoundedCornerShape(12.dp))
                 .background(CineX_SecondaryBackground)
                 .clickable(
                     interactionSource = interactionSource,
@@ -139,17 +138,31 @@ fun VodPosterItem(
                     onClick = onClick
                 )
         ) {
-        val imageCandidates = remember(channel.id, channel.logoUrl, channel.posterUrl) {
+        val displayTitle = remember(channel) {
+            if (channel.category == "SERIES" && channel.seasonNumber != null && !channel.seriesName.isNullOrBlank()) {
+                val s = channel.seasonNumber.toString().padStart(2, '0')
+                val e = (channel.episodeNumber ?: 0).toString().padStart(2, '0')
+                val cleanSeries = channel.seriesName.replace(Regex("(?i)\\s*\\(\\d{4}\\)\\s*"), "").trim()
+                "S${s}E${e} - $cleanSeries"
+            } else {
+                channel.name
+            }
+        }
+
+        val imageCandidates = remember(channel.id, channel.logoUrl, channel.posterUrl, showProgress) {
             fun String?.asValidImageUrl(): String? {
                 val value = this?.trim()
                 if (value.isNullOrEmpty()) return null
                 if (value.equals("null", ignoreCase = true)) return null
                 return value
             }
-            listOfNotNull(
-                channel.logoUrl.asValidImageUrl(),
-                channel.posterUrl.asValidImageUrl()
-            ).distinct()
+            // Para episódios de série em "Continuar Assistindo", prioriza posterUrl (capa da série)
+            val ordered = if (showProgress && channel.category == "SERIES" && channel.seasonNumber != null) {
+                listOfNotNull(channel.posterUrl.asValidImageUrl(), channel.logoUrl.asValidImageUrl())
+            } else {
+                listOfNotNull(channel.logoUrl.asValidImageUrl(), channel.posterUrl.asValidImageUrl())
+            }
+            ordered.distinct()
         }
 
         var imageIndex by remember(channel.id) { mutableIntStateOf(0) }
@@ -192,6 +205,27 @@ fun VodPosterItem(
             }
         }
 
+        // Badge S/E para episódios de série em "Continuar Assistindo"
+        if (showProgress && channel.seasonNumber != null && channel.episodeNumber != null && !isFocused) {
+            val s = channel.seasonNumber.toString().padStart(2, '0')
+            val e = channel.episodeNumber.toString().padStart(2, '0')
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(5.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color.Black.copy(alpha = 0.78f))
+                    .padding(horizontal = 5.dp, vertical = 2.dp)
+            ) {
+                Text(
+                    text = "S$s E$e",
+                    color = CardGold,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
         if (isFocused && !isTv) {
             Box(
                 modifier = Modifier
@@ -229,7 +263,7 @@ fun VodPosterItem(
                         .padding(horizontal = 10.dp, vertical = 10.dp)
                 ) {
                     Text(
-                        text = channel.name,
+                        text = displayTitle,
                         color = Color.White,
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
@@ -277,7 +311,7 @@ fun VodPosterItem(
                         .padding(horizontal = 8.dp, vertical = 6.dp)
                 ) {
                     Text(
-                        text = channel.name,
+                        text = displayTitle,
                         color = TextWhite,
                         fontSize = 12.sp,
                         maxLines = 1,
