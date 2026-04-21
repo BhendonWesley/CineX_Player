@@ -154,7 +154,8 @@ Assert-LastExitCode "git commit"
 # 7. Cria a tag
 Write-Host ""
 Write-Host "[6/8] Criando tag v$Version..."
-if (git rev-parse "v$Version" 2>$null) {
+$tagExists = git tag -l "v$Version"
+if ($tagExists) {
     throw "A tag v$Version ja existe. Apague a tag antiga antes de continuar."
 }
 git tag "v$Version"
