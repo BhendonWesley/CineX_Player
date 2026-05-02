@@ -322,23 +322,23 @@ private fun HeroBackdrop(
                 modifier = Modifier.fillMaxSize(),
                 label = "hero_backdrop"
             ) { currentMovie ->
-                // Usa bannerUrl TMDB (/original/) se disponível — melhor qualidade
-                // Fallback: posterUrl do Xtream (só em caso extremo, sem banner)
-                val imageUrl = when {
-                    !currentMovie.bannerUrl.isNullOrEmpty() &&
-                    !currentMovie.bannerUrl.endsWith("null") &&
-                    currentMovie.bannerUrl.contains("/original/") -> currentMovie.bannerUrl
-                    !currentMovie.bannerUrl.isNullOrEmpty() &&
-                    !currentMovie.bannerUrl.endsWith("null") -> currentMovie.bannerUrl
-                    else -> currentMovie.posterUrl
-                }
+                // Prioridade: bannerUrl TMDB (/original/) → bannerUrl genérico → posterUrl TMDB → logoUrl Xtream
+                fun String?.validUrl() = takeIf { !isNullOrEmpty() && !equals("null", ignoreCase = true) && !endsWith("null") }
+                val imageUrls = listOfNotNull(
+                    currentMovie.bannerUrl.validUrl(),
+                    currentMovie.posterUrl.validUrl(),
+                    currentMovie.logoUrl.validUrl()
+                ).distinct()
+
+                var bannerIndex by remember(currentMovie.id) { mutableStateOf(0) }
+                val imageUrl = imageUrls.getOrNull(bannerIndex)
 
                 AsyncImage(
                     model = ImageRequest.Builder(context)
                         .data(imageUrl)
                         .size(if (isTv) 1920 else 960, if (isTv) 1080 else 540)
-                        .diskCacheKey(imageUrl)
-                        .memoryCacheKey(imageUrl)
+                        .diskCacheKey(imageUrl ?: "")
+                        .memoryCacheKey(imageUrl ?: "")
                         .crossfade(if (isTv) 800 else 250)
                         .build(),
                     contentDescription = null,
@@ -349,7 +349,10 @@ private fun HeroBackdrop(
                             scaleY = scale.value,
                             translationX = panX.value
                         ),
-                    contentScale = ContentScale.Crop
+                    contentScale = ContentScale.Crop,
+                    onError = {
+                        if (bannerIndex < imageUrls.lastIndex) bannerIndex++
+                    }
                 )
             }
         }

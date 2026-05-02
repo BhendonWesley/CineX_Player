@@ -124,24 +124,24 @@ internal class TvVodGridAdapter : RecyclerView.Adapter<TvVodGridAdapter.VH>() {
     override fun onBindViewHolder(holder: VH, position: Int) {
         val channel = items[position]
 
-        // Prioriza posterUrl (capa da série) para episódios em "Continuar Assistindo"
-        val imageUrl = if (showProgress && channel.category == "SERIES" && channel.seasonNumber != null) {
-            listOfNotNull(channel.posterUrl, channel.logoUrl)
-        } else {
-            listOfNotNull(channel.logoUrl, channel.posterUrl)
-        }.firstOrNull { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+        // Na TV, prioriza sempre posterUrl (TMDB HTTPS) sobre logoUrl (Xtream HTTP):
+        // - TMDB usa HTTPS e é acessível em qualquer rede/emulador
+        // - Xtream usa HTTP em porta não-padrão, pode ser bloqueado ou inacessível no emulador
+        // - Se posterUrl for null (não enriquecido pelo TMDB), usa logoUrl como fallback
+        val imageUrls = listOfNotNull(channel.posterUrl, channel.logoUrl)
+            .filter { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
 
-        if (imageUrl != null) {
-            holder.image.load(imageUrl) {
-                size(300, 450)
-                memoryCacheKey(imageUrl)
-                diskCacheKey(imageUrl)
-                placeholder(R.drawable.logo_cinex)
-                error(R.drawable.logo_cinex)
-                crossfade(false)
+        // Evita cancelar o request em andamento se a URL não mudou (notifyDataSetChanged rebinda
+        // todos os itens visíveis — sem este guard, o Coil cancela e reinicia todos os requests,
+        // causando um loop onde muitas capas nunca terminam de carregar na TV).
+        val primaryUrl = imageUrls.firstOrNull()
+        if (holder.image.tag != primaryUrl) {
+            holder.image.tag = primaryUrl
+            if (imageUrls.isNotEmpty()) {
+                holder.image.loadWithFallback(imageUrls)
+            } else {
+                holder.image.setImageResource(R.drawable.logo_cinex)
             }
-        } else {
-            holder.image.setImageResource(R.drawable.logo_cinex)
         }
 
         val displayName = if (channel.category == "SERIES" && channel.seasonNumber != null && !channel.seriesName.isNullOrBlank()) {
@@ -238,6 +238,33 @@ internal class TvPosterCard(context: Context) : FrameLayout(context) {
                 null, Shader.TileMode.CLAMP
             )
             canvas.drawRoundRect(rect, radius, radius, focusPaint)
+        }
+    }
+}
+
+// Carrega com fallback de URLs: se a primeira falhar (ex: URL HTTP do servidor Xtream),
+// tenta a próxima (ex: posterUrl HTTPS do TMDB). Usa tag para detectar reciclagem e evitar
+// que o callback de erro dispare em um ViewHolder já reutilizado para outro canal.
+private fun ImageView.loadWithFallback(urls: List<String>, index: Int = 0) {
+    val url = urls.getOrNull(index) ?: run {
+        setImageResource(R.drawable.logo_cinex)
+        return
+    }
+    val view = this  // Captura explícita para uso nos lambdas aninhados
+    load(url) {
+        size(300, 450)
+        memoryCacheKey(url)
+        diskCacheKey(url)
+        placeholder(R.drawable.logo_cinex)
+        error(R.drawable.logo_cinex)
+        crossfade(false)
+        if (index < urls.lastIndex) {
+            listener(onError = { _, _ ->
+                // Só tenta o fallback se a view não foi reutilizada para outro canal
+                if (view.tag == urls.first()) {
+                    view.post { view.loadWithFallback(urls, index + 1) }
+                }
+            })
         }
     }
 }

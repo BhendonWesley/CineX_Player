@@ -14,7 +14,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import okhttp3.Dispatcher
 import okhttp3.OkHttpClient
+import java.security.SecureRandom
+import java.security.cert.X509Certificate
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
+import javax.net.ssl.SSLContext
+import javax.net.ssl.X509TrustManager
 
 @HiltAndroidApp
 class CineXApplication : Application(), Configuration.Provider, ImageLoaderFactory {
@@ -30,28 +35,57 @@ class CineXApplication : Application(), Configuration.Provider, ImageLoaderFacto
         return uiModeManager.currentModeType == AndroidConfig.UI_MODE_TYPE_TELEVISION
     }
 
+    private fun buildUnsafeOkHttpClient(isTv: Boolean): OkHttpClient {
+        val dispatcher = Dispatcher().apply {
+            maxRequests = if (isTv) 12 else 16
+            maxRequestsPerHost = if (isTv) 6 else 8
+        }
+        return try {
+            val trustManager = object : X509TrustManager {
+                override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
+                override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {}
+                override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+            }
+            // "TLS" é universalmente suportado — "SSL" é deprecated e pode falhar em TVs antigas
+            val sslContext = SSLContext.getInstance("TLS").apply {
+                init(null, arrayOf(trustManager), SecureRandom())
+            }
+            OkHttpClient.Builder()
+                .sslSocketFactory(sslContext.socketFactory, trustManager)
+                .hostnameVerifier { _, _ -> true }
+                .connectTimeout(20, TimeUnit.SECONDS)
+                .readTimeout(20, TimeUnit.SECONDS)
+                .dispatcher(dispatcher)
+                .build()
+        } catch (e: Exception) {
+            // Fallback seguro: OkHttpClient padrão sem bypass de SSL
+            android.util.Log.e("CineX-Coil", "SSL init failed, using default OkHttpClient: ${e.message}")
+            OkHttpClient.Builder()
+                .connectTimeout(20, TimeUnit.SECONDS)
+                .readTimeout(20, TimeUnit.SECONDS)
+                .dispatcher(dispatcher)
+                .build()
+        }
+    }
+
     @OptIn(ExperimentalCoroutinesApi::class)
     override fun newImageLoader(): ImageLoader {
         val isTv = isTvDevice()
 
-        // Na TV, limitar requisições simultâneas para evitar travamentos
-        val okHttpClient = OkHttpClient.Builder()
-            .dispatcher(Dispatcher().apply {
-                // TV: 3 requests simultâneos (vs 16 no mobile)
-                // Evita OOM por excesso de downloads simultâneos
-                maxRequests = if (isTv) 3 else 16
-                maxRequestsPerHost = if (isTv) 2 else 8
-            })
-            .build()
+        // Igual ao IBO Player: aceita qualquer certificado SSL para imagens.
+        // Servidores Xtream frequentemente usam certificados auto-assinados ou SSL inválido.
+        // Usa "TLS" (não "SSL") — universalmente suportado em todas as TVs/Android versions.
+        // Fallback para OkHttpClient padrão se a inicialização SSL falhar em algum firmware.
+        val okHttpClient = buildUnsafeOkHttpClient(isTv)
 
         val builder = ImageLoader.Builder(this)
             .okHttpClient(okHttpClient)
             .fetcherDispatcher(
-                if (isTv) Dispatchers.IO.limitedParallelism(3)  // TV: 3 fetchers
+                if (isTv) Dispatchers.IO.limitedParallelism(8)
                 else Dispatchers.IO
             )
             .decoderDispatcher(
-                if (isTv) Dispatchers.IO.limitedParallelism(2)  // TV: 2 decoders
+                if (isTv) Dispatchers.IO.limitedParallelism(4)
                 else Dispatchers.IO
             )
             .memoryCache {
