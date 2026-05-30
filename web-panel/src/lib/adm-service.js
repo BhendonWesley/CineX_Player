@@ -27,6 +27,10 @@ export async function checkResellerAccess(username, password) {
 
         const loginResult = await loginResponse.json();
 
+        // DEBUG TEMPORÁRIO - remover após identificar o formato da resposta
+        console.log('API Response Status:', loginResponse.status);
+        console.log('API Response Body:', JSON.stringify(loginResult));
+
         // A API retorna { success: true } quando as credenciais são válidas
         if (loginResult.success === true) {
             return {
