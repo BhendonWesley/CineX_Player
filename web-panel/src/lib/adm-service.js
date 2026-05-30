@@ -5,7 +5,7 @@
  */
 
 export async function checkResellerAccess(username, password) {
-    const ADM_BASE_URL = 'https://painel.cinextv.com.br';
+    const ADM_BASE_URL = 'https://painell.cinextv.com.br';
     const API_URL = `${ADM_BASE_URL}/sys/api.php`;
 
     try {
@@ -66,7 +66,7 @@ export async function checkResellerAccess(username, password) {
  * Busca a lista de revendedores diretamente do painel ADM
  */
 export async function getResellers(username, password) {
-    const ADM_BASE_URL = 'https://painel.cinextv.com.br';
+    const ADM_BASE_URL = 'https://painell.cinextv.com.br';
     const API_URL = `${ADM_BASE_URL}/sys/api.php?action=get_resellers&length=100`;
 
     try {
